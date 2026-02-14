@@ -16,6 +16,11 @@ Commands:
   pact design <project-dir>            Regenerate design.md
   pact components <project-dir>        List all components with status
   pact build <project-dir> <id>        Rebuild a specific component
+  pact tree <project-dir>              ASCII tree visualization of decomposition
+  pact cost <project-dir>              Estimate remaining cost
+  pact doctor                          Diagnose common issues
+  pact clean <project-dir>             Clean up artifacts
+  pact diff <project-dir> <id>         Diff between competitive implementations
 """
 
 from __future__ import annotations
@@ -125,6 +130,33 @@ def main() -> None:
     p_build.add_argument("--agents", type=int, default=2, help="Number of competing agents (default: 2)")
     p_build.add_argument("--plan-only", action="store_true", help="Show what would be built without building")
 
+    # tree
+    p_tree = subparsers.add_parser("tree", help="ASCII tree visualization of decomposition")
+    p_tree.add_argument("project_dir", help="Project directory path")
+    p_tree.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
+    p_tree.add_argument("--no-cost", action="store_true", help="Hide cost information")
+
+    # cost
+    p_cost = subparsers.add_parser("cost", help="Estimate remaining cost")
+    p_cost.add_argument("project_dir", help="Project directory path")
+    p_cost.add_argument("--detailed", action="store_true", help="Per-component estimates")
+
+    # doctor
+    p_doctor = subparsers.add_parser("doctor", help="Diagnose common issues")
+    p_doctor.add_argument("project_dir", nargs="?", default=None, help="Optional project directory")
+
+    # clean
+    p_clean = subparsers.add_parser("clean", help="Clean up project artifacts")
+    p_clean.add_argument("project_dir", help="Project directory path")
+    p_clean.add_argument("--attempts", action="store_true", help="Remove all attempt artifacts")
+    p_clean.add_argument("--stale", action="store_true", help="Remove stale FIFO, PID, shutdown sentinels")
+    p_clean.add_argument("--all", action="store_true", dest="clean_all", help="Remove all .pact/ state")
+
+    # diff
+    p_diff = subparsers.add_parser("diff", help="Diff between implementations or attempts")
+    p_diff.add_argument("project_dir", help="Project directory path")
+    p_diff.add_argument("component_id", help="Component ID to diff")
+
     args = parser.parse_args()
 
     if args.verbose:
@@ -166,6 +198,16 @@ def main() -> None:
         cmd_components(args)
     elif args.command == "build":
         asyncio.run(cmd_build(args))
+    elif args.command == "tree":
+        cmd_tree(args)
+    elif args.command == "cost":
+        cmd_cost(args)
+    elif args.command == "doctor":
+        cmd_doctor(args)
+    elif args.command == "clean":
+        cmd_clean(args)
+    elif args.command == "diff":
+        cmd_diff(args)
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -368,17 +410,43 @@ async def cmd_daemon(args: argparse.Namespace) -> None:
         per_project_cap=project_config.budget or global_config.default_budget,
     )
 
+    from pact.events import EventBus
+
     scheduler = Scheduler(project, global_config, project_config, budget)
+
+    # Resolve polling config: project > global
+    poll_integrations = (
+        project_config.poll_integrations
+        if project_config.poll_integrations is not None
+        else global_config.poll_integrations
+    )
+    poll_interval = (
+        project_config.poll_interval
+        if project_config.poll_interval is not None
+        else global_config.poll_interval
+    )
+    max_poll_attempts = (
+        project_config.max_poll_attempts
+        if project_config.max_poll_attempts is not None
+        else global_config.max_poll_attempts
+    )
+
     daemon = Daemon(
         project, scheduler,
         health_check_interval=args.health_interval,
         max_idle=args.max_idle,
+        event_bus=scheduler.event_bus,
+        poll_integrations=poll_integrations,
+        poll_interval=poll_interval,
+        max_poll_attempts=max_poll_attempts,
     )
 
     print(f"Daemon starting for: {project.project_dir}")
     print(f"  FIFO: {daemon.fifo_path}")
     print(f"  Health check: every {args.health_interval}s")
     print(f"  Max idle: {args.max_idle}s")
+    if poll_integrations:
+        print(f"  Integration polling: every {poll_interval}s (max {max_poll_attempts} attempts)")
     print(f"  Resume with: pact signal {args.project_dir}")
     print()
 
@@ -814,6 +882,476 @@ async def cmd_build(args: argparse.Namespace) -> None:
                       f"{tr.failed} failed, {tr.errors} errors")
 
     print(f"\nSpend: ${budget.project_spend:.4f}")
+
+
+def cmd_tree(args: argparse.Namespace) -> None:
+    """ASCII tree visualization of decomposition with status icons."""
+    project = ProjectManager(args.project_dir)
+    tree = project.load_tree()
+
+    if not tree:
+        print("No decomposition tree found. Run decomposition first.")
+        return
+
+    show_cost = not getattr(args, "no_cost", False)
+
+    # Compute per-component cost from state
+    cost_map: dict[str, float] = {}
+    if show_cost and project.has_state():
+        state = project.load_state()
+        cost_map["_total"] = state.total_cost_usd
+
+    if getattr(args, "json_output", False):
+        nodes_data = []
+        for node in tree.nodes.values():
+            entry = {
+                "id": node.component_id,
+                "name": node.name,
+                "status": node.implementation_status,
+                "depth": node.depth,
+                "parent_id": node.parent_id,
+                "children": node.children,
+            }
+            if node.test_results:
+                entry["test_results"] = {
+                    "passed": node.test_results.passed,
+                    "total": node.test_results.total,
+                }
+            nodes_data.append(entry)
+        print(json.dumps({"root_id": tree.root_id, "nodes": nodes_data}, indent=2))
+        return
+
+    def render_node(node_id: str, prefix: str, is_last: bool) -> None:
+        node = tree.nodes.get(node_id)
+        if not node:
+            return
+
+        status_icon = {
+            "pending": "[ ]",
+            "contracted": "[C]",
+            "implemented": "[I]",
+            "tested": "[+]",
+            "failed": "[X]",
+        }.get(node.implementation_status, "[ ]")
+
+        connector = "\u2514\u2500\u2500 " if is_last else "\u251c\u2500\u2500 "
+        if not prefix:
+            connector = ""
+
+        cost_str = ""
+        if show_cost and node.component_id in cost_map:
+            cost_str = f"  ${cost_map[node.component_id]:.2f}"
+
+        line = f"{prefix}{connector}{status_icon} {node.name} ({node.component_id}){cost_str}"
+        print(line)
+
+        # Test results on next line
+        if node.test_results and node.test_results.total > 0:
+            child_prefix = prefix + ("    " if is_last else "\u2502   ")
+            if not prefix:
+                child_prefix = "    "
+            status_word = "passed" if node.test_results.all_passed else "passed"
+            print(f"{child_prefix}{node.test_results.passed}/{node.test_results.total} tests passed")
+
+        # Recurse into children
+        children = node.children
+        for i, child_id in enumerate(children):
+            child_is_last = (i == len(children) - 1)
+            child_prefix = prefix + ("    " if is_last else "\u2502   ")
+            if not prefix:
+                child_prefix = ""
+            render_node(child_id, child_prefix, child_is_last)
+
+    render_node(tree.root_id, "", True)
+
+
+def cmd_cost(args: argparse.Namespace) -> None:
+    """Estimate remaining cost based on components left to process."""
+    from pact.budget import pricing_for_model
+
+    project = ProjectManager(args.project_dir)
+    global_config = load_global_config()
+    project_config = load_project_config(args.project_dir)
+
+    tree = project.load_tree()
+    if not tree:
+        print("No decomposition tree found. Run decomposition first.")
+        return
+
+    budget_cap = project_config.budget or global_config.default_budget
+
+    # Current spend
+    current_spend = 0.0
+    if project.has_state():
+        state = project.load_state()
+        current_spend = state.total_cost_usd
+
+    # Categorize components
+    pending = []
+    contracted = []
+    implemented = []
+    tested = []
+    failed = []
+
+    for node in tree.nodes.values():
+        if node.implementation_status == "pending":
+            pending.append(node)
+        elif node.implementation_status == "contracted":
+            contracted.append(node)
+        elif node.implementation_status == "implemented":
+            implemented.append(node)
+        elif node.implementation_status == "tested":
+            tested.append(node)
+        elif node.implementation_status == "failed":
+            failed.append(node)
+
+    # Estimate cost per phase (rough averages based on typical usage)
+    # These are configurable defaults — real projects can refine from learnings
+    model = project_config.model or global_config.model
+    inp_cost, out_cost = pricing_for_model(model)
+
+    # Estimate tokens per phase (conservative estimates)
+    contract_tokens = (4000, 2000)    # ~4k in, 2k out for contract generation
+    test_tokens = (3000, 2000)        # ~3k in, 2k out for test generation
+    impl_tokens = (6000, 4000)        # ~6k in, 4k out for implementation
+    integration_tokens = (4000, 3000) # ~4k in, 3k out for integration
+
+    def estimate_cost(in_tok: int, out_tok: int) -> float:
+        return in_tok * inp_cost / 1_000_000 + out_tok * out_cost / 1_000_000
+
+    contract_cost = estimate_cost(*contract_tokens)
+    test_cost = estimate_cost(*test_tokens)
+    impl_cost = estimate_cost(*impl_tokens)
+    integration_cost = estimate_cost(*integration_tokens)
+
+    # Full pipeline per component
+    full_cost = contract_cost + test_cost + impl_cost
+
+    # Estimate remaining
+    est_contracted = len(contracted) * impl_cost
+    est_implemented = len(implemented) * integration_cost
+    est_pending = len(pending) * full_cost
+    est_failed = len(failed) * impl_cost  # Re-implementation
+    est_remaining = est_contracted + est_implemented + est_pending + est_failed
+
+    print("Component Status Breakdown:")
+    print(f"  {len(tree.nodes)} total components")
+    if contracted:
+        print(f"  {len(contracted)} contracted (need implementation)    ~${est_contracted:.2f}")
+    if implemented:
+        print(f"  {len(implemented)} implemented (need integration)      ~${est_implemented:.2f}")
+    if pending:
+        print(f"  {len(pending)} pending (need contract + impl)      ~${est_pending:.2f}")
+    if failed:
+        print(f"  {len(failed)} failed (need re-implementation)    ~${est_failed:.2f}")
+    if tested:
+        print(f"  {len(tested)} tested (complete)")
+    print()
+    print(f"Estimated remaining: ${est_remaining:.2f}")
+    print(f"Current spend:       ${current_spend:.2f}")
+    print(f"Budget remaining:    ${budget_cap - current_spend:.2f} of ${budget_cap:.2f}")
+
+    if args.detailed and tree.nodes:
+        print("\nPer-Component Estimates:")
+        for node in tree.nodes.values():
+            if node.implementation_status == "tested":
+                est = 0.0
+            elif node.implementation_status == "contracted":
+                est = impl_cost
+            elif node.implementation_status == "implemented":
+                est = integration_cost
+            elif node.implementation_status == "failed":
+                est = impl_cost
+            else:
+                est = full_cost
+            node_type = "parent" if node.children else "leaf"
+            print(f"  {node.component_id:<22s} {node.implementation_status:<14s} {node_type:<8s} ~${est:.2f}")
+
+
+def cmd_doctor(args: argparse.Namespace) -> None:
+    """Diagnose common issues."""
+    import os
+    from pact.budget import get_model_pricing_table
+    from pact.daemon import check_daemon_health
+
+    global_config = load_global_config()
+
+    checks: list[tuple[str, str, str]] = []  # (level, label, detail)
+
+    # API key
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if api_key:
+        checks.append(("OK", "ANTHROPIC_API_KEY is set", f"...{api_key[-8:]}"))
+    else:
+        checks.append(("FAIL", "ANTHROPIC_API_KEY not set", "export ANTHROPIC_API_KEY=sk-..."))
+
+    # anthropic package
+    try:
+        import anthropic
+        version = getattr(anthropic, "__version__", "unknown")
+        checks.append(("OK", "anthropic package installed", f"v{version}"))
+    except ImportError:
+        checks.append(("WARN", "anthropic package not installed", "pip install anthropic"))
+
+    # Model
+    checks.append(("OK", "Model", global_config.model))
+
+    # Project-specific checks
+    project_dir = getattr(args, "project_dir", None)
+    if project_dir:
+        project = ProjectManager(project_dir)
+
+        # Budget
+        if project.has_state():
+            state = project.load_state()
+            project_config = load_project_config(project_dir)
+            budget_cap = project_config.budget or global_config.default_budget
+            remaining = budget_cap - state.total_cost_usd
+            checks.append(("OK", "Budget", f"${remaining:.2f} remaining of ${budget_cap:.2f}"))
+
+            # State
+            checks.append(("OK", "State", f"{state.status}, phase: {state.phase}"))
+        else:
+            checks.append(("INFO", "State", "no active run"))
+
+        # Daemon / FIFO health
+        health = check_daemon_health(project_dir)
+        if health["alive"]:
+            checks.append(("OK", "Daemon", f"running (PID {health['pid']})"))
+        elif health["fifo_exists"]:
+            checks.append(("WARN", "Stale FIFO exists but daemon not running", "pact clean --stale"))
+        else:
+            checks.append(("OK", "Daemon", "not running (no stale artifacts)"))
+
+        # Decomposition
+        tree = project.load_tree()
+        if tree:
+            checks.append(("OK", "Decomposition", f"{len(tree.nodes)} components"))
+
+            # Contract validation
+            contracts = project.load_all_contracts()
+            if contracts:
+                from pact.contracts import validate_all_contracts
+                test_suites = project.load_all_test_suites()
+                gate = validate_all_contracts(tree, contracts, test_suites)
+                if gate.passed:
+                    checks.append(("OK", "All contracts validated", ""))
+                else:
+                    checks.append(("WARN", "Contract validation issues", gate.reason))
+
+            # Test results
+            for node in tree.nodes.values():
+                if node.test_results and not node.test_results.all_passed:
+                    checks.append((
+                        "WARN",
+                        f"Component '{node.component_id}' failed",
+                        f"{node.test_results.failed}/{node.test_results.total} tests",
+                    ))
+        else:
+            checks.append(("INFO", "Decomposition", "not yet run"))
+
+    # Integration availability
+    slack_url = os.environ.get("CF_SLACK_WEBHOOK", "") or global_config.slack_webhook
+    slack_bot = os.environ.get("PACT_SLACK_BOT_TOKEN", "") or global_config.slack_bot_token
+    if slack_bot:
+        checks.append(("OK", "Slack", "read+write (bot token)"))
+    elif slack_url:
+        checks.append(("OK", "Slack", "write-only (webhook)"))
+    else:
+        checks.append(("INFO", "Slack", "not configured (set CF_SLACK_WEBHOOK)"))
+
+    linear_key = os.environ.get("LINEAR_API_KEY", "") or global_config.linear_api_key
+    if linear_key:
+        checks.append(("OK", "Linear", "configured (read+write)"))
+    else:
+        checks.append(("INFO", "Linear", "not configured (set LINEAR_API_KEY)"))
+
+    # Polling config
+    poll_enabled = global_config.poll_integrations
+    if project_dir:
+        proj_cfg = load_project_config(project_dir)
+        if proj_cfg.poll_integrations is not None:
+            poll_enabled = proj_cfg.poll_integrations
+    if poll_enabled:
+        checks.append(("OK", "Integration polling", f"enabled (every {global_config.poll_interval}s)"))
+
+    # Git
+    if project_dir:
+        from pact.events import _is_git_repo
+        from pathlib import Path
+        if _is_git_repo(Path(project_dir)):
+            checks.append(("OK", "Git", "repo detected"))
+        else:
+            checks.append(("INFO", "Git", "no repo detected"))
+
+    # Print results
+    for level, label, detail in checks:
+        icon = {
+            "OK": "[OK] ",
+            "WARN": "[WARN]",
+            "FAIL": "[FAIL]",
+            "INFO": "[INFO]",
+        }.get(level, "[??] ")
+        detail_str = f" ({detail})" if detail else ""
+        print(f"{icon} {label}{detail_str}")
+
+
+def cmd_clean(args: argparse.Namespace) -> None:
+    """Clean up project artifacts."""
+    from pathlib import Path
+    import shutil
+
+    project_dir = Path(args.project_dir).resolve()
+    pact_dir = project_dir / ".pact"
+
+    if not pact_dir.exists():
+        print("No .pact/ directory found.")
+        return
+
+    if args.clean_all:
+        # Remove all .pact/ state (keeps task.md, sops.md, pact.yaml)
+        removed = []
+        for item in pact_dir.iterdir():
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+            removed.append(item.name)
+        print(f"Removed all .pact/ contents: {', '.join(removed)}")
+        # Recreate empty subdirs
+        (pact_dir / "decomposition").mkdir(exist_ok=True)
+        (pact_dir / "contracts").mkdir(exist_ok=True)
+        (pact_dir / "implementations").mkdir(exist_ok=True)
+        (pact_dir / "compositions").mkdir(exist_ok=True)
+        (pact_dir / "learnings").mkdir(exist_ok=True)
+        return
+
+    if args.stale:
+        removed = []
+        for name in ("dispatch", "daemon.pid", "shutdown"):
+            path = pact_dir / name
+            if path.exists():
+                path.unlink()
+                removed.append(name)
+        if removed:
+            print(f"Removed stale artifacts: {', '.join(removed)}")
+        else:
+            print("No stale artifacts found.")
+        return
+
+    if args.attempts:
+        impl_dir = pact_dir / "implementations"
+        removed_count = 0
+        if impl_dir.exists():
+            for comp_dir in impl_dir.iterdir():
+                if not comp_dir.is_dir():
+                    continue
+                attempts_dir = comp_dir / "attempts"
+                if attempts_dir.exists():
+                    shutil.rmtree(attempts_dir)
+                    removed_count += 1
+        if removed_count:
+            print(f"Removed attempt artifacts from {removed_count} component(s).")
+        else:
+            print("No attempt artifacts found.")
+        return
+
+    # Interactive: show what would be deleted
+    print("Artifacts in .pact/:")
+    total_size = 0
+    for item in sorted(pact_dir.rglob("*")):
+        if item.is_file():
+            size = item.stat().st_size
+            total_size += size
+            rel = item.relative_to(pact_dir)
+            print(f"  {rel} ({size:,} bytes)")
+
+    print(f"\nTotal: {total_size:,} bytes")
+    print("\nUse --stale, --attempts, or --all to remove specific artifacts.")
+
+
+def cmd_diff(args: argparse.Namespace) -> None:
+    """Show diff between competitive implementations or attempts."""
+    import difflib
+    from pathlib import Path
+
+    project = ProjectManager(args.project_dir)
+    component_id = args.component_id
+
+    attempts = project.list_attempts(component_id)
+    main_src = project._impl_dir / component_id / "src"
+
+    if not attempts and not main_src.exists():
+        print(f"No implementations found for component: {component_id}")
+        return
+
+    # Collect all available sources
+    sources: list[tuple[str, Path]] = []
+
+    if main_src.exists() and any(main_src.iterdir()):
+        sources.append(("current", main_src))
+
+    for attempt in attempts:
+        attempt_src = Path(attempt["path"]) / "src"
+        if attempt_src.exists() and any(attempt_src.iterdir()):
+            label = attempt["attempt_id"]
+            attempt_type = attempt.get("type", "competitive")
+            sources.append((f"{label} ({attempt_type})", attempt_src))
+
+    if len(sources) < 2:
+        if len(sources) == 1:
+            print(f"Only one implementation found: {sources[0][0]}")
+            src_dir = sources[0][1]
+            for f in sorted(src_dir.rglob("*")):
+                if f.is_file():
+                    print(f"  {f.relative_to(src_dir)}")
+        else:
+            print("No implementation sources found.")
+        return
+
+    print(f"Available implementations for {component_id}:")
+    for i, (label, _) in enumerate(sources):
+        print(f"  [{i}] {label}")
+
+    # Diff first two by default
+    label_a, src_a = sources[0]
+    label_b, src_b = sources[1]
+
+    print(f"\nDiff: {label_a} vs {label_b}")
+    print("=" * 60)
+
+    # Collect files from both
+    files_a = {f.relative_to(src_a): f for f in src_a.rglob("*") if f.is_file()}
+    files_b = {f.relative_to(src_b): f for f in src_b.rglob("*") if f.is_file()}
+    all_files = sorted(set(files_a.keys()) | set(files_b.keys()))
+
+    for rel_path in all_files:
+        fa = files_a.get(rel_path)
+        fb = files_b.get(rel_path)
+
+        if fa and not fb:
+            print(f"\n--- {rel_path} (only in {label_a})")
+            continue
+        if fb and not fa:
+            print(f"\n+++ {rel_path} (only in {label_b})")
+            continue
+
+        try:
+            lines_a = fa.read_text().splitlines(keepends=True)
+            lines_b = fb.read_text().splitlines(keepends=True)
+        except (UnicodeDecodeError, OSError):
+            print(f"\n[binary] {rel_path}")
+            continue
+
+        diff = list(difflib.unified_diff(
+            lines_a, lines_b,
+            fromfile=f"{label_a}/{rel_path}",
+            tofile=f"{label_b}/{rel_path}",
+        ))
+        if diff:
+            print()
+            for line in diff:
+                print(line, end="")
 
 
 if __name__ == "__main__":

@@ -86,6 +86,236 @@ class LinearClient:
             "url": result.get("url", ""),
         }
 
+    async def get_issue(self, issue_id: str) -> dict:
+        """Get a Linear issue by ID. Returns {id, title, description, state, comments}."""
+        if not self.configured:
+            return {}
+
+        try:
+            import httpx
+        except ImportError:
+            return {}
+
+        query = """
+        query GetIssue($id: String!) {
+            issue(id: $id) {
+                id
+                title
+                description
+                state { name }
+                comments {
+                    nodes {
+                        body
+                        createdAt
+                        user { name }
+                    }
+                }
+            }
+        }
+        """
+
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    self._base_url,
+                    json={"query": query, "variables": {"id": issue_id}},
+                    headers={
+                        "Authorization": self._api_key,
+                        "Content-Type": "application/json",
+                    },
+                )
+                data = resp.json()
+        except Exception:
+            logger.debug("Failed to get Linear issue %s", issue_id)
+            return {}
+
+        issue = data.get("data", {}).get("issue")
+        if not issue:
+            return {}
+
+        comments_raw = issue.get("comments", {}).get("nodes", [])
+        comments = [
+            {
+                "body": c.get("body", ""),
+                "createdAt": c.get("createdAt", ""),
+                "userName": (c.get("user") or {}).get("name", ""),
+            }
+            for c in comments_raw
+        ]
+
+        return {
+            "id": issue.get("id", ""),
+            "title": issue.get("title", ""),
+            "description": issue.get("description", ""),
+            "state": (issue.get("state") or {}).get("name", ""),
+            "comments": comments,
+        }
+
+    async def get_issue_comments(
+        self, issue_id: str, since: str = "",
+    ) -> list[dict]:
+        """Get comments on a Linear issue, optionally filtered by timestamp."""
+        if not self.configured:
+            return []
+
+        try:
+            import httpx
+        except ImportError:
+            return []
+
+        query = """
+        query GetComments($id: String!) {
+            issue(id: $id) {
+                comments {
+                    nodes {
+                        body
+                        createdAt
+                        user { name }
+                    }
+                }
+            }
+        }
+        """
+
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    self._base_url,
+                    json={"query": query, "variables": {"id": issue_id}},
+                    headers={
+                        "Authorization": self._api_key,
+                        "Content-Type": "application/json",
+                    },
+                )
+                data = resp.json()
+        except Exception:
+            logger.debug("Failed to get comments for %s", issue_id)
+            return []
+
+        nodes = (
+            data.get("data", {})
+            .get("issue", {})
+            .get("comments", {})
+            .get("nodes", [])
+        )
+
+        comments = [
+            {
+                "body": c.get("body", ""),
+                "createdAt": c.get("createdAt", ""),
+                "userName": (c.get("user") or {}).get("name", ""),
+            }
+            for c in nodes
+        ]
+
+        if since:
+            comments = [c for c in comments if c["createdAt"] > since]
+
+        return comments
+
+    async def add_comment(self, issue_id: str, body: str) -> bool:
+        """Post a markdown comment on a Linear issue."""
+        if not self.configured:
+            return False
+
+        try:
+            import httpx
+        except ImportError:
+            return False
+
+        mutation = """
+        mutation AddComment($input: CommentCreateInput!) {
+            commentCreate(input: $input) {
+                success
+            }
+        }
+        """
+
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    self._base_url,
+                    json={
+                        "query": mutation,
+                        "variables": {
+                            "input": {
+                                "issueId": issue_id,
+                                "body": body,
+                            },
+                        },
+                    },
+                    headers={
+                        "Authorization": self._api_key,
+                        "Content-Type": "application/json",
+                    },
+                )
+                data = resp.json()
+        except Exception:
+            logger.debug("Failed to add comment to %s", issue_id)
+            return False
+
+        return data.get("data", {}).get("commentCreate", {}).get("success", False)
+
+    async def search_issues(
+        self, query: str, team_id: str = "", limit: int = 5,
+    ) -> list[dict]:
+        """Search Linear issues. Returns [{id, identifier, title, description, state}]."""
+        if not self.configured:
+            return []
+
+        try:
+            import httpx
+        except ImportError:
+            return []
+
+        gql = """
+        query SearchIssues($query: String!, $first: Int) {
+            issueSearch(query: $query, first: $first) {
+                nodes {
+                    id
+                    identifier
+                    title
+                    description
+                    state { name }
+                }
+            }
+        }
+        """
+
+        search_query = query
+        if team_id:
+            search_query = f"team:{team_id} {query}"
+
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    self._base_url,
+                    json={
+                        "query": gql,
+                        "variables": {"query": search_query, "first": limit},
+                    },
+                    headers={
+                        "Authorization": self._api_key,
+                        "Content-Type": "application/json",
+                    },
+                )
+                data = resp.json()
+        except Exception:
+            logger.debug("Failed to search Linear issues")
+            return []
+
+        nodes = data.get("data", {}).get("issueSearch", {}).get("nodes", [])
+        return [
+            {
+                "id": n.get("id", ""),
+                "identifier": n.get("identifier", ""),
+                "title": n.get("title", ""),
+                "description": n.get("description", ""),
+                "state": (n.get("state") or {}).get("name", ""),
+            }
+            for n in nodes
+        ]
+
     async def update_issue_status(
         self,
         issue_id: str,

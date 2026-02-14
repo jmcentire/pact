@@ -47,6 +47,21 @@ class GlobalConfig:
     # Per-million-token pricing: {"model_id": [input_cost, output_cost]}
     model_pricing: dict[str, list[float]] = field(default_factory=dict)
 
+    # Integrations (all optional — empty string = disabled)
+    slack_webhook: str = ""           # or CF_SLACK_WEBHOOK env var
+    linear_api_key: str = ""          # or LINEAR_API_KEY env var
+    linear_team_id: str = ""
+    git_auto_commit: bool = False     # Auto-commit after each phase
+    git_auto_branch: bool = False     # Branch per component
+
+    # Bidirectional integration (read-side)
+    slack_bot_token: str = ""         # or PACT_SLACK_BOT_TOKEN env var
+    slack_channel: str = ""           # Channel ID for project threads
+    poll_integrations: bool = False   # Poll integrations when daemon pauses
+    poll_interval: int = 60           # Seconds between polls
+    max_poll_attempts: int = 10       # Max polls before giving up
+    context_max_chars: int = 4000     # Max external context in prompts
+
 
 @dataclass
 class ProjectConfig:
@@ -64,6 +79,21 @@ class ProjectConfig:
     competitive_agents: int | None = None
     max_concurrent_agents: int | None = None
     plan_only: bool | None = None
+
+    # Integrations (all optional — empty string = disabled)
+    slack_webhook: str = ""
+    linear_api_key: str = ""
+    linear_team_id: str = ""
+    git_auto_commit: bool | None = None
+    git_auto_branch: bool | None = None
+
+    # Bidirectional integration (read-side)
+    slack_bot_token: str = ""
+    slack_channel: str = ""
+    poll_integrations: bool | None = None
+    poll_interval: int | None = None
+    max_poll_attempts: int | None = None
+    context_max_chars: int | None = None
 
 
 def load_global_config(config_path: str | Path | None = None) -> GlobalConfig:
@@ -95,6 +125,17 @@ def load_global_config(config_path: str | Path | None = None) -> GlobalConfig:
         max_concurrent_agents=raw.get("max_concurrent_agents", 4),
         plan_only=raw.get("plan_only", False),
         model_pricing=raw.get("model_pricing", {}),
+        slack_webhook=raw.get("slack_webhook", ""),
+        linear_api_key=raw.get("linear_api_key", ""),
+        linear_team_id=raw.get("linear_team_id", ""),
+        git_auto_commit=raw.get("git_auto_commit", False),
+        git_auto_branch=raw.get("git_auto_branch", False),
+        slack_bot_token=raw.get("slack_bot_token", ""),
+        slack_channel=raw.get("slack_channel", ""),
+        poll_integrations=raw.get("poll_integrations", False),
+        poll_interval=raw.get("poll_interval", 60),
+        max_poll_attempts=raw.get("max_poll_attempts", 10),
+        context_max_chars=raw.get("context_max_chars", 4000),
     )
 
     # Apply pricing overrides if configured
@@ -135,6 +176,17 @@ def load_project_config(project_dir: str | Path) -> ProjectConfig:
         competitive_agents=raw.get("competitive_agents"),
         max_concurrent_agents=raw.get("max_concurrent_agents"),
         plan_only=raw.get("plan_only"),
+        slack_webhook=raw.get("slack_webhook", ""),
+        linear_api_key=raw.get("linear_api_key", ""),
+        linear_team_id=raw.get("linear_team_id", ""),
+        git_auto_commit=raw.get("git_auto_commit"),
+        git_auto_branch=raw.get("git_auto_branch"),
+        slack_bot_token=raw.get("slack_bot_token", ""),
+        slack_channel=raw.get("slack_channel", ""),
+        poll_integrations=raw.get("poll_integrations"),
+        poll_interval=raw.get("poll_interval"),
+        max_poll_attempts=raw.get("max_poll_attempts"),
+        context_max_chars=raw.get("context_max_chars"),
     )
 
 

@@ -111,3 +111,59 @@ class TestResolveBackend:
         pc = ProjectConfig(backend="claude_code")
         gc = GlobalConfig(role_backends={})
         assert resolve_backend("unknown", pc, gc) == "claude_code"
+
+
+class TestBidirectionalConfigFields:
+    def test_global_config_bidirectional_defaults(self):
+        gc = GlobalConfig()
+        assert gc.slack_bot_token == ""
+        assert gc.slack_channel == ""
+        assert gc.poll_integrations is False
+        assert gc.poll_interval == 60
+        assert gc.max_poll_attempts == 10
+        assert gc.context_max_chars == 4000
+
+    def test_project_config_bidirectional_defaults(self):
+        pc = ProjectConfig()
+        assert pc.slack_bot_token == ""
+        assert pc.slack_channel == ""
+        assert pc.poll_integrations is None
+        assert pc.poll_interval is None
+        assert pc.max_poll_attempts is None
+        assert pc.context_max_chars is None
+
+    def test_load_global_config_bidirectional(self, tmp_path: Path):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(yaml.dump({
+            "slack_bot_token": "xoxb-test-token",
+            "slack_channel": "C0123456789",
+            "poll_integrations": True,
+            "poll_interval": 30,
+            "max_poll_attempts": 5,
+            "context_max_chars": 2000,
+        }))
+        gc = load_global_config(config_path)
+        assert gc.slack_bot_token == "xoxb-test-token"
+        assert gc.slack_channel == "C0123456789"
+        assert gc.poll_integrations is True
+        assert gc.poll_interval == 30
+        assert gc.max_poll_attempts == 5
+        assert gc.context_max_chars == 2000
+
+    def test_load_project_config_bidirectional(self, tmp_path: Path):
+        config_path = tmp_path / "pact.yaml"
+        config_path.write_text(yaml.dump({
+            "slack_bot_token": "xoxb-project",
+            "slack_channel": "C999",
+            "poll_integrations": True,
+            "poll_interval": 45,
+            "max_poll_attempts": 20,
+            "context_max_chars": 8000,
+        }))
+        pc = load_project_config(tmp_path)
+        assert pc.slack_bot_token == "xoxb-project"
+        assert pc.slack_channel == "C999"
+        assert pc.poll_integrations is True
+        assert pc.poll_interval == 45
+        assert pc.max_poll_attempts == 20
+        assert pc.context_max_chars == 8000

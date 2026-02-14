@@ -26,6 +26,7 @@ from pathlib import Path
 
 from pact.budget import BudgetExceeded, BudgetTracker
 from pact.config import GlobalConfig, ProjectConfig
+from pact.events import EventBus
 from pact.lifecycle import format_run_summary
 from pact.project import ProjectManager
 from pact.scheduler import Scheduler
@@ -43,6 +44,10 @@ class Daemon:
         scheduler: Scheduler,
         health_check_interval: int = 30,
         max_idle: int = 600,
+        event_bus: EventBus | None = None,
+        poll_integrations: bool = False,
+        poll_interval: int = 60,
+        max_poll_attempts: int = 10,
     ) -> None:
         self.project = project
         self.scheduler = scheduler
@@ -51,6 +56,10 @@ class Daemon:
         self.health_check_interval = health_check_interval  # t: PID check interval
         self.max_idle = max_idle  # t': max wait before alert+exit
         self._shutdown_requested = False
+        self.event_bus = event_bus
+        self.poll_integrations = poll_integrations
+        self.poll_interval = poll_interval
+        self.max_poll_attempts = max_poll_attempts
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -170,11 +179,62 @@ class Daemon:
     async def _wait_for_signal(self) -> str | None:
         """Block on FIFO read with health-check timeouts.
 
+        If poll_integrations is enabled, race FIFO read against polling loop.
         Returns the signal message, or None if max_idle exceeded.
-        Uses a thread to avoid blocking the event loop.
         """
+        if self.poll_integrations and self.event_bus:
+            # Race: FIFO read vs integration polling
+            fifo_task = asyncio.create_task(self._fifo_read_async())
+            poll_task = asyncio.create_task(self._poll_integrations_loop())
+
+            done, pending = await asyncio.wait(
+                {fifo_task, poll_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+            for task in done:
+                return task.result()
+
+            return None
+
+        # Default: just wait on FIFO
+        return await self._fifo_read_async()
+
+    async def _fifo_read_async(self) -> str | None:
+        """Async wrapper around blocking FIFO read."""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self._blocking_wait)
+
+    async def _poll_integrations_loop(self) -> str | None:
+        """Poll integrations for human responses."""
+        from pact.human.context import check_for_human_response
+
+        for _ in range(self.max_poll_attempts):
+            await asyncio.sleep(self.poll_interval)
+
+            response = await check_for_human_response(self.event_bus)
+            if response:
+                # Save as interview answer if applicable
+                interview = self.project.load_interview()
+                if interview and not interview.approved:
+                    for q in interview.questions:
+                        if q not in interview.user_answers:
+                            interview.user_answers[q] = response
+                            break
+                    interview.approved = True
+                    self.project.save_interview(interview)
+
+                logger.info("Integration poll found response: %s", response[:100])
+                return "approved"
+
+        return None
 
     def _blocking_wait(self) -> str | None:
         """Blocking FIFO read with two-tier timeout.

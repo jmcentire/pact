@@ -48,5 +48,14 @@ class AgentBase:
         """Call LLM with schema enforcement. Returns (result, input_tokens, output_tokens)."""
         return await self._backend.assess(schema, prompt, system, max_tokens)
 
+    def with_learnings(self, learnings: list[dict]) -> str:
+        """Format learnings as context string for prompts."""
+        if not learnings:
+            return ""
+        lines = ["Learnings from previous runs:"]
+        for entry in learnings[-10:]:
+            lines.append(f"  - [{entry.get('category', '')}] {entry.get('lesson', '')}")
+        return "\n".join(lines)
+
     async def close(self) -> None:
         await self._backend.close()

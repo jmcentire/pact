@@ -326,6 +326,8 @@ def render_handoff_brief(
     prior_failures: list[str] | None = None,
     attempt: int = 1,
     sops: str = "",
+    external_context: str = "",
+    learnings: str = "",
 ) -> str:
     """Render a complete handoff document for a fresh agent.
 
@@ -395,7 +397,18 @@ def render_handoff_brief(
             lines.append(f"  FAIL: {fd.test_id} — {fd.error_message}")
         lines.append("")
 
-    # Section 6: SOPs
+    # Section 6: External context (from integrations)
+    if external_context:
+        lines.append(external_context)
+        lines.append("")
+
+    # Section 7: Learnings from previous runs
+    if learnings:
+        lines.append("## LEARNINGS")
+        lines.append(learnings)
+        lines.append("")
+
+    # Section 8: SOPs
     if sops:
         lines.append("## OPERATING PROCEDURES (mandatory)")
         lines.append(sops)

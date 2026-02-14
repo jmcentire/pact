@@ -29,6 +29,7 @@ from pact.config import (
 )
 from pact.decomposer import decompose_and_contract, run_interview
 from pact.diagnoser import determine_recovery_action, diagnose_failure
+from pact.events import EventBus, PactEvent
 from pact.implementer import implement_all
 from pact.integrator import integrate_all
 from pact.lifecycle import advance_phase, format_run_summary
@@ -47,11 +48,15 @@ class Scheduler:
         global_config: GlobalConfig,
         project_config: ProjectConfig,
         budget: BudgetTracker,
+        event_bus: EventBus | None = None,
     ) -> None:
         self.project = project
         self.global_config = global_config
         self.project_config = project_config
         self.budget = budget
+        self.event_bus = event_bus or EventBus(
+            project.project_dir, global_config, project_config,
+        )
         self.check_interval = (
             project_config.check_interval
             or global_config.check_interval
@@ -106,22 +111,93 @@ class Scheduler:
     async def _do_burst(self, state: RunState) -> RunState:
         """Execute one phase of work."""
         sops = self.project.load_sops()
+        phase = state.phase
 
-        if state.phase == "interview":
+        # Resolve context_max_chars from config
+        context_max_chars = (
+            self.project_config.context_max_chars
+            if self.project_config.context_max_chars is not None
+            else self.global_config.context_max_chars
+        )
+
+        # Gather external context and learnings for agent phases
+        external_context = ""
+        learnings_str = ""
+        if phase in ("implement", "integrate", "diagnose"):
+            try:
+                from pact.human.context import gather_context
+                ctx = await gather_context(self.event_bus, phase=phase)
+                external_context = ctx.format_for_prompt(max_chars=context_max_chars)
+            except Exception:
+                pass
+
+            try:
+                raw_learnings = self.project.load_learnings()
+                if raw_learnings:
+                    from pact.agents.base import AgentBase
+                    learnings_str = AgentBase.with_learnings(None, raw_learnings)
+            except Exception:
+                pass
+
+        await self.event_bus.emit(PactEvent(
+            kind="phase_start",
+            project_name=self.project.project_dir.name,
+            detail=phase,
+        ))
+
+        if phase == "interview":
             state = await self._phase_interview(state, sops)
-        elif state.phase == "decompose":
+        elif phase == "decompose":
             state = await self._phase_decompose(state, sops)
-        elif state.phase == "contract":
+        elif phase == "contract":
             # Contract phase is part of decompose
             advance_phase(state)
-        elif state.phase == "implement":
-            state = await self._phase_implement(state, sops)
-        elif state.phase == "integrate":
-            state = await self._phase_integrate(state, sops)
-        elif state.phase == "diagnose":
+        elif phase == "implement":
+            state = await self._phase_implement(
+                state, sops,
+                external_context=external_context,
+                learnings=learnings_str,
+            )
+        elif phase == "integrate":
+            state = await self._phase_integrate(
+                state, sops,
+                external_context=external_context,
+                learnings=learnings_str,
+            )
+        elif phase == "diagnose":
             state = await self._phase_diagnose(state, sops)
-        elif state.phase == "complete":
+        elif phase == "complete":
             state.complete()
+            await self.event_bus.emit(PactEvent(
+                kind="run_complete",
+                project_name=self.project.project_dir.name,
+                detail="completed",
+            ))
+
+        # Emit phase_complete if we advanced
+        if state.phase != phase and state.status == "active":
+            await self.event_bus.emit(PactEvent(
+                kind="phase_complete",
+                project_name=self.project.project_dir.name,
+                detail=phase,
+                component_id=str(len(self.project.load_tree().nodes)) if phase == "decompose" and self.project.load_tree() else "",
+            ))
+
+        # Budget warning at 80%
+        if self.budget.spend_percentage >= 80.0 and state.status == "active":
+            await self.event_bus.emit(PactEvent(
+                kind="budget_warning",
+                project_name=self.project.project_dir.name,
+                detail=f"{self.budget.spend_percentage:.0f}% spent (${self.budget.project_spend:.2f} of ${self.budget.per_project_cap:.2f})",
+            ))
+
+        # Emit human_needed when paused
+        if state.status == "paused":
+            await self.event_bus.emit(PactEvent(
+                kind="human_needed",
+                project_name=self.project.project_dir.name,
+                detail=state.pause_reason,
+            ))
 
         return state
 
@@ -196,6 +272,8 @@ class Scheduler:
     async def _phase_implement(
         self, state: RunState, sops: str,
         target_components: set[str] | None = None,
+        external_context: str = "",
+        learnings: str = "",
     ) -> RunState:
         """Implement all leaf components."""
         tree = self.project.load_tree()
@@ -223,7 +301,27 @@ class Scheduler:
                 max_concurrent=pcfg.max_concurrent,
                 agent_factory=self._make_agent_factory("code_author") if (pcfg.parallel or pcfg.competitive) else None,
                 target_components=target_components,
+                external_context=external_context,
+                learnings=learnings,
             )
+
+            # Emit per-component events
+            for cid, r in results.items():
+                if r.all_passed:
+                    await self.event_bus.emit(PactEvent(
+                        kind="component_complete",
+                        project_name=self.project.project_dir.name,
+                        component_id=cid,
+                        test_results=r,
+                    ))
+                else:
+                    await self.event_bus.emit(PactEvent(
+                        kind="component_failed",
+                        project_name=self.project.project_dir.name,
+                        component_id=cid,
+                        detail=f"{r.failed}/{r.total} tests failed",
+                        test_results=r,
+                    ))
 
             # Check for failures
             failed = [cid for cid, r in results.items() if not r.all_passed]
@@ -237,7 +335,11 @@ class Scheduler:
 
         return state
 
-    async def _phase_integrate(self, state: RunState, sops: str) -> RunState:
+    async def _phase_integrate(
+        self, state: RunState, sops: str,
+        external_context: str = "",
+        learnings: str = "",
+    ) -> RunState:
         """Integrate all non-leaf components."""
         tree = self.project.load_tree()
         if not tree:

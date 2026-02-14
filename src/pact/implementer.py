@@ -45,6 +45,8 @@ async def implement_component(
     max_attempts: int = 3,
     sops: str = "",
     max_plan_revisions: int = 2,
+    external_context: str = "",
+    learnings: str = "",
 ) -> TestResults:
     """Implement a single component and run its contract tests.
 
@@ -69,6 +71,8 @@ async def implement_component(
             attempt=attempt,
             sops=sops,
             max_plan_revisions=max_plan_revisions,
+            external_context=external_context,
+            learnings=learnings,
         )
 
         # Save implementation files
@@ -144,6 +148,8 @@ async def _run_one_competitor(
     sops: str,
     max_plan_revisions: int,
     attempt_id: str,
+    external_context: str = "",
+    learnings: str = "",
 ) -> ScoredAttempt:
     """Run a single competitive attempt, writing to its own attempt directory."""
     prior_failures: list[str] = []
@@ -164,6 +170,8 @@ async def _run_one_competitor(
             attempt=attempt,
             sops=sops,
             max_plan_revisions=max_plan_revisions,
+            external_context=external_context,
+            learnings=learnings,
         )
 
         # Save to attempt directory (not main src)
@@ -219,6 +227,8 @@ async def implement_component_competitive(
     num_agents: int = 2,
     sops: str = "",
     max_plan_revisions: int = 2,
+    external_context: str = "",
+    learnings: str = "",
 ) -> TestResults:
     """Run N agents on the same component in parallel. Best wins.
 
@@ -241,6 +251,8 @@ async def implement_component_competitive(
                 sops=sops,
                 max_plan_revisions=max_plan_revisions,
                 attempt_id=attempt_ids[i],
+                external_context=external_context,
+                learnings=learnings,
             )
             for i in range(num_agents)
         ]
@@ -282,6 +294,8 @@ async def implement_all(
     max_concurrent: int = 4,
     agent_factory: Callable[[], AgentBase] | None = None,
     target_components: set[str] | None = None,
+    external_context: str = "",
+    learnings: str = "",
 ) -> dict[str, TestResults]:
     """Implement all leaf components.
 
@@ -347,6 +361,8 @@ async def implement_all(
                 num_agents=competitive_agents,
                 sops=sops,
                 max_plan_revisions=max_plan_revisions,
+                external_context=external_context,
+                learnings=learnings,
             )
         else:
             impl_agent = agent_factory() if (parallel and agent_factory) else agent
@@ -359,6 +375,8 @@ async def implement_all(
                     max_attempts=max_attempts,
                     sops=sops,
                     max_plan_revisions=max_plan_revisions,
+                    external_context=external_context,
+                    learnings=learnings,
                 )
             finally:
                 if parallel and agent_factory and impl_agent is not agent:

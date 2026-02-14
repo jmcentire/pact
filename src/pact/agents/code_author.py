@@ -59,6 +59,8 @@ async def author_code(
     attempt: int = 1,
     sops: str = "",
     max_plan_revisions: int = 2,
+    external_context: str = "",
+    learnings: str = "",
 ) -> ImplementationResult:
     """Generate implementation code following the Research-First Protocol.
 
@@ -136,6 +138,8 @@ async def author_code(
         prior_failures=prior_failures,
         attempt=attempt,
         sops=sops,
+        external_context=external_context,
+        learnings=learnings,
     )
 
     prompt = f"""Implement the component described in this handoff brief.
