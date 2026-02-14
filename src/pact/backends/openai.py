@@ -1,0 +1,156 @@
+"""OpenAI backend — structured output via tool_choice + strict mode.
+
+Also compatible with DeepSeek, Together AI, Groq, and any provider
+implementing the OpenAI API spec via base_url override.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+from typing import TypeVar
+
+from pydantic import BaseModel, ValidationError
+
+from pact.budget import BudgetExceeded, BudgetTracker
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T", bound=BaseModel)
+
+
+class OpenAIBackend:
+    """Backend using the OpenAI API with tool_choice for structured extraction."""
+
+    def __init__(
+        self,
+        budget: BudgetTracker,
+        model: str = "gpt-4o",
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ) -> None:
+        try:
+            from openai import AsyncOpenAI
+        except ImportError as exc:
+            raise ImportError(
+                "The 'openai' package is required. Install with: pip install openai"
+            ) from exc
+
+        resolved_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        if not resolved_key:
+            raise ValueError("OPENAI_API_KEY environment variable is required.")
+
+        kwargs: dict = {
+            "api_key": resolved_key,
+            "max_retries": 3,
+            "timeout": 600.0,
+        }
+        if base_url:
+            kwargs["base_url"] = base_url
+
+        self._client = AsyncOpenAI(**kwargs)
+        self._model = model
+        self._budget = budget
+
+    def set_model(self, model: str) -> None:
+        self._model = model
+
+    async def assess(
+        self,
+        schema: type[T],
+        prompt: str,
+        system: str,
+        max_tokens: int = 32768,
+    ) -> tuple[T, int, int]:
+        """Call LLM with schema enforcement via tool_choice."""
+        tool_name = schema.__name__
+        tool_schema = schema.model_json_schema()
+        tool_schema.pop("title", None)
+
+        # Ensure all properties have explicit types for strict mode
+        # and add additionalProperties: false for strict compliance
+        _prepare_strict_schema(tool_schema)
+
+        for attempt in range(3):
+            try:
+                response = await self._client.chat.completions.create(
+                    model=self._model,
+                    max_tokens=max_tokens,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": prompt},
+                    ],
+                    tools=[{
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "description": schema.__doc__ or f"Extract {tool_name}",
+                            "parameters": tool_schema,
+                            "strict": True,
+                        },
+                    }],
+                    tool_choice={
+                        "type": "function",
+                        "function": {"name": tool_name},
+                    },
+                )
+            except Exception as e:
+                if attempt < 2:
+                    logger.warning("OpenAI API error (attempt %d): %s", attempt + 1, e)
+                    continue
+                raise
+
+            usage = response.usage
+            in_tok = usage.prompt_tokens if usage else 0
+            out_tok = usage.completion_tokens if usage else 0
+
+            if not self._budget.record_tokens(in_tok, out_tok):
+                raise BudgetExceeded(f"Budget exceeded after {in_tok}+{out_tok} tokens")
+
+            # Extract tool call
+            message = response.choices[0].message
+            if not message.tool_calls:
+                if attempt < 2:
+                    continue
+                raise RuntimeError(f"No tool call returned for {tool_name}")
+
+            tool_call = message.tool_calls[0]
+            try:
+                raw = json.loads(tool_call.function.arguments)
+                parsed = schema.model_validate(raw)
+                return parsed, in_tok, out_tok
+            except (json.JSONDecodeError, ValidationError) as e:
+                if attempt < 2:
+                    logger.warning("Parse error (attempt %d): %s", attempt + 1, e)
+                    continue
+                raise
+
+        raise RuntimeError(f"Failed to get valid {tool_name} after 3 attempts")
+
+    async def close(self) -> None:
+        await self._client.close()
+
+
+def _prepare_strict_schema(schema: dict) -> None:
+    """Recursively prepare a JSON schema for OpenAI strict mode.
+
+    Strict mode requires additionalProperties: false on all objects
+    and all properties must be listed in 'required'.
+    """
+    if schema.get("type") == "object" and "properties" in schema:
+        schema["additionalProperties"] = False
+        if "required" not in schema:
+            schema["required"] = list(schema["properties"].keys())
+
+    # Handle $defs
+    for defn in schema.get("$defs", {}).values():
+        _prepare_strict_schema(defn)
+
+    # Recurse into properties
+    for prop in schema.get("properties", {}).values():
+        if isinstance(prop, dict):
+            _prepare_strict_schema(prop)
+            # Handle array items
+            if "items" in prop and isinstance(prop["items"], dict):
+                _prepare_strict_schema(prop["items"])

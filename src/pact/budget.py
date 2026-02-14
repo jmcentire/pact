@@ -13,10 +13,24 @@ from dataclasses import dataclass, field
 logger = logging.getLogger(__name__)
 
 # Built-in defaults — overridable via config.yaml model_pricing
+# Format: model_id -> (input_cost_per_million, output_cost_per_million)
 DEFAULT_MODEL_PRICING: dict[str, tuple[float, float]] = {
+    # Anthropic
     "claude-haiku-4-5-20251001": (0.80, 4.00),
     "claude-sonnet-4-5-20250929": (3.00, 15.00),
     "claude-opus-4-6": (15.00, 75.00),
+    # OpenAI
+    "gpt-4o": (2.50, 10.00),
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-4-turbo": (10.00, 30.00),
+    "o3": (10.00, 40.00),
+    "o3-mini": (1.10, 4.40),
+    # Google Gemini
+    "gemini-2.5-pro": (1.25, 10.00),
+    "gemini-2.5-flash": (0.15, 0.60),
+    "gemini-2.5-flash-lite": (0.075, 0.30),
+    "gemini-3-pro-preview": (1.25, 10.00),
+    "gemini-3-flash-preview": (0.15, 0.60),
 }
 
 # Active pricing table — starts as defaults, can be updated
@@ -122,6 +136,18 @@ class BudgetTracker:
     @property
     def project_tokens(self) -> tuple[int, int]:
         return self._project_tokens_in, self._project_tokens_out
+
+    @property
+    def budget_remaining(self) -> float:
+        """Remaining budget for the current project."""
+        return max(0.0, self.per_project_cap - self._project_spend)
+
+    @property
+    def spend_percentage(self) -> float:
+        """Percentage of project budget spent (0.0 - 100.0+)."""
+        if self.per_project_cap <= 0:
+            return 100.0
+        return (self._project_spend / self.per_project_cap) * 100.0
 
     @property
     def daily_spend(self) -> float:
