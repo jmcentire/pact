@@ -82,6 +82,11 @@ class Scheduler:
             state.fail(f"Unexpected error: {e}")
             logger.exception("Scheduler error for %s", state.id)
 
+        # Sync budget tracker totals to persistent state
+        in_tok, out_tok = self.budget.project_tokens
+        state.total_tokens = in_tok + out_tok
+        state.total_cost_usd = self.budget.project_spend
+
         state.last_check_in = datetime.now().isoformat()
         self.project.save_state(state)
         return state
@@ -370,6 +375,11 @@ class Scheduler:
             f"{component_id}: {test_results.passed}/{test_results.total} passed"
             + (f" (competitive, {num_agents} agents)" if competitive else ""),
         )
+
+        # Sync budget tracker totals to persistent state
+        in_tok, out_tok = self.budget.project_tokens
+        state.total_tokens = in_tok + out_tok
+        state.total_cost_usd = self.budget.project_spend
 
         state.last_check_in = datetime.now().isoformat()
         self.project.save_state(state)

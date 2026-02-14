@@ -101,7 +101,18 @@ class Daemon:
             logger.info("Dispatching phase: %s", state.phase)
             self.project.append_audit("daemon_dispatch", f"Phase: {state.phase}")
 
-            state = await self.scheduler.run_once()
+            try:
+                state = await asyncio.wait_for(
+                    self.scheduler.run_once(),
+                    timeout=self.max_idle,
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    "Phase %s timed out after %ds", state.phase, self.max_idle,
+                )
+                state.fail(f"Phase {state.phase} timed out after {self.max_idle}s")
+                self.project.save_state(state)
+                return state
 
             logger.info(
                 "Phase complete: %s -> %s (%s)",

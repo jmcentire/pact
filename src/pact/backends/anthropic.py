@@ -5,6 +5,7 @@ Reused from swarm with import path adaptation.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -127,18 +128,25 @@ class AnthropicBackend:
         tool_schema = schema.model_json_schema()
         tool_schema.pop("title", None)
 
-        message = await self._client.messages.create(
-            model=self._model,
-            max_tokens=max_tokens,
-            system=system,
-            messages=[{"role": "user", "content": prompt}],
-            tools=[{
-                "name": tool_name,
-                "description": schema.__doc__ or f"Extract {tool_name}",
-                "input_schema": tool_schema,
-            }],
-            tool_choice={"type": "tool", "name": tool_name},
-        )
+        try:
+            message = await asyncio.wait_for(
+                self._client.messages.create(
+                    model=self._model,
+                    max_tokens=max_tokens,
+                    system=system,
+                    messages=[{"role": "user", "content": prompt}],
+                    tools=[{
+                        "name": tool_name,
+                        "description": schema.__doc__ or f"Extract {tool_name}",
+                        "input_schema": tool_schema,
+                    }],
+                    tool_choice={"type": "tool", "name": tool_name},
+                ),
+                timeout=120.0,
+            )
+        except asyncio.TimeoutError:
+            logger.error("Anthropic API call timed out after 120s for %s", tool_name)
+            raise RuntimeError(f"Anthropic API call timed out after 120s for {tool_name}")
 
         in_tok = message.usage.input_tokens
         out_tok = message.usage.output_tokens
