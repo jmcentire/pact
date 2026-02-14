@@ -123,30 +123,31 @@ class AnthropicBackend:
         prompt: str,
         system: str,
         max_tokens: int,
+        stall_timeout: float = 120.0,
     ) -> tuple[dict | None, str, int, int]:
+        """Call LLM with streaming progress detection.
+
+        Uses streaming so we can distinguish a stalled connection
+        (no events for stall_timeout seconds) from a legitimately
+        long generation that's actively producing tokens.
+        """
         tool_name = schema.__name__
         tool_schema = schema.model_json_schema()
         tool_schema.pop("title", None)
 
         try:
-            message = await asyncio.wait_for(
-                self._client.messages.create(
-                    model=self._model,
-                    max_tokens=max_tokens,
-                    system=system,
-                    messages=[{"role": "user", "content": prompt}],
-                    tools=[{
-                        "name": tool_name,
-                        "description": schema.__doc__ or f"Extract {tool_name}",
-                        "input_schema": tool_schema,
-                    }],
-                    tool_choice={"type": "tool", "name": tool_name},
-                ),
-                timeout=120.0,
+            message = await self._stream_with_stall_detection(
+                tool_name, tool_schema, schema.__doc__ or f"Extract {tool_name}",
+                prompt, system, max_tokens, stall_timeout,
             )
         except asyncio.TimeoutError:
-            logger.error("Anthropic API call timed out after 120s for %s", tool_name)
-            raise RuntimeError(f"Anthropic API call timed out after 120s for {tool_name}")
+            logger.error(
+                "Anthropic API stalled (no progress for %.0fs) for %s",
+                stall_timeout, tool_name,
+            )
+            raise RuntimeError(
+                f"Anthropic API stalled (no progress for {stall_timeout:.0f}s) for {tool_name}"
+            )
 
         in_tok = message.usage.input_tokens
         out_tok = message.usage.output_tokens
@@ -160,6 +161,45 @@ class AnthropicBackend:
                 return block.input, stop_reason, in_tok, out_tok
 
         return None, stop_reason, in_tok, out_tok
+
+    async def _stream_with_stall_detection(
+        self,
+        tool_name: str,
+        tool_schema: dict,
+        tool_description: str,
+        prompt: str,
+        system: str,
+        max_tokens: int,
+        stall_timeout: float,
+    ):
+        """Stream a response, raising TimeoutError if no event arrives within stall_timeout.
+
+        Unlike a hard timeout on the full request, this only fires when the
+        connection goes silent — a 10-minute generation that's actively
+        streaming tokens will never trigger it.
+        """
+        async with self._client.messages.stream(
+            model=self._model,
+            max_tokens=max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": prompt}],
+            tools=[{
+                "name": tool_name,
+                "description": tool_description,
+                "input_schema": tool_schema,
+            }],
+            tool_choice={"type": "tool", "name": tool_name},
+        ) as stream:
+            aiter = stream.__aiter__()
+            while True:
+                try:
+                    await asyncio.wait_for(aiter.__anext__(), timeout=stall_timeout)
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError:
+                    raise asyncio.TimeoutError()
+
+        return stream.get_final_message()
 
     async def close(self) -> None:
         await self._client.close()
