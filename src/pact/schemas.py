@@ -226,7 +226,11 @@ class DecompositionTree(BaseModel):
         return self.nodes.get(node.parent_id)
 
     def topological_order(self) -> list[str]:
-        """Return component IDs in dependency order (leaves first)."""
+        """Return component IDs in dependency order (leaves first).
+
+        Visits ALL nodes, not just those reachable from root,
+        to handle trees with orphaned subtrees.
+        """
         visited: set[str] = set()
         order: list[str] = []
 
@@ -240,7 +244,11 @@ class DecompositionTree(BaseModel):
                     visit(child_id)
                 order.append(node_id)
 
+        # Start from root, then sweep any orphaned nodes
         visit(self.root_id)
+        for node_id in self.nodes:
+            if node_id not in visited:
+                visit(node_id)
         return order
 
     def leaf_parallel_groups(self) -> list[list[str]]:
