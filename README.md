@@ -82,7 +82,7 @@ pact build my-project sync_tracker --competitive --agents 3
 | `pact init <project>` | Scaffold a new project |
 | `pact run <project>` | Run the pipeline |
 | `pact daemon <project>` | Event-driven mode (recommended) |
-| `pact status <project>` | Show current state |
+| `pact status <project> [component]` | Show project or component status |
 | `pact components <project>` | List components with status |
 | `pact build <project> <id>` | Build/rebuild a specific component |
 | `pact interview <project>` | Run interview phase only |
@@ -91,6 +91,8 @@ pact build my-project sync_tracker --competitive --agents 3
 | `pact validate <project>` | Re-run contract validation |
 | `pact design <project>` | Regenerate design.md |
 | `pact stop <project>` | Gracefully stop a running daemon |
+| `pact log <project>` | Show audit trail (`--tail N`, `--json`) |
+| `pact ping` | Test API connection and show pricing |
 | `pact signal <project>` | Resume a paused daemon |
 
 ## Configuration
@@ -105,6 +107,12 @@ competitive_implementations: false
 competitive_agents: 2
 max_concurrent_agents: 4
 plan_only: false
+
+# Override token pricing (per million tokens: [input, output])
+model_pricing:
+  claude-opus-4-6: [15.00, 75.00]
+  claude-sonnet-4-5-20250929: [3.00, 15.00]
+  claude-haiku-4-5-20251001: [0.80, 4.00]
 ```
 
 **Per-project** (`pact.yaml` in project directory):

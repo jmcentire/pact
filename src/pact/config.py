@@ -44,6 +44,9 @@ class GlobalConfig:
     max_concurrent_agents: int = 4
     plan_only: bool = False
 
+    # Per-million-token pricing: {"model_id": [input_cost, output_cost]}
+    model_pricing: dict[str, list[float]] = field(default_factory=dict)
+
 
 @dataclass
 class ProjectConfig:
@@ -75,7 +78,7 @@ def load_global_config(config_path: str | Path | None = None) -> GlobalConfig:
     with open(config_path) as f:
         raw = yaml.safe_load(f) or {}
 
-    return GlobalConfig(
+    config = GlobalConfig(
         model=raw.get("model", GlobalConfig.model),
         default_budget=raw.get("default_budget", GlobalConfig.default_budget),
         check_interval=raw.get("check_interval", GlobalConfig.check_interval),
@@ -91,7 +94,21 @@ def load_global_config(config_path: str | Path | None = None) -> GlobalConfig:
         competitive_agents=raw.get("competitive_agents", 2),
         max_concurrent_agents=raw.get("max_concurrent_agents", 4),
         plan_only=raw.get("plan_only", False),
+        model_pricing=raw.get("model_pricing", {}),
     )
+
+    # Apply pricing overrides if configured
+    if config.model_pricing:
+        from pact.budget import set_model_pricing_table
+        overrides = {
+            model_id: (costs[0], costs[1])
+            for model_id, costs in config.model_pricing.items()
+            if isinstance(costs, list) and len(costs) == 2
+        }
+        if overrides:
+            set_model_pricing_table(overrides)
+
+    return config
 
 
 def load_project_config(project_dir: str | Path) -> ProjectConfig:

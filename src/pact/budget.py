@@ -12,22 +12,39 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-MODEL_PRICING: dict[str, tuple[float, float]] = {
+# Built-in defaults — overridable via config.yaml model_pricing
+DEFAULT_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-haiku-4-5-20251001": (0.80, 4.00),
     "claude-sonnet-4-5-20250929": (3.00, 15.00),
     "claude-opus-4-6": (15.00, 75.00),
 }
 
+# Active pricing table — starts as defaults, can be updated
+_active_pricing: dict[str, tuple[float, float]] = dict(DEFAULT_MODEL_PRICING)
+
+
+def set_model_pricing_table(overrides: dict[str, tuple[float, float]]) -> None:
+    """Override the pricing table with user-configured values."""
+    _active_pricing.update(overrides)
+
+
+def get_model_pricing_table() -> dict[str, tuple[float, float]]:
+    """Return the current active pricing table."""
+    return dict(_active_pricing)
+
 
 def pricing_for_model(model: str) -> tuple[float, float]:
     """Look up (input_cost, output_cost) per million tokens."""
-    if model in MODEL_PRICING:
-        return MODEL_PRICING[model]
-    for key, pricing in MODEL_PRICING.items():
+    if model in _active_pricing:
+        return _active_pricing[model]
+    for key, pricing in _active_pricing.items():
         if key.startswith(model) or model.startswith(key.rsplit("-", 1)[0]):
             return pricing
     logger.warning("Unknown model %r — defaulting to Haiku rates", model)
-    return MODEL_PRICING["claude-haiku-4-5-20251001"]
+    return _active_pricing.get(
+        "claude-haiku-4-5-20251001",
+        DEFAULT_MODEL_PRICING["claude-haiku-4-5-20251001"],
+    )
 
 
 class BudgetExceeded(Exception):

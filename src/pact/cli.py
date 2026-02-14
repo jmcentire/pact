@@ -1,19 +1,21 @@
 """CLI entry points for pact.
 
 Commands:
-  pact init <project-dir>       Scaffold a new project
-  pact status <project-dir>     Show current state
-  pact run <project-dir>        Run the pipeline (single burst or poll loop)
-  pact daemon <project-dir>     Run event-driven daemon (FIFO-based, zero-delay)
-  pact stop <project-dir>       Gracefully stop a running daemon
-  pact signal <project-dir>     Send signal to daemon (resume, approve, etc.)
-  pact interview <project-dir>  Run interview phase only
-  pact answer <project-dir>     Answer interview questions
-  pact approve <project-dir>    Approve interview + signal daemon to continue
-  pact validate <project-dir>   Re-run contract validation gate
-  pact design <project-dir>     Regenerate design.md
-  pact components <project-dir> List all components with status
-  pact build <project-dir> <id> Rebuild a specific component
+  pact init <project-dir>              Scaffold a new project
+  pact status <project-dir> [comp]     Show project or component status
+  pact run <project-dir>               Run the pipeline (single burst or poll loop)
+  pact daemon <project-dir>            Run event-driven daemon (FIFO-based, zero-delay)
+  pact stop <project-dir>              Gracefully stop a running daemon
+  pact signal <project-dir>            Send signal to daemon (resume, approve, etc.)
+  pact log <project-dir>               Show audit trail
+  pact ping                            Test API connection and show pricing
+  pact interview <project-dir>         Run interview phase only
+  pact answer <project-dir>            Answer interview questions
+  pact approve <project-dir>           Approve interview + signal daemon to continue
+  pact validate <project-dir>          Re-run contract validation gate
+  pact design <project-dir>            Regenerate design.md
+  pact components <project-dir>        List all components with status
+  pact build <project-dir> <id>        Rebuild a specific component
 """
 
 from __future__ import annotations
@@ -49,8 +51,9 @@ def main() -> None:
     p_init.add_argument("--budget", type=float, default=10.00, help="Budget cap in dollars")
 
     # status
-    p_status = subparsers.add_parser("status", help="Show project status")
+    p_status = subparsers.add_parser("status", help="Show project or component status")
     p_status.add_argument("project_dir", help="Project directory path")
+    p_status.add_argument("component_id", nargs="?", default=None, help="Optional component ID for detailed view")
 
     # run (legacy poll-based)
     p_run = subparsers.add_parser("run", help="Run the pipeline (poll-based)")
@@ -74,6 +77,15 @@ def main() -> None:
     # stop
     p_stop = subparsers.add_parser("stop", help="Gracefully stop a running daemon")
     p_stop.add_argument("project_dir", help="Project directory path")
+
+    # log
+    p_log = subparsers.add_parser("log", help="Show audit trail")
+    p_log.add_argument("project_dir", help="Project directory path")
+    p_log.add_argument("--tail", type=int, default=0, help="Show last N entries (default: all)")
+    p_log.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
+
+    # ping
+    p_ping = subparsers.add_parser("ping", help="Test API connection and show pricing")
 
     # signal
     p_signal = subparsers.add_parser("signal", help="Send signal to running daemon")
@@ -134,6 +146,10 @@ def main() -> None:
         asyncio.run(cmd_daemon(args))
     elif args.command == "stop":
         cmd_stop(args)
+    elif args.command == "log":
+        cmd_log(args)
+    elif args.command == "ping":
+        asyncio.run(cmd_ping(args))
     elif args.command == "signal":
         cmd_signal(args)
     elif args.command == "interview":
@@ -163,10 +179,15 @@ def cmd_init(args: argparse.Namespace) -> None:
 
 
 def cmd_status(args: argparse.Namespace) -> None:
-    """Show project status."""
+    """Show project status, or detailed component status if component_id given."""
     from pact.daemon import check_daemon_health
 
     project = ProjectManager(args.project_dir)
+
+    # If component_id given, show detailed component view
+    if args.component_id:
+        _show_component_detail(project, args.component_id)
+        return
 
     # Daemon status
     health = check_daemon_health(args.project_dir)
@@ -205,6 +226,95 @@ def cmd_status(args: argparse.Namespace) -> None:
         print(f"\nAudit trail: {len(audit)} entries")
         for entry in audit[-5:]:
             print(f"  {entry.get('timestamp', '')[:19]} {entry.get('action', '')} — {entry.get('detail', '')}")
+
+
+def _show_component_detail(project: ProjectManager, component_id: str) -> None:
+    """Show detailed status for a single component."""
+    tree = project.load_tree()
+    if not tree:
+        print("No decomposition tree found.")
+        return
+
+    node = tree.nodes.get(component_id)
+    if not node:
+        print(f"Component not found: {component_id}")
+        print("Available components:")
+        for n in tree.nodes.values():
+            print(f"  {n.component_id}: {n.name}")
+        return
+
+    # Basic info
+    node_type = "parent" if node.children else "leaf"
+    print(f"Component: {node.name}")
+    print(f"  ID: {node.component_id}")
+    print(f"  Type: {node_type} (depth {node.depth})")
+    print(f"  Status: {node.implementation_status}")
+    if node.parent_id:
+        parent = tree.nodes.get(node.parent_id)
+        print(f"  Parent: {parent.name if parent else node.parent_id}")
+    if node.children:
+        print(f"  Children: {', '.join(node.children)}")
+
+    # Contract
+    contract = project.load_contract(component_id)
+    if contract:
+        print(f"\nContract (v{contract.version}):")
+        print(f"  Functions: {len(contract.functions)}")
+        for fn in contract.functions:
+            inputs = ", ".join(f"{i.name}: {i.type_ref}" for i in fn.inputs)
+            print(f"    {fn.name}({inputs}) -> {fn.output_type}")
+        if contract.types:
+            print(f"  Types: {', '.join(t.name for t in contract.types)}")
+        if contract.dependencies:
+            print(f"  Dependencies: {', '.join(contract.dependencies)}")
+        if contract.invariants:
+            print(f"  Invariants:")
+            for inv in contract.invariants:
+                print(f"    - {inv}")
+    else:
+        print("\nContract: not yet generated")
+
+    # Tests
+    suite = project.load_test_suite(component_id)
+    if suite:
+        print(f"\nTest Suite:")
+        print(f"  Cases: {len(suite.test_cases)}")
+        for tc in suite.test_cases:
+            print(f"    [{tc.category}] {tc.id}: {tc.description[:60]}")
+        if suite.generated_code:
+            lines = suite.generated_code.count("\n") + 1
+            print(f"  Generated code: {lines} lines")
+    else:
+        print("\nTest Suite: not yet generated")
+
+    # Test results
+    if node.test_results:
+        tr = node.test_results
+        status = "PASS" if tr.all_passed else "FAIL"
+        print(f"\nTest Results: {status} ({tr.passed}/{tr.total} passed, {tr.failed} failed, {tr.errors} errors)")
+        if tr.failure_details:
+            print(f"  Failures:")
+            for fd in tr.failure_details:
+                print(f"    {fd.test_id}: {fd.error_message[:80]}")
+
+    # Attempts
+    attempts = project.list_attempts(component_id)
+    if attempts:
+        print(f"\nAttempts: {len(attempts)}")
+        for a in attempts:
+            attempt_type = a.get("type", "competitive")
+            print(f"  {a['attempt_id']} ({attempt_type})")
+
+    # Implementation files
+    impl_src = project._impl_dir / component_id / "src"
+    if impl_src.exists() and any(impl_src.iterdir()):
+        files = list(impl_src.rglob("*"))
+        source_files = [f for f in files if f.is_file()]
+        print(f"\nImplementation: {len(source_files)} file(s)")
+        for f in source_files[:10]:
+            print(f"  {f.relative_to(impl_src)}")
+        if len(source_files) > 10:
+            print(f"  ... and {len(source_files) - 10} more")
 
 
 async def cmd_run(args: argparse.Namespace) -> None:
@@ -275,6 +385,93 @@ async def cmd_daemon(args: argparse.Namespace) -> None:
     state = await daemon.run()
     print()
     print(format_run_summary(state))
+
+
+def cmd_log(args: argparse.Namespace) -> None:
+    """Show audit trail."""
+    project = ProjectManager(args.project_dir)
+    audit = project.load_audit()
+
+    if not audit:
+        print("No audit entries.")
+        return
+
+    if args.tail > 0:
+        audit = audit[-args.tail:]
+
+    if getattr(args, "json_output", False):
+        print(json.dumps(audit, indent=2))
+        return
+
+    for entry in audit:
+        ts = entry.get("timestamp", "")[:19]
+        action = entry.get("action", "")
+        detail = entry.get("detail", "")
+        print(f"{ts}  {action:<20s}  {detail}")
+
+    if not args.tail:
+        print(f"\n{len(audit)} entries total")
+
+
+async def cmd_ping(args: argparse.Namespace) -> None:
+    """Test API connection and show pricing configuration."""
+    import os
+    from pact.budget import get_model_pricing_table
+
+    global_config = load_global_config()
+
+    # Show configured pricing
+    pricing = get_model_pricing_table()
+    print("Model Pricing (per million tokens):")
+    print(f"  {'Model':<35s} {'Input':>8s}  {'Output':>8s}")
+    print(f"  {'-'*35} {'-'*8}  {'-'*8}")
+    for model, (inp, out) in sorted(pricing.items()):
+        print(f"  {model:<35s} ${inp:>7.2f}  ${out:>7.2f}")
+
+    if global_config.model_pricing:
+        print("\n  (includes overrides from config.yaml)")
+
+    # Test API connection
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        print("\nAPI Connection: ANTHROPIC_API_KEY not set")
+        print("  Set it with: export ANTHROPIC_API_KEY=sk-...")
+        return
+
+    print(f"\nAPI Key: ...{api_key[-8:]}")
+    print(f"Default model: {global_config.model}")
+
+    try:
+        import anthropic
+    except ImportError:
+        print("API Connection: anthropic package not installed")
+        print("  Install with: pip install -e '.[llm]'")
+        return
+
+    print("Testing connection...", end=" ", flush=True)
+    try:
+        client = anthropic.AsyncAnthropic(api_key=api_key, timeout=15.0)
+        try:
+            message = await client.messages.create(
+                model=global_config.model,
+                max_tokens=16,
+                messages=[{"role": "user", "content": "Reply with only the word: pong"}],
+            )
+            reply = message.content[0].text.strip() if message.content else ""
+            in_tok = message.usage.input_tokens
+            out_tok = message.usage.output_tokens
+            print(f"OK ({reply})")
+            print(f"  Tokens: {in_tok} in / {out_tok} out")
+            cost = (
+                in_tok * pricing.get(global_config.model, (0, 0))[0] / 1_000_000
+                + out_tok * pricing.get(global_config.model, (0, 0))[1] / 1_000_000
+            )
+            print(f"  Cost: ${cost:.6f}")
+        finally:
+            await client.close()
+    except Exception as e:
+        print(f"FAILED")
+        print(f"  Error: {e}")
 
 
 def cmd_stop(args: argparse.Namespace) -> None:
