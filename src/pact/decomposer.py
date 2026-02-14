@@ -169,11 +169,8 @@ set is_trivial=true and provide a single component."""
             child_ids.update(c.get("children", []))
 
         root_candidates = all_ids - child_ids
-        if root_candidates:
-            root_id = next(iter(root_candidates))
-        else:
-            root_id = response.components[0].get("id", "root")
 
+        # Build nodes first
         for comp in response.components:
             cid = comp.get("id", "")
             if not cid:
@@ -182,19 +179,65 @@ set is_trivial=true and provide a single component."""
                 component_id=cid,
                 name=comp.get("name", cid),
                 description=comp.get("description", ""),
-                depth=1 if cid != root_id else 0,
-                parent_id=root_id if cid != root_id else "",
                 children=comp.get("children", []),
             )
 
-        # Ensure root has children listed
-        if root_id in nodes:
-            leaf_ids = [
-                cid for cid in nodes
-                if cid != root_id and not nodes[cid].children
-            ]
-            if not nodes[root_id].children:
-                nodes[root_id].children = leaf_ids
+        if len(root_candidates) == 1:
+            root_id = next(iter(root_candidates))
+        elif len(root_candidates) > 1:
+            # Multiple top-level groups — create synthetic root
+            root_id = "root"
+            top_level = sorted(root_candidates - {""})
+            nodes[root_id] = DecompositionNode(
+                component_id=root_id,
+                name="Root",
+                description=task[:200],
+                depth=0,
+                children=list(top_level),
+            )
+            logger.info(
+                "Created synthetic root for %d top-level groups: %s",
+                len(top_level), ", ".join(top_level),
+            )
+        else:
+            root_id = response.components[0].get("id", "root")
+
+        # Assign depths and parent_ids from root downward
+        def assign_depth(nid: str, depth: int, parent: str) -> None:
+            node = nodes.get(nid)
+            if not node:
+                return
+            node.depth = depth
+            node.parent_id = parent
+            for child_id in node.children:
+                assign_depth(child_id, depth + 1, nid)
+
+        assign_depth(root_id, 0, "")
+
+        # Adopt any remaining orphans (nodes not reachable from root)
+        reachable: set[str] = set()
+        def collect_reachable(nid: str) -> None:
+            reachable.add(nid)
+            node = nodes.get(nid)
+            if node:
+                for child_id in node.children:
+                    collect_reachable(child_id)
+        collect_reachable(root_id)
+
+        orphans = [nid for nid in nodes if nid not in reachable]
+        if orphans:
+            logger.warning("Adopting %d orphaned nodes under root: %s", len(orphans), ", ".join(orphans))
+            root_node = nodes[root_id]
+            for nid in orphans:
+                if nid not in root_node.children:
+                    root_node.children.append(nid)
+                nodes[nid].parent_id = root_id
+                nodes[nid].depth = 1
+
+        # Ensure root has children if it has none
+        if root_id in nodes and not nodes[root_id].children:
+            leaf_ids = [cid for cid in nodes if cid != root_id]
+            nodes[root_id].children = leaf_ids
 
     tree = DecompositionTree(root_id=root_id, nodes=nodes)
 
