@@ -90,6 +90,7 @@ pact build my-project sync_tracker --competitive --agents 3
 | `pact approve <project>` | Approve with defaults |
 | `pact validate <project>` | Re-run contract validation |
 | `pact design <project>` | Regenerate design.md |
+| `pact stop <project>` | Gracefully stop a running daemon |
 | `pact signal <project>` | Resume a paused daemon |
 
 ## Configuration

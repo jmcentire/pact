@@ -5,6 +5,7 @@ Commands:
   pact status <project-dir>     Show current state
   pact run <project-dir>        Run the pipeline (single burst or poll loop)
   pact daemon <project-dir>     Run event-driven daemon (FIFO-based, zero-delay)
+  pact stop <project-dir>       Gracefully stop a running daemon
   pact signal <project-dir>     Send signal to daemon (resume, approve, etc.)
   pact interview <project-dir>  Run interview phase only
   pact answer <project-dir>     Answer interview questions
@@ -70,6 +71,10 @@ def main() -> None:
         help="Max seconds to wait for human input before exiting (default: 600)",
     )
 
+    # stop
+    p_stop = subparsers.add_parser("stop", help="Gracefully stop a running daemon")
+    p_stop.add_argument("project_dir", help="Project directory path")
+
     # signal
     p_signal = subparsers.add_parser("signal", help="Send signal to running daemon")
     p_signal.add_argument("project_dir", help="Project directory path")
@@ -127,6 +132,8 @@ def main() -> None:
         asyncio.run(cmd_run(args))
     elif args.command == "daemon":
         asyncio.run(cmd_daemon(args))
+    elif args.command == "stop":
+        cmd_stop(args)
     elif args.command == "signal":
         cmd_signal(args)
     elif args.command == "interview":
@@ -268,6 +275,35 @@ async def cmd_daemon(args: argparse.Namespace) -> None:
     state = await daemon.run()
     print()
     print(format_run_summary(state))
+
+
+def cmd_stop(args: argparse.Namespace) -> None:
+    """Gracefully stop a running daemon.
+
+    Uses two mechanisms:
+    1. FIFO "shutdown" signal (if daemon is paused and waiting on FIFO)
+    2. Sentinel file .pact/shutdown (if daemon is mid-phase)
+    The daemon checks for both between phases and during FIFO waits.
+    """
+    from pathlib import Path
+    from pact.daemon import check_daemon_health, send_signal
+
+    health = check_daemon_health(args.project_dir)
+    if not health["alive"]:
+        print("No daemon running.")
+        return
+
+    # Write sentinel file for mid-phase shutdown
+    pact_dir = Path(args.project_dir).resolve() / ".pact"
+    shutdown_path = pact_dir / "shutdown"
+    shutdown_path.write_text("shutdown")
+
+    # Also try FIFO signal in case daemon is paused
+    send_signal(args.project_dir, "shutdown")
+
+    print(f"Shutdown signal sent to daemon (PID {health['pid']}).")
+    print("Daemon will stop cleanly after the current phase completes.")
+    print(f"State is preserved — restart with: pact daemon {args.project_dir}")
 
 
 def cmd_signal(args: argparse.Namespace) -> None:

@@ -50,6 +50,7 @@ class Daemon:
         self.pid_path = project._pact_dir / "daemon.pid"
         self.health_check_interval = health_check_interval  # t: PID check interval
         self.max_idle = max_idle  # t': max wait before alert+exit
+        self._shutdown_requested = False
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -57,11 +58,40 @@ class Daemon:
         """Run the dispatch loop. Returns final state."""
         self._ensure_fifo()
         self._write_pid()
+        self._start_shutdown_listener()
 
         try:
             return await self._dispatch_loop()
         finally:
             self._cleanup()
+
+    # ── Shutdown Listener ───────────────────────────────────────────
+
+    def _start_shutdown_listener(self) -> None:
+        """Start a background thread that watches a shutdown sentinel file.
+
+        The FIFO is used for paused-state signaling. For mid-phase shutdown,
+        we use a sentinel file (.pact/shutdown) so we don't compete with
+        the FIFO reader. `pact stop` creates the sentinel; the dispatch loop
+        checks for it between phases.
+        """
+        self._shutdown_path = self.project._pact_dir / "shutdown"
+        # Clean up any stale sentinel from a previous run
+        if self._shutdown_path.exists():
+            self._shutdown_path.unlink()
+
+    def _check_shutdown(self) -> bool:
+        """Check if a shutdown has been requested (sentinel file or flag)."""
+        if self._shutdown_requested:
+            return True
+        if self._shutdown_path.exists():
+            self._shutdown_requested = True
+            try:
+                self._shutdown_path.unlink()
+            except OSError:
+                pass
+            return True
+        return False
 
     # ── Dispatch Loop ───────────────────────────────────────────────
 
@@ -69,6 +99,14 @@ class Daemon:
         """Core loop: fire phases immediately, block on FIFO when paused."""
         while True:
             state = self.project.load_state()
+
+            # Check for shutdown between phases
+            if self._check_shutdown():
+                logger.info("Shutdown requested — exiting cleanly between phases")
+                state.pause("Shutdown requested")
+                self.project.save_state(state)
+                self.project.append_audit("daemon_shutdown", "Clean shutdown between phases")
+                return state
 
             if state.status in ("completed", "failed", "budget_exceeded"):
                 logger.info("Run terminal: %s", state.status)
@@ -89,6 +127,13 @@ class Daemon:
                     return state
 
                 logger.info("Received signal: %s", signal_msg.strip())
+
+                if signal_msg.strip() == "shutdown":
+                    logger.info("Shutdown signal received — exiting cleanly")
+                    state.pause_reason = "Shutdown requested"
+                    self.project.save_state(state)
+                    self.project.append_audit("daemon_shutdown", "Clean shutdown via FIFO signal")
+                    return state
 
                 # Unpause
                 state.status = "active"
