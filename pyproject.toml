@@ -20,6 +20,17 @@ pact = "pact.cli:main"
 llm = [
     "anthropic>=0.40",
 ]
+openai = [
+    "openai>=1.0",
+]
+gemini = [
+    "google-genai>=1.0",
+]
+all-backends = [
+    "anthropic>=0.40",
+    "openai>=1.0",
+    "google-genai>=1.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

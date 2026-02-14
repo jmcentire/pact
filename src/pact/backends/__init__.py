@@ -42,6 +42,12 @@ def create_backend(
     if name == "anthropic":
         from pact.backends.anthropic import AnthropicBackend
         return AnthropicBackend(budget=budget, model=model)
+    elif name == "openai":
+        from pact.backends.openai import OpenAIBackend
+        return OpenAIBackend(budget=budget, model=model)
+    elif name == "gemini":
+        from pact.backends.gemini import GeminiBackend
+        return GeminiBackend(budget=budget, model=model)
     elif name == "claude_code":
         from pact.backends.claude_code import ClaudeCodeBackend
         return ClaudeCodeBackend(budget=budget, model=model, repo_path=repo_path)
@@ -54,5 +60,5 @@ def create_backend(
     else:
         raise ValueError(
             f"Unknown backend: {name}. "
-            f"Available: anthropic, claude_code, claude_code_team"
+            f"Available: anthropic, openai, gemini, claude_code, claude_code_team"
         )
