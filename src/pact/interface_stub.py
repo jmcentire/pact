@@ -1,0 +1,458 @@
+"""Interface stub generation — the agent's mental model.
+
+Renders a ComponentContract into a code-shaped reference document that
+LLMs consume dramatically better than raw JSON schemas. Research shows
+AI performs significantly better when given interface stubs vs schema dumps.
+
+The stub looks like actual code — type definitions, function signatures,
+docstrings with pre/postconditions, error specifications, and validators.
+This is the "header file" that every agent receives as their mental model
+of the component they're working with (or working against).
+
+Even for dynamically-typed target languages, the stub gives agents a
+precise conceptual model. We don't need the language to be strongly typed;
+we just need agents to know the valid shapes, constraints, and expectations.
+
+Three output formats:
+  1. render_stub()        — Python-style interface stub (.pyi-like)
+  2. render_dependency_map() — compact reference for all dependencies
+  3. render_handoff_brief()  — complete context for agent handoff
+"""
+
+from __future__ import annotations
+
+from pact.schemas import (
+    ComponentContract,
+    ComponentTask,
+    ContractTestSuite,
+    DecompositionTree,
+    ErrorCase,
+    FieldSpec,
+    FunctionContract,
+    RunState,
+    TestResults,
+    TypeSpec,
+    ValidatorSpec,
+)
+
+
+# ── Interface Stub Rendering ─────────────────────────────────────────
+
+
+def render_stub(contract: ComponentContract) -> str:
+    """Render a contract as a Python-style interface stub.
+
+    This is the primary "mental model" artifact. It looks like code,
+    not like a JSON schema. Agents consume this format far more accurately.
+
+    Example output:
+        # === Pricing Engine (pricing) v1 ===
+        # Dependencies: inventory, tax_calculator
+
+        class PriceResult:
+            \"\"\"Final price calculation result.\"\"\"
+            base_price: float          # required
+            tax_amount: float          # required
+            total: float               # required, postcondition: total == base_price + tax_amount
+            currency: str = "USD"      # optional, validators: regex(^[A-Z]{3}$)
+
+        class PricingError(Enum):
+            UNIT_NOT_FOUND = "unit_not_found"
+            INVALID_DATES = "invalid_dates"
+
+        def calculate_price(
+            unit_id: str,              # required, precondition: non-empty
+            check_in: str,             # required, validators: regex(^\\d{4}-\\d{2}-\\d{2}$)
+            check_out: str,            # required
+            guest_count: int = 1,      # optional, validators: range(1, 20)
+        ) -> PriceResult:
+            \"\"\"Calculate the nightly price for a unit stay.
+
+            Preconditions:
+              - check_in < check_out
+              - unit_id exists in inventory
+
+            Postconditions:
+              - result.total > 0
+              - result.currency is valid ISO 4217
+
+            Errors:
+              - UNIT_NOT_FOUND: when unit_id not in inventory
+              - INVALID_DATES: when check_in >= check_out
+
+            Side effects: none
+            Idempotent: yes
+            \"\"\"
+            ...
+    """
+    lines: list[str] = []
+
+    # Header
+    dep_str = f"  Dependencies: {', '.join(contract.dependencies)}" if contract.dependencies else ""
+    lines.append(f"# === {contract.name} ({contract.component_id}) v{contract.version} ===")
+    if dep_str:
+        lines.append(f"#{dep_str}")
+    if contract.description:
+        lines.append(f"# {contract.description}")
+    lines.append("")
+
+    # Invariants (module-level)
+    if contract.invariants:
+        lines.append("# Module invariants:")
+        for inv in contract.invariants:
+            lines.append(f"#   - {inv}")
+        lines.append("")
+
+    # Type definitions
+    for type_spec in contract.types:
+        lines.extend(_render_type(type_spec))
+        lines.append("")
+
+    # Function signatures
+    for func in contract.functions:
+        lines.extend(_render_function(func))
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _render_type(t: TypeSpec) -> list[str]:
+    """Render a single type definition."""
+    lines: list[str] = []
+
+    if t.kind == "enum":
+        lines.append(f"class {t.name}(Enum):")
+        if t.description:
+            lines.append(f'    """{t.description}"""')
+        for variant in t.variants:
+            lines.append(f'    {variant.upper()} = "{variant}"')
+        if not t.variants:
+            lines.append("    pass")
+        return lines
+
+    if t.kind == "struct":
+        lines.append(f"class {t.name}:")
+        if t.description:
+            lines.append(f'    """{t.description}"""')
+        for field in t.fields:
+            lines.append(f"    {_render_field_line(field)}")
+        if not t.fields:
+            lines.append("    pass")
+        return lines
+
+    if t.kind == "list":
+        lines.append(f"{t.name} = list[{t.item_type}]")
+        if t.description:
+            lines.append(f"# {t.description}")
+        return lines
+
+    if t.kind == "optional":
+        inner = t.inner_types[0] if t.inner_types else "Any"
+        lines.append(f"{t.name} = {inner} | None")
+        return lines
+
+    if t.kind == "union":
+        union_str = " | ".join(t.inner_types) if t.inner_types else "Any"
+        lines.append(f"{t.name} = {union_str}")
+        return lines
+
+    # Primitive alias
+    lines.append(f"{t.name} = {t.kind}  # {t.description}" if t.description else f"{t.name} = {t.kind}")
+    return lines
+
+
+def _render_field_line(field: FieldSpec) -> str:
+    """Render a single field as a stub line with annotations."""
+    parts = [f"{field.name}: {field.type_ref}"]
+
+    annotations: list[str] = []
+    if not field.required:
+        if field.default:
+            parts[0] += f" = {field.default}"
+        else:
+            parts[0] += " = None"
+        annotations.append("optional")
+    else:
+        annotations.append("required")
+
+    for v in field.validators:
+        annotations.append(f"{v.kind}({v.expression})")
+
+    if field.description:
+        annotations.append(field.description)
+
+    comment = ", ".join(annotations)
+    return f"{parts[0]:40s} # {comment}"
+
+
+def _render_function(func: FunctionContract) -> list[str]:
+    """Render a function signature with full docstring."""
+    lines: list[str] = []
+
+    # Signature
+    params: list[str] = []
+    for inp in func.inputs:
+        p = f"    {inp.name}: {inp.type_ref}"
+        if not inp.required:
+            p += f" = {inp.default}" if inp.default else " = None"
+        # Add inline validator comment
+        if inp.validators:
+            v_str = ", ".join(f"{v.kind}({v.expression})" for v in inp.validators)
+            p += f",{' ' * max(1, 30 - len(p))}# {v_str}"
+        else:
+            p += ","
+        params.append(p)
+
+    if params:
+        lines.append(f"def {func.name}(")
+        lines.extend(params)
+        lines.append(f") -> {func.output_type}:")
+    else:
+        lines.append(f"def {func.name}() -> {func.output_type}:")
+
+    # Docstring
+    doc_lines: list[str] = []
+    if func.description:
+        doc_lines.append(func.description)
+        doc_lines.append("")
+
+    if func.preconditions:
+        doc_lines.append("Preconditions:")
+        for pre in func.preconditions:
+            doc_lines.append(f"  - {pre}")
+        doc_lines.append("")
+
+    if func.postconditions:
+        doc_lines.append("Postconditions:")
+        for post in func.postconditions:
+            doc_lines.append(f"  - {post}")
+        doc_lines.append("")
+
+    if func.error_cases:
+        doc_lines.append("Errors:")
+        for err in func.error_cases:
+            doc_lines.append(f"  - {err.name} ({err.error_type}): {err.condition}")
+            if err.error_data:
+                for k, v in err.error_data.items():
+                    doc_lines.append(f"      {k}: {v}")
+        doc_lines.append("")
+
+    if func.side_effects:
+        doc_lines.append(f"Side effects: {', '.join(func.side_effects)}")
+    else:
+        doc_lines.append("Side effects: none")
+
+    doc_lines.append(f"Idempotent: {'yes' if func.idempotent else 'no'}")
+
+    lines.append('    """')
+    for dl in doc_lines:
+        lines.append(f"    {dl}" if dl else "")
+    lines.append('    """')
+    lines.append("    ...")
+
+    return lines
+
+
+# ── Dependency Map ───────────────────────────────────────────────────
+
+
+def render_dependency_map(
+    component_id: str,
+    contracts: dict[str, ComponentContract],
+) -> str:
+    """Render a compact reference of all dependencies' interfaces.
+
+    This gives agents working on `component_id` a quick reference for
+    every function they can call on their dependencies, without seeing
+    the full contract details. It's a "what can I use?" cheat sheet.
+
+    Example:
+        # Available dependencies for: checkout
+
+        ## pricing (v1)
+        calculate_price(unit_id: str, dates: DateRange) -> PriceResult
+          errors: UNIT_NOT_FOUND, INVALID_DATES
+          types: PriceResult{base_price: float, tax: float, total: float}
+
+        ## inventory (v1)
+        check_availability(unit_id: str, dates: DateRange) -> bool
+          errors: UNIT_NOT_FOUND
+    """
+    contract = contracts.get(component_id)
+    if not contract:
+        return f"# No contract found for {component_id}"
+
+    lines = [f"# Available dependencies for: {component_id}", ""]
+
+    for dep_id in contract.dependencies:
+        dep = contracts.get(dep_id)
+        if not dep:
+            lines.append(f"## {dep_id} — NOT FOUND")
+            lines.append("")
+            continue
+
+        lines.append(f"## {dep.name} ({dep_id}) v{dep.version}")
+
+        # Compact type summary
+        for t in dep.types:
+            if t.kind == "struct" and t.fields:
+                fields_str = ", ".join(f"{f.name}: {f.type_ref}" for f in t.fields)
+                lines.append(f"  type {t.name} {{ {fields_str} }}")
+            elif t.kind == "enum" and t.variants:
+                lines.append(f"  enum {t.name} {{ {', '.join(t.variants)} }}")
+
+        # Compact function signatures
+        for func in dep.functions:
+            inputs_str = ", ".join(f"{i.name}: {i.type_ref}" for i in func.inputs)
+            errors_str = ""
+            if func.error_cases:
+                errors_str = f"\n    errors: {', '.join(e.name for e in func.error_cases)}"
+            lines.append(f"  {func.name}({inputs_str}) -> {func.output_type}{errors_str}")
+
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+# ── Handoff Brief ────────────────────────────────────────────────────
+
+
+def render_handoff_brief(
+    component_id: str,
+    contract: ComponentContract,
+    contracts: dict[str, ComponentContract],
+    test_suite: ContractTestSuite | None = None,
+    test_results: TestResults | None = None,
+    prior_failures: list[str] | None = None,
+    attempt: int = 1,
+    sops: str = "",
+) -> str:
+    """Render a complete handoff document for a fresh agent.
+
+    This is the "you're picking up where someone left off" briefing.
+    Designed so a brand-new agent with zero prior context can understand
+    exactly what to do, what's been tried, and what constraints apply.
+
+    The brief contains:
+    1. Interface stub (mental model)
+    2. Dependency map (what you can call)
+    3. Test summary (what you must pass)
+    4. History (what's been tried, what failed)
+    5. SOPs (rules to follow)
+    """
+    lines: list[str] = []
+
+    # Section 1: Mission
+    lines.append("# HANDOFF BRIEF")
+    lines.append(f"## Component: {contract.name} ({component_id})")
+    lines.append(f"## Attempt: {attempt}")
+    lines.append("")
+
+    # Section 2: Interface (the mental model)
+    lines.append("## YOUR INTERFACE CONTRACT")
+    lines.append("```python")
+    lines.append(render_stub(contract))
+    lines.append("```")
+    lines.append("")
+
+    # Section 3: Dependencies
+    if contract.dependencies:
+        lines.append("## AVAILABLE DEPENDENCIES")
+        lines.append("```")
+        lines.append(render_dependency_map(component_id, contracts))
+        lines.append("```")
+        lines.append("")
+
+    # Section 4: Tests to pass
+    if test_suite:
+        lines.append(f"## TESTS TO PASS ({len(test_suite.test_cases)} cases)")
+        for tc in test_suite.test_cases:
+            marker = ""
+            if test_results and test_results.failure_details:
+                failed_ids = {f.test_id for f in test_results.failure_details}
+                if tc.id in failed_ids:
+                    marker = " ** PREVIOUSLY FAILED **"
+            lines.append(f"  - [{tc.category}] {tc.id}: {tc.description}{marker}")
+        lines.append("")
+
+        if test_suite.generated_code:
+            lines.append("### Test code:")
+            lines.append("```python")
+            lines.append(test_suite.generated_code)
+            lines.append("```")
+            lines.append("")
+
+    # Section 5: History (what's been tried)
+    if prior_failures:
+        lines.append("## PRIOR FAILURES (do NOT repeat these mistakes)")
+        for i, failure in enumerate(prior_failures, 1):
+            lines.append(f"  {i}. {failure}")
+        lines.append("")
+
+    if test_results and not test_results.all_passed:
+        lines.append(f"## LAST TEST RUN: {test_results.passed}/{test_results.total} passed")
+        for fd in test_results.failure_details[:5]:
+            lines.append(f"  FAIL: {fd.test_id} — {fd.error_message}")
+        lines.append("")
+
+    # Section 6: SOPs
+    if sops:
+        lines.append("## OPERATING PROCEDURES (mandatory)")
+        lines.append(sops)
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+# ── Progress Snapshot ────────────────────────────────────────────────
+
+
+def render_progress_snapshot(
+    state: RunState,
+    tree: DecompositionTree | None = None,
+    contracts: dict[str, ComponentContract] | None = None,
+) -> str:
+    """Render a compact progress snapshot for scheduler resumption.
+
+    This is what gets read when the scheduler wakes up or when a human
+    wants to understand current state at a glance.
+    """
+    lines = [
+        "# PROGRESS SNAPSHOT",
+        f"Run: {state.id} | Phase: {state.phase} | Status: {state.status}",
+        f"Cost: ${state.total_cost_usd:.4f} | Tokens: {state.total_tokens:,}",
+        "",
+    ]
+
+    if state.pause_reason:
+        lines.append(f"PAUSED: {state.pause_reason}")
+        lines.append("")
+
+    if tree:
+        lines.append("## Components:")
+        for node_id in tree.topological_order():
+            node = tree.nodes[node_id]
+            icon = {
+                "pending": "[ ]", "contracted": "[C]",
+                "implemented": "[I]", "tested": "[+]", "failed": "[X]",
+            }.get(node.implementation_status, "[?]")
+            test_info = ""
+            if node.test_results:
+                tr = node.test_results
+                test_info = f" ({tr.passed}/{tr.total} tests)"
+            dep_info = ""
+            if node.children:
+                dep_info = f" -> [{', '.join(node.children)}]"
+            lines.append(f"  {icon} {node.name} ({node.component_id}){dep_info}{test_info}")
+        lines.append("")
+
+    if state.component_tasks:
+        active = [t for t in state.component_tasks if t.status == "implementing"]
+        failed = [t for t in state.component_tasks if t.status == "failed"]
+        if active:
+            lines.append(f"Active: {', '.join(t.component_id for t in active)}")
+        if failed:
+            lines.append(f"Failed: {', '.join(f'{t.component_id} ({t.last_error[:50]})' for t in failed)}")
+        lines.append("")
+
+    return "\n".join(lines)

@@ -1,0 +1,23 @@
+# Contract-First Global Configuration
+
+model: claude-opus-4-6
+default_budget: 10.00
+check_interval: 300  # seconds between scheduler polls
+
+role_models:
+  decomposer: claude-opus-4-6
+  contract_author: claude-opus-4-6
+  test_author: claude-sonnet-4-5-20250929
+  code_author: claude-opus-4-6
+  trace_analyst: claude-opus-4-6
+
+role_backends:
+  decomposer: anthropic
+  contract_author: anthropic
+  test_author: claude_code
+  code_author: claude_code
+  trace_analyst: claude_code
+
+max_implementation_attempts: 3
+max_plan_revisions: 2
+autonomous_timeout: 600  # seconds before proceeding with assumptions
