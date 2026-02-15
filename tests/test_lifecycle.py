@@ -21,8 +21,14 @@ class TestCreateRun:
 
 
 class TestAdvancePhase:
-    def test_interview_to_decompose(self):
+    def test_interview_to_shape(self):
         state = RunState(id="x", project_dir="/tmp", phase="interview")
+        result = advance_phase(state)
+        assert result == "shape"
+        assert state.phase == "shape"
+
+    def test_shape_to_decompose(self):
+        state = RunState(id="x", project_dir="/tmp", phase="shape")
         result = advance_phase(state)
         assert result == "decompose"
         assert state.phase == "decompose"

@@ -26,6 +26,9 @@ def render_design_doc(doc: DesignDocument) -> str:
     if doc.summary:
         lines.extend(["## Summary", "", doc.summary, ""])
 
+    if hasattr(doc, 'shaping_summary') and doc.shaping_summary:
+        lines.extend(["## Shaping", "", doc.shaping_summary, ""])
+
     if doc.decomposition_tree:
         lines.extend(_render_tree(doc.decomposition_tree))
 

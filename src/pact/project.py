@@ -528,6 +528,31 @@ class ProjectManager:
         else:
             path.write_text(json.dumps(research, indent=2, default=str))
 
+    # ── Shaping Pitch ─────────────────────────────────────────────
+
+    @property
+    def pitch_path(self) -> Path:
+        return self._decomp_dir / "pitch.json"
+
+    def save_pitch(self, pitch: object) -> None:
+        """Save a ShapingPitch to decomposition/pitch.json."""
+        self._decomp_dir.mkdir(parents=True, exist_ok=True)
+        if hasattr(pitch, "model_dump_json"):
+            self.pitch_path.write_text(pitch.model_dump_json(indent=2))
+        else:
+            import json
+            self.pitch_path.write_text(json.dumps(pitch, indent=2, default=str))
+
+    def load_pitch(self) -> object | None:
+        """Load a ShapingPitch from decomposition/pitch.json."""
+        if not self.pitch_path.exists():
+            return None
+        try:
+            from pact.schemas_shaping import ShapingPitch
+            return ShapingPitch.model_validate_json(self.pitch_path.read_text())
+        except Exception:
+            return None
+
     # ── Design Document ────────────────────────────────────────────
 
     def save_design_doc(self, doc: DesignDocument) -> None:

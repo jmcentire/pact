@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -53,7 +54,7 @@ async def run_contract_tests(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env={"PYTHONPATH": env_path, "PATH": "/usr/bin:/usr/local/bin"},
+            env={"PYTHONPATH": env_path, "PATH": os.environ.get("PATH", "/usr/bin:/usr/local/bin")},
             cwd=str(impl_dir.parent),
         )
         stdout, stderr = await asyncio.wait_for(

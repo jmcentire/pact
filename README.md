@@ -6,6 +6,32 @@ Pact is a multi-agent software engineering framework where the architecture is d
 
 The insight: LLMs are unreliable reviewers but tests are perfectly reliable judges. So make the tests first, make them mechanical, and let agents iterate until they pass. No advisory coordination. No "looks good to me." Pass or fail.
 
+## When to Use Pact
+
+Pact is for projects where **getting the boundaries right matters more than getting the code written fast.** If a single Claude or Codex session can build your feature in one pass, just do that -- Pact's decomposition, contracts, and multi-agent coordination would be pure overhead.
+
+Use Pact when:
+- The task has **multiple interacting components** with non-obvious boundaries
+- You need **provable correctness at interfaces** -- not "it seems to work" but "it passes 200 contract tests"
+- The system will be **maintained by agents** who need contracts to understand what each piece does
+- You want **competitive or parallel implementation** where multiple agents race on the same component
+- The codebase is large enough that **no single context window can hold it all**
+
+Don't use Pact when:
+- A single agent can build the whole thing in one shot
+- The task is a bug fix, refactor, or small feature
+- You'd spend more time on contracts than on the code itself
+
+## Philosophy: Contracts Are the Product
+
+Pact treats **contracts as source of truth and implementations as disposable artifacts.** The code is cattle, not pets.
+
+When a module fails in production, the response isn't "debug the implementation." It's: add a test that reproduces the failure to the contract, flush the implementation, and let an agent rebuild it. The contract got stricter. The next implementation can't have that bug. Over time, contracts accumulate the scar tissue of every production incident -- they become the real engineering artifact.
+
+This inverts the traditional relationship between code and tests. Code is cheap (agents generate it in minutes). Contracts are expensive (they encode hard-won understanding of what the system actually needs to do). Pact makes that inversion explicit: you spend your time on contracts, agents spend their time on code.
+
+The practical upside: when someone asks "who's debugging this at 3am?" -- agents are. They see the failure, diagnose the root cause, add a test, rebuild the module, and verify it passes. The contract ensures they can't introduce regressions. The human reviews the *contract change* in the morning, not the code.
+
 ## Quick Start
 
 ```bash
@@ -30,31 +56,32 @@ pact --help
 Task
   |
   v
-Interview -----> Decompose -----> Contract -----> Test
-                    |                 |              |
-                    v                 v              v
-              Component Tree    Interfaces     Executable Tests
-                                                    |
-                                                    v
-                              Implement (parallel, competitive)
-                                                    |
-                                                    v
-                              Integrate (glue + parent tests)
-                                                    |
-                                                    v
-                                              Diagnose (on failure)
+Interview -----> Shape (opt) -----> Decompose -----> Contract -----> Test
+                    |                   |                 |              |
+                    v                   v                 v              v
+              Pitch: appetite,    Component Tree    Interfaces     Executable Tests
+              breadboard, risks                                        |
+                                                                       v
+                                         Implement (parallel, competitive)
+                                                                       |
+                                                                       v
+                                         Integrate (glue + parent tests)
+                                                                       |
+                                                                       v
+                                                                 Diagnose (on failure)
 ```
 
-**Eight phases, all mechanical gates:**
+**Nine phases, all mechanical gates:**
 
 1. **Interview** -- Identify risks, ambiguities, ask clarifying questions
-2. **Decompose** -- Task into 2-7 component tree
-3. **Contract** -- Each component gets a typed interface contract
-4. **Test** -- Each contract gets executable tests (the enforcement)
-5. **Validate** -- Mechanical gate: refs resolve, no cycles, tests parse
-6. **Implement** -- Each component built independently by a code agent
-7. **Integrate** -- Parent components composed via glue code
-8. **Diagnose** -- On failure: I/O tracing, root cause, recovery
+2. **Shape** -- (Optional) Produce a Shape Up pitch: appetite, breadboard, rabbit holes, no-gos
+3. **Decompose** -- Task into 2-7 component tree, guided by shaping context if present
+4. **Contract** -- Each component gets a typed interface contract
+5. **Test** -- Each contract gets executable tests (the enforcement)
+6. **Validate** -- Mechanical gate: refs resolve, no cycles, tests parse
+7. **Implement** -- Each component built independently by a code agent
+8. **Integrate** -- Parent components composed via glue code
+9. **Diagnose** -- On failure: I/O tracing, root cause, recovery
 
 ## Two Execution Levers
 
@@ -122,6 +149,12 @@ budget: 25.00
 parallel_components: true
 competitive_implementations: true
 competitive_agents: 3
+
+# Shaping (Shape Up methodology)
+shaping: true               # Enable shaping phase (default: false)
+shaping_depth: standard      # light | standard | thorough
+shaping_rigor: moderate      # relaxed | moderate | strict
+shaping_budget_pct: 0.15    # Max budget fraction for shaping
 ```
 
 Project config overrides global. Both are optional.
@@ -150,7 +183,7 @@ my-project/
 
 ```bash
 make dev          # Install with LLM backend support
-make test         # Run full test suite (260 tests)
+make test         # Run full test suite (426 tests)
 make test-quick   # Stop on first failure
 make clean        # Remove venv and caches
 ```

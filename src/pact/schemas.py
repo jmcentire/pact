@@ -359,7 +359,7 @@ class RunState(BaseModel):
     project_dir: str
     status: Literal["active", "paused", "completed", "failed", "budget_exceeded"] = "active"
     phase: Literal[
-        "interview", "decompose", "contract", "implement",
+        "interview", "shape", "decompose", "contract", "implement",
         "integrate", "diagnose", "complete"
     ] = "interview"
     component_tasks: list[ComponentTask] = []

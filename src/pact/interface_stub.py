@@ -328,6 +328,7 @@ def render_handoff_brief(
     sops: str = "",
     external_context: str = "",
     learnings: str = "",
+    pitch_context: str = "",
 ) -> str:
     """Render a complete handoff document for a fresh agent.
 
@@ -397,18 +398,24 @@ def render_handoff_brief(
             lines.append(f"  FAIL: {fd.test_id} — {fd.error_message}")
         lines.append("")
 
-    # Section 6: External context (from integrations)
+    # Section 6: Shaping context (from Shape Up phase)
+    if pitch_context:
+        lines.append("## SHAPING CONTEXT")
+        lines.append(pitch_context)
+        lines.append("")
+
+    # Section 7: External context (from integrations)
     if external_context:
         lines.append(external_context)
         lines.append("")
 
-    # Section 7: Learnings from previous runs
+    # Section 8: Learnings from previous runs
     if learnings:
         lines.append("## LEARNINGS")
         lines.append(learnings)
         lines.append("")
 
-    # Section 8: SOPs
+    # Section 9: SOPs
     if sops:
         lines.append("## OPERATING PROCEDURES (mandatory)")
         lines.append(sops)

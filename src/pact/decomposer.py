@@ -96,8 +96,14 @@ async def run_decomposition(
     task: str,
     interview: InterviewResult | None = None,
     sops: str = "",
+    pitch_context: str = "",
 ) -> DecompositionResult:
-    """Decompose a task into a component tree."""
+    """Decompose a task into a component tree.
+
+    Args:
+        pitch_context: Optional shaping pitch context (from Shape Up phase).
+            Injected into the decomposition prompt to guide component boundaries.
+    """
     from pydantic import BaseModel
 
     class DecomposeResponse(BaseModel):
@@ -119,6 +125,10 @@ async def run_decomposition(
             f"Assumptions:\n{assumptions}"
         )
 
+    shaping_section = ""
+    if pitch_context:
+        shaping_section = f"\n## SHAPING CONTEXT\n{pitch_context}\n"
+
     prompt = f"""Decompose this task into components:
 
 Task:
@@ -127,6 +137,7 @@ Task:
 SOPs:
 {sops or 'None provided'}
 {interview_context}
+{shaping_section}
 
 For each component provide:
 - id: short snake_case identifier
@@ -282,8 +293,18 @@ async def decompose_and_contract(
         logger.info("Resuming existing decomposition (%d components)", len(existing_tree.nodes))
         decisions: list[EngineeringDecision] = []
     else:
+        # Load shaping pitch context if available
+        pitch = project.load_pitch()
+        pitch_ctx = ""
+        if pitch:
+            try:
+                from pact.pitch_utils import build_pitch_context_for_handoff
+                pitch_ctx = build_pitch_context_for_handoff(pitch)
+            except Exception:
+                pass
+
         # Run fresh decomposition
-        decomp = await run_decomposition(agent, task, interview, sops)
+        decomp = await run_decomposition(agent, task, interview, sops, pitch_context=pitch_ctx)
         decomp_tree = decomp.tree
         decisions = decomp.decisions
         project.save_tree(decomp_tree)

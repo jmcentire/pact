@@ -123,7 +123,7 @@ class AnthropicBackend:
         prompt: str,
         system: str,
         max_tokens: int,
-        stall_timeout: float = 120.0,
+        stall_timeout: float = 300.0,
     ) -> tuple[dict | None, str, int, int]:
         """Call LLM with streaming progress detection.
 
@@ -199,7 +199,7 @@ class AnthropicBackend:
                 except asyncio.TimeoutError:
                     raise asyncio.TimeoutError()
 
-        return stream.get_final_message()
+        return await stream.get_final_message()
 
     async def close(self) -> None:
         await self._client.close()

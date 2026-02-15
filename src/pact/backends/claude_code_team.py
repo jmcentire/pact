@@ -104,7 +104,7 @@ class ClaudeCodeTeamBackend:
 
         # Write prompt to file
         prompt_file = self._prompt_dir / f"{task.pane_name}_{uuid4().hex[:6]}.md"
-        prompt_file.write_text(task.prompt)
+        await asyncio.to_thread(prompt_file.write_text, task.prompt)
 
         # Build the claude command
         # The agent reads its prompt, does its work, and writes output
@@ -155,7 +155,7 @@ class ClaudeCodeTeamBackend:
 
         while asyncio.get_event_loop().time() < deadline:
             if output_path.exists():
-                content = output_path.read_text()
+                content = await asyncio.to_thread(output_path.read_text)
                 if "__CF_AGENT_DONE__" in content:
                     return content.replace("__CF_AGENT_DONE__", "").strip()
             await asyncio.sleep(self._poll_interval)

@@ -147,6 +147,8 @@ class Scheduler:
 
         if phase == "interview":
             state = await self._phase_interview(state, sops)
+        elif phase == "shape":
+            state = await self._phase_shape(state, sops)
         elif phase == "decompose":
             state = await self._phase_decompose(state, sops)
         elif phase == "contract":
@@ -222,6 +224,81 @@ class Scheduler:
             else:
                 state.interview_result = result
                 state.pause("Interview questions pending — waiting for user answers")
+        finally:
+            await agent.close()
+
+        return state
+
+    async def _phase_shape(self, state: RunState, sops: str) -> RunState:
+        """Run optional shaping phase (Shape Up methodology).
+
+        Skips immediately if shaping is disabled in config.
+        """
+        shaping_enabled = (
+            self.project_config.shaping
+            if self.project_config.shaping is not None
+            else self.global_config.shaping
+        )
+        if not shaping_enabled:
+            advance_phase(state)
+            return state
+
+        # Already have a pitch? Skip.
+        existing_pitch = self.project.load_pitch()
+        if existing_pitch is not None:
+            advance_phase(state)
+            return state
+
+        from pact.agents.shaper import Shaper
+
+        agent = self._make_agent("decomposer")
+        try:
+            depth = (
+                self.project_config.shaping_depth
+                or self.global_config.shaping_depth
+            )
+            rigor = (
+                self.project_config.shaping_rigor
+                or self.global_config.shaping_rigor
+            )
+            budget_pct = (
+                self.project_config.shaping_budget_pct
+                if self.project_config.shaping_budget_pct is not None
+                else self.global_config.shaping_budget_pct
+            )
+
+            shaper = Shaper(
+                agent=agent,
+                shaping_depth=depth,
+                shaping_rigor=rigor,
+                shaping_budget_pct=budget_pct,
+            )
+
+            task = self.project.load_task()
+            interview = self.project.load_interview()
+            interview_context = ""
+            if interview:
+                answers = "\n".join(
+                    f"  Q: {q}\n  A: {interview.user_answers.get(q, 'No answer')}"
+                    for q in interview.questions
+                )
+                interview_context = f"Interview:\n{answers}"
+
+            pitch = await shaper.shape(
+                task=task,
+                sops=sops,
+                interview_context=interview_context,
+                budget_used=self.budget.project_spend,
+                budget_total=self.budget.per_project_cap,
+            )
+            self.project.save_pitch(pitch)
+            self.project.append_audit("shape", f"depth={depth}, appetite={pitch.appetite}")
+            advance_phase(state)
+        except Exception as e:
+            logger.error("Shaping failed: %s", e)
+            self.project.append_audit("shape_error", str(e))
+            # On failure, skip shaping and proceed to decompose
+            advance_phase(state)
         finally:
             await agent.close()
 

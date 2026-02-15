@@ -62,6 +62,12 @@ class GlobalConfig:
     max_poll_attempts: int = 10       # Max polls before giving up
     context_max_chars: int = 4000     # Max external context in prompts
 
+    # Shaping (Shape Up methodology — off by default)
+    shaping: bool = False             # Master toggle for shaping phase
+    shaping_depth: str = "standard"   # light | standard | thorough
+    shaping_rigor: str = "moderate"   # relaxed | moderate | strict
+    shaping_budget_pct: float = 0.15  # Max fraction of budget for shaping
+
 
 @dataclass
 class ProjectConfig:
@@ -94,6 +100,12 @@ class ProjectConfig:
     poll_interval: int | None = None
     max_poll_attempts: int | None = None
     context_max_chars: int | None = None
+
+    # Shaping (Shape Up methodology)
+    shaping: bool | None = None           # None = use global default
+    shaping_depth: str | None = None      # light | standard | thorough
+    shaping_rigor: str | None = None      # relaxed | moderate | strict
+    shaping_budget_pct: float | None = None
 
 
 def load_global_config(config_path: str | Path | None = None) -> GlobalConfig:
@@ -136,6 +148,10 @@ def load_global_config(config_path: str | Path | None = None) -> GlobalConfig:
         poll_interval=raw.get("poll_interval", 60),
         max_poll_attempts=raw.get("max_poll_attempts", 10),
         context_max_chars=raw.get("context_max_chars", 4000),
+        shaping=raw.get("shaping", False),
+        shaping_depth=raw.get("shaping_depth", "standard"),
+        shaping_rigor=raw.get("shaping_rigor", "moderate"),
+        shaping_budget_pct=raw.get("shaping_budget_pct", 0.15),
     )
 
     # Apply pricing overrides if configured
@@ -187,6 +203,10 @@ def load_project_config(project_dir: str | Path) -> ProjectConfig:
         poll_interval=raw.get("poll_interval"),
         max_poll_attempts=raw.get("max_poll_attempts"),
         context_max_chars=raw.get("context_max_chars"),
+        shaping=raw.get("shaping"),
+        shaping_depth=raw.get("shaping_depth"),
+        shaping_rigor=raw.get("shaping_rigor"),
+        shaping_budget_pct=raw.get("shaping_budget_pct"),
     )
 
 

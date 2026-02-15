@@ -8,8 +8,9 @@ State transitions:
   paused → active          (resume)
 
 Phase transitions:
-  interview → decompose → contract → implement → integrate → complete
+  interview → shape → decompose → contract → implement → integrate → complete
   Any phase can transition to → diagnose → (back to prior phase)
+  shape phase is skipped when shaping is disabled (default)
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ def create_run(project_dir: str) -> RunState:
 def advance_phase(state: RunState) -> str:
     """Advance to the next phase. Returns the new phase name."""
     phase_order = [
-        "interview", "decompose", "contract",
+        "interview", "shape", "decompose", "contract",
         "implement", "integrate", "complete",
     ]
     try:

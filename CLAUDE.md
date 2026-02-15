@@ -27,7 +27,8 @@ Every agent follows 3 phases: Research -> Plan+Evaluate -> Execute. Research and
 ### Core Workflow
 
 1. **Interview** -- System reads task+SOPs, identifies risks/ambiguities, asks user clarifying questions
-2. **Decompose** -- Task -> DecompositionNode tree (2-7 components)
+2. **Shape** -- (Optional) Produce a Shape Up pitch: appetite, breadboard, rabbit holes, no-gos
+3. **Decompose** -- Task -> DecompositionNode tree (2-7 components), guided by shaping context
 3. **Contract** -- For each component (leaves first), generate ComponentContract
 4. **Test** -- For each contract, generate ContractTestSuite with executable tests
 5. **Validate** -- Mechanical gate: all refs resolve, no cycles, test code parses
@@ -52,6 +53,8 @@ Poll-based, not event-loop. Agents invoked for focused bursts, state fully persi
 ```
 src/pact/
   schemas.py           # All Pydantic models
+  schemas_shaping.py   # Shaping phase models (ShapingPitch, Breadboard, etc.)
+  pitch_utils.py       # Pitch summary, formatting, handoff context
   contracts.py         # Contract validation (mechanical gates)
   test_harness.py      # Functional test execution
   design_doc.py        # Living design document
@@ -75,6 +78,7 @@ src/pact/
     contract_author.py # Generates interface contracts
     test_author.py     # Generates functional tests from contracts
     code_author.py     # Implements black boxes
+    shaper.py          # Shape Up pitch generation agent
     trace_analyst.py   # I/O tracing for diagnosis
 
   backends/
@@ -122,6 +126,6 @@ src/pact/
 ## Testing
 
 ```bash
-make test          # 260 tests, ~0.5s
+make test          # 426 tests, ~0.5s
 make test-quick    # Stop on first failure
 ```
