@@ -48,6 +48,10 @@ Two independent levers:
 
 Opt-in (`monitoring_enabled: true`). Pact-generated code embeds `PACT:<project_hash>:<component_id>` log keys. The Sentinel watches log files, processes, and webhooks for errors, attributes them to components via log keys (or LLM triage), and spawns knowledge-flashed fixer agents that add a reproducer test and rebuild the black box. Multi-window budget caps (per-incident/hourly/daily/weekly/monthly) prevent runaway spend.
 
+**Narrative retry**: On retry attempts, the remediator carries forward prior failures, test results, research reports, and plan evaluations — matching the `implementer.py` pattern. A heroic narrative reframe ("senior engineer brought in because the previous approach failed") prevents the model from falling into the same reasoning rut. `build_narrative_debrief()` is a pure, testable function.
+
+**Budget hypervisor**: `estimate_tokens()` provides content-aware token estimation (symbol ratio → chars/token: 3.5 for code, 4.5 for prose). `record_tokens_validated()` cross-validates reported vs estimated counts using `max()` for conservative accounting. The `claude_code` backend no longer falls back to `len(text) // 4`. The `claude_code_team` backend now tracks spend via estimation.
+
 ### Casual-Pace Scheduling
 
 Poll-based, not event-loop. Agents invoked for focused bursts, state fully persisted between bursts.
@@ -70,7 +74,7 @@ src/pact/
   scheduler.py         # Casual-pace polling + component targeting
   project.py           # Project directory lifecycle + attempt storage
   config.py            # GlobalConfig + ProjectConfig + ParallelConfig
-  budget.py            # Per-project spend tracking
+  budget.py            # Per-project spend tracking + content-aware token estimation
   lifecycle.py         # Run state machine
   daemon.py            # Event-driven FIFO-based coordinator
   interface_stub.py    # Interface stub generation + log key preamble
@@ -80,7 +84,7 @@ src/pact/
   schemas_monitoring.py # Monitoring models (Signal, Incident, MonitoringBudget, etc.)
   signals.py           # Signal ingestion (LogTailer, ProcessWatcher, WebhookReceiver)
   incidents.py         # Incident lifecycle + multi-window budget enforcement
-  remediator.py        # Knowledge-flashed fixer (reproducer test + rebuild)
+  remediator.py        # Knowledge-flashed fixer (reproducer test + rebuild + narrative retry)
   sentinel.py          # Long-running monitor coordinator
 
   agents/
@@ -96,8 +100,8 @@ src/pact/
   backends/
     __init__.py        # Backend protocol + factory
     anthropic.py       # Direct API backend
-    claude_code.py     # Claude Code CLI backend
-    claude_code_team.py # Tmux-based full Claude Code agent sessions
+    claude_code.py     # Claude Code CLI backend (validated token tracking)
+    claude_code_team.py # Tmux-based full Claude Code agent sessions (budget-aware)
 
   human/
     __init__.py        # Human integration facade
@@ -154,6 +158,6 @@ pact incident <project-dir> <id>      # Show incident details + diagnostic repor
 ## Testing
 
 ```bash
-make test          # 901 tests, ~4s
+make test          # 920 tests, ~4s
 make test-quick    # Stop on first failure
 ```

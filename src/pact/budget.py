@@ -63,6 +63,20 @@ def pricing_for_model(model: str) -> tuple[float, float]:
     )
 
 
+def estimate_tokens(text: str) -> int:
+    """Content-aware token estimation without a tokenizer.
+
+    Conservative (rounds up) to avoid budget underruns.
+    """
+    if not text:
+        return 0
+    sample = text[:2000]
+    symbols = sum(1 for c in sample if c in '{}[]()=<>+*&|!@#$%^;:.,/')
+    ratio = symbols / max(len(sample), 1)
+    chars_per_token = 3.5 if ratio > 0.08 else (4.5 if ratio < 0.03 else 4.0)
+    return max(1, int(len(text) / chars_per_token + 0.5))
+
+
 class BudgetExceeded(Exception):
     """Raised when a budget cap is hit."""
 
@@ -128,6 +142,30 @@ class BudgetTracker:
             )
             return False
         return True
+
+    def record_tokens_validated(
+        self,
+        reported_in: int,
+        reported_out: int,
+        prompt_text: str = "",
+        response_text: str = "",
+    ) -> bool:
+        """Record tokens with cross-validation. Uses max(reported, estimated)."""
+        est_in = estimate_tokens(prompt_text) if prompt_text else reported_in
+        est_out = estimate_tokens(response_text) if response_text else reported_out
+        final_in = max(reported_in, est_in)
+        final_out = max(reported_out, est_out)
+
+        if prompt_text and reported_in > 0:
+            r = est_in / reported_in
+            if r > 1.5 or r < 0.67:
+                logger.warning("Token discrepancy (in): reported=%d est=%d", reported_in, est_in)
+        if response_text and reported_out > 0:
+            r = est_out / reported_out
+            if r > 1.5 or r < 0.67:
+                logger.warning("Token discrepancy (out): reported=%d est=%d", reported_out, est_out)
+
+        return self.record_tokens(final_in, final_out)
 
     def is_exceeded(self) -> bool:
         """Check if budget is exceeded without recording."""

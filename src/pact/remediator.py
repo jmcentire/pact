@@ -21,7 +21,13 @@ from pydantic import BaseModel, Field
 from pact.agents.base import AgentBase
 from pact.events import EventBus
 from pact.project import ProjectManager
-from pact.schemas import ComponentContract, ContractTestSuite, TestResults
+from pact.schemas import (
+    ComponentContract,
+    ContractTestSuite,
+    PlanEvaluation,
+    ResearchReport,
+    TestResults,
+)
 from pact.schemas_monitoring import Incident, Signal
 
 logger = logging.getLogger(__name__)
@@ -39,6 +45,65 @@ class ReproducerResult(BaseModel):
     test_code: str = Field(description="Python test code (single function)")
     test_name: str = Field(description="Name of the test function")
     description: str = Field(description="What this test verifies")
+
+
+def build_narrative_debrief(
+    attempt: int,
+    incident: Incident,
+    prior_failures: list[str],
+    last_test_results: TestResults | None,
+    last_research: ResearchReport | None,
+    last_plan: PlanEvaluation | None,
+    base_error_context: str,
+) -> str:
+    """Build enriched context for retry attempts with heroic narrative framing.
+
+    On attempt 1, returns base_error_context unchanged.
+    On attempt > 1, appends debrief, failure details, and fresh-approach framing.
+    """
+    if attempt <= 1:
+        return base_error_context
+
+    sections = [base_error_context, ""]
+
+    # Section 1: Attempt debrief
+    sections.append(f"## ATTEMPT {attempt - 1} DEBRIEF")
+    if last_plan:
+        sections.append(f"Previous plan: {last_plan.plan_summary}")
+    if last_research:
+        sections.append(f"Research approach: {last_research.recommended_approach}")
+    if prior_failures:
+        capped = prior_failures[:10]
+        for f in capped:
+            truncated = f[:200] if len(f) > 200 else f
+            sections.append(f"- {truncated}")
+        if len(prior_failures) > 10:
+            sections.append(f"... and {len(prior_failures) - 10} more failures")
+    sections.append("")
+
+    # Section 2: What went wrong
+    sections.append("## WHAT WENT WRONG")
+    if last_test_results and last_test_results.failure_details:
+        for fd in last_test_results.failure_details[:10]:
+            sections.append(f"- {fd.test_id}: {fd.error_message}")
+    elif prior_failures:
+        sections.append("See failure list above.")
+    else:
+        sections.append("Previous attempt did not produce passing tests.")
+    sections.append("")
+
+    # Section 3: Fresh approach required
+    sections.append("## FRESH APPROACH REQUIRED")
+    sections.append(
+        "You are a senior engineer brought in specifically because the previous "
+        "approach failed. You have the advantage of knowing exactly what didn't "
+        "work. Take a fundamentally different approach — different algorithm, "
+        "different data flow, different error handling strategy. The previous "
+        "engineer's approach has been tried and proven insufficient. Your fresh "
+        "perspective is your greatest asset."
+    )
+
+    return "\n".join(sections)
 
 
 async def generate_reproducer_test(
@@ -182,8 +247,18 @@ async def remediate_incident(
         f"A reproducer test has been added. Fix the implementation so ALL tests pass.\n"
     )
 
+    prior_failures: list[str] = []
+    last_test_results: TestResults | None = None
+    last_research: ResearchReport | None = None
+    last_plan: PlanEvaluation | None = None
+
     for attempt in range(1, max_attempts + 1):
         incident.remediation_attempts = attempt
+
+        enriched_context = build_narrative_debrief(
+            attempt, incident, prior_failures,
+            last_test_results, last_research, last_plan, error_context,
+        )
 
         try:
             result = await author_code(
@@ -196,8 +271,15 @@ async def remediate_incident(
                     if dep in all_contracts
                 },
                 attempt=attempt,
-                external_context=error_context,
+                external_context=enriched_context,
+                prior_failures=prior_failures if attempt > 1 else None,
+                prior_test_results=last_test_results,
+                prior_research=last_research,
             )
+
+            # Capture research/plan for next attempt
+            last_research = result.research
+            last_plan = result.plan
 
             # Save the implementation
             src_dir = project.impl_src_dir(component_id)
@@ -210,6 +292,8 @@ async def remediate_incident(
                 project, component_id, augmented_suite,
             )
 
+            last_test_results = test_results
+
             if test_results.all_passed:
                 summary = (
                     f"Auto-fixed incident {incident.id}: "
@@ -218,11 +302,18 @@ async def remediate_incident(
                 )
                 return True, summary
 
+            # Collect failure descriptions for next attempt
+            for failure in test_results.failure_details:
+                prior_failures.append(
+                    f"Test '{failure.test_id}': {failure.error_message}"
+                )
+
         except Exception as e:
             logger.debug(
                 "Remediation attempt %d failed for %s: %s",
                 attempt, component_id, e,
             )
+            prior_failures.append(f"Attempt {attempt} crashed: {e}")
 
     return False, (
         f"Remediation failed after {max_attempts} attempts for "

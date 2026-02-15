@@ -145,10 +145,14 @@ class ClaudeCodeBackend:
         else:
             raise RuntimeError(f"Unexpected result type: {type(result_text)}")
 
-        in_tok = cli_response.get("input_tokens", len(full_prompt) // 4)
-        out_tok = cli_response.get("output_tokens", len(raw) // 4)
+        in_tok = cli_response.get("input_tokens", 0)
+        out_tok = cli_response.get("output_tokens", 0)
 
-        if not self._budget.record_tokens(in_tok, out_tok):
+        if not self._budget.record_tokens_validated(
+            in_tok, out_tok,
+            prompt_text=full_prompt if in_tok == 0 else "",
+            response_text=raw if out_tok == 0 else "",
+        ):
             raise BudgetExceeded(f"Budget exceeded after {in_tok}+{out_tok} tokens")
 
         return schema.model_validate(data), in_tok, out_tok

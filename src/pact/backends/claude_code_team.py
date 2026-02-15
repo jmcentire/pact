@@ -24,7 +24,11 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from pact.budget import BudgetTracker
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +72,7 @@ class ClaudeCodeTeamBackend:
         poll_interval: float = 5.0,
         agent_timeout: int = 600,
         max_concurrent: int = 4,
+        budget: BudgetTracker | None = None,
     ) -> None:
         self._model = model
         self._repo_path = str(repo_path) if repo_path else ""
@@ -78,6 +83,7 @@ class ClaudeCodeTeamBackend:
         self._prompt_dir = Path(tempfile.mkdtemp(prefix="cf-prompts-"))
         self._active_panes: dict[str, int] = {}  # pane_name -> pane_id
         self._preamble_path: Path | None = None
+        self._budget = budget
 
     def write_shared_preamble(self, context: str) -> Path:
         """Write shared project context to a preamble file.
@@ -210,6 +216,11 @@ class ClaudeCodeTeamBackend:
                 try:
                     await self.spawn_agent(task)
                     content = await self.wait_for_completion(task.output_file)
+                    if self._budget:
+                        from pact.budget import estimate_tokens
+                        est_in = estimate_tokens(task.prompt)
+                        est_out = estimate_tokens(content)
+                        self._budget.record_tokens(est_in, est_out)
                     return AgentResult(
                         pane_name=task.pane_name,
                         output_file=task.output_file,
