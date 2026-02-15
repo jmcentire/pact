@@ -312,3 +312,83 @@ def validate_external_dependencies(
             )
 
     return warnings
+
+
+def validate_hierarchy_locality(
+    tree: DecompositionTree,
+    contracts: dict[str, ComponentContract],
+) -> list[str]:
+    """Validate that dependencies follow decomposition tree locality.
+
+    Rules:
+      - A component may depend on its siblings (same parent) — OK
+      - A component may depend on its parent's siblings (uncle) — OK
+      - A component may depend on its parent — OK
+      - A component should NOT depend on distant cousins (warning)
+      - Cross-subtree dependencies produce warnings, not errors
+
+    Returns:
+      List of warning strings for distant/cross-subtree dependencies.
+    """
+    warnings = []
+    
+    for cid, contract in contracts.items():
+        node = tree.nodes.get(cid)
+        if not node:
+            continue
+            
+        # Build set of "nearby" nodes: siblings, parent, uncles
+        nearby = set()
+        
+        # Self
+        nearby.add(cid)
+        
+        # Parent
+        if node.parent_id:
+            nearby.add(node.parent_id)
+            parent = tree.nodes.get(node.parent_id)
+            if parent:
+                # Siblings (other children of same parent)
+                for sib_id in parent.children:
+                    nearby.add(sib_id)
+                # Uncles (siblings of parent = other children of grandparent)
+                if parent.parent_id:
+                    grandparent = tree.nodes.get(parent.parent_id)
+                    if grandparent:
+                        for uncle_id in grandparent.children:
+                            nearby.add(uncle_id)
+        
+        # Children
+        for child_id in node.children:
+            nearby.add(child_id)
+        
+        # Check each dependency
+        for dep_id in contract.dependencies:
+            if dep_id not in tree.nodes:
+                continue  # External dep, skip
+            if dep_id not in nearby:
+                dep_node = tree.nodes.get(dep_id)
+                dep_path = _node_path(tree, dep_id)
+                src_path = _node_path(tree, cid)
+                warnings.append(
+                    f"Distant dependency: '{cid}' ({src_path}) depends on "
+                    f"'{dep_id}' ({dep_path}) — consider restructuring to "
+                    f"keep dependencies within sibling/parent scope"
+                )
+    
+    return warnings
+
+
+def _node_path(tree: DecompositionTree, node_id: str) -> str:
+    """Build a path string for a node like 'root > parent > node'."""
+    parts = []
+    current = node_id
+    visited = set()
+    while current and current not in visited:
+        visited.add(current)
+        node = tree.nodes.get(current)
+        if not node:
+            break
+        parts.append(node.name or current)
+        current = node.parent_id
+    return " > ".join(reversed(parts))

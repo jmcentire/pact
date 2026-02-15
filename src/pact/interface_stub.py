@@ -476,3 +476,101 @@ def render_progress_snapshot(
         lines.append("")
 
     return "\n".join(lines)
+
+
+# ── Context Compression ─────────────────────────────────────────────
+
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate: ~4 chars per token for English text/code."""
+    return len(text) // 4 + 1
+
+
+def build_code_agent_context(
+    contract: ComponentContract,
+    test_suite: ContractTestSuite,
+    decisions: list[str] | None = None,
+    research: list[dict] | None = None,
+    max_tokens: int = 8000,
+) -> str:
+    """Build tiered context for code generation agent.
+
+    Tier 1 (always included): interface stub + test code
+    Tier 2 (if room): decisions relevant to this component
+    Tier 3 (if room): research findings summary (not full findings)
+
+    Postconditions:
+      - Result fits within max_tokens (estimated)
+      - Tier 1 is never truncated
+      - Tier 2 and 3 are truncated gracefully if needed
+    """
+    sections: list[str] = []
+    used_tokens = 0
+
+    # Tier 1: Always include contract stub and test code
+    stub = render_stub(contract)
+    tier1_parts = [
+        "## CONTRACT",
+        "```python",
+        stub,
+        "```",
+    ]
+    if test_suite.generated_code:
+        tier1_parts.extend([
+            "",
+            "## TESTS TO PASS",
+            "```python",
+            test_suite.generated_code,
+            "```",
+        ])
+    elif test_suite.test_cases:
+        tier1_parts.append("")
+        tier1_parts.append("## TEST CASES")
+        for tc in test_suite.test_cases:
+            tier1_parts.append(f"- [{tc.category}] {tc.id}: {tc.description}")
+
+    tier1 = "\n".join(tier1_parts)
+    used_tokens = _estimate_tokens(tier1)
+    sections.append(tier1)
+
+    remaining = max_tokens - used_tokens
+
+    # Tier 2: Decisions (if room)
+    if decisions and remaining > 100:
+        decisions_text_parts = ["", "## DECISIONS"]
+        for d in decisions:
+            line = f"- {d}"
+            line_tokens = _estimate_tokens(line)
+            if used_tokens + line_tokens > max_tokens - 50:
+                decisions_text_parts.append("- ... (truncated)")
+                break
+            decisions_text_parts.append(line)
+            used_tokens += line_tokens
+        decisions_text = "\n".join(decisions_text_parts)
+        sections.append(decisions_text)
+        remaining = max_tokens - used_tokens
+
+    # Tier 3: Research summary (if room)
+    if research and remaining > 100:
+        research_parts = ["", "## RESEARCH SUMMARY"]
+        for item in research:
+            topic = item.get("topic", "")
+            finding = item.get("finding", "")
+            if topic and finding:
+                # Summarize: just topic + first sentence of finding
+                first_sentence = finding.split(".")[0] + "." if "." in finding else finding
+                line = f"- **{topic}**: {first_sentence}"
+            elif topic:
+                line = f"- {topic}"
+            else:
+                continue
+            line_tokens = _estimate_tokens(line)
+            if used_tokens + line_tokens > max_tokens - 20:
+                research_parts.append("- ... (truncated)")
+                break
+            research_parts.append(line)
+            used_tokens += line_tokens
+        if len(research_parts) > 1:  # More than just the header
+            sections.append("\n".join(research_parts))
+
+    return "\n".join(sections)
