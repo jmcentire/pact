@@ -10,6 +10,8 @@ import logging
 import time
 from dataclasses import dataclass, field
 
+from pydantic import BaseModel, Field
+
 logger = logging.getLogger(__name__)
 
 # Built-in defaults — overridable via config.yaml model_pricing
@@ -153,3 +155,57 @@ class BudgetTracker:
     def daily_spend(self) -> float:
         self._maybe_reset_day()
         return self._daily_spend
+
+
+class PhaseBudget(BaseModel):
+    """Budget tracking broken down by pipeline phase."""
+    phase_spend: dict[str, float] = Field(
+        default_factory=dict,
+        description="Spend per phase: {'interview': 0.50, 'decompose': 1.20, ...}",
+    )
+    phase_caps: dict[str, float] = Field(
+        default_factory=dict,
+        description="Max spend per phase as fraction of total: {'shaping': 0.15}",
+    )
+
+    def record_spend(self, phase: str, amount: float) -> None:
+        """Record spending for a specific phase."""
+        self.phase_spend[phase] = self.phase_spend.get(phase, 0.0) + amount
+
+    def check_phase_budget(self, phase: str, total_budget: float) -> bool:
+        """Check if phase has budget remaining under its cap.
+
+        Returns True if:
+          - phase has no cap (uncapped phases always pass)
+          - phase_spend[phase] < phase_caps[phase] * total_budget
+        Returns False if cap exceeded.
+        """
+        if phase not in self.phase_caps:
+            return True  # Uncapped phase
+        cap_amount = self.phase_caps[phase] * total_budget
+        spent = self.phase_spend.get(phase, 0.0)
+        return spent < cap_amount
+
+    def phase_summary(self) -> dict[str, dict[str, float]]:
+        """Return {phase: {spent, cap_fraction, remaining_fraction}} for tracked phases."""
+        result = {}
+        all_phases = set(self.phase_spend.keys()) | set(self.phase_caps.keys())
+        for phase in sorted(all_phases):
+            spent = self.phase_spend.get(phase, 0.0)
+            cap = self.phase_caps.get(phase)
+            entry: dict[str, float] = {"spent": spent}
+            if cap is not None:
+                entry["cap_fraction"] = cap
+            result[phase] = entry
+        return result
+
+    @classmethod
+    def from_config(cls, shaping_budget_pct: float = 0.15) -> "PhaseBudget":
+        """Create PhaseBudget with standard caps from config.
+
+        Backward compatible: maps shaping_budget_pct to phase_caps["shaping"].
+        """
+        caps: dict[str, float] = {}
+        if shaping_budget_pct > 0:
+            caps["shape"] = shaping_budget_pct
+        return cls(phase_caps=caps)

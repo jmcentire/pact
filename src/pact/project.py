@@ -565,3 +565,34 @@ class ProjectManager:
         if not path.exists():
             return None
         return DesignDocument.model_validate_json(path.read_text())
+
+
+def write_artifact_metadata(
+    artifact_path: Path,
+    metadata: "ArtifactMetadata",
+) -> None:
+    """Write sidecar metadata file alongside generated artifact.
+
+    Sidecar path: artifact_path.with_suffix(artifact_path.suffix + '.meta.json')
+    e.g. contract.json -> contract.json.meta.json
+
+    Postconditions:
+      - .meta.json exists alongside the artifact
+      - Metadata is valid JSON matching ArtifactMetadata schema
+    """
+    meta_path = Path(str(artifact_path) + ".meta.json")
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(metadata.model_dump_json(indent=2))
+
+
+def read_artifact_metadata(artifact_path: Path) -> "ArtifactMetadata | None":
+    """Read sidecar metadata for an artifact. Returns None if no metadata."""
+    from pact.schemas import ArtifactMetadata
+
+    meta_path = Path(str(artifact_path) + ".meta.json")
+    if not meta_path.exists():
+        return None
+    try:
+        return ArtifactMetadata.model_validate_json(meta_path.read_text())
+    except Exception:
+        return None

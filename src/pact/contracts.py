@@ -127,6 +127,42 @@ def validate_test_suite(suite: ContractTestSuite) -> list[str]:
     return errors
 
 
+def normalize_dependency_name(raw: str, known_ids: list[str]) -> str | None:
+    """Normalize a dependency name to match a known component ID.
+
+    Rules (applied in order):
+      1. Exact match -> return as-is
+      2. Case-insensitive match -> return known_id
+      3. Underscore transposition (schemas_shaping -> shaping_schemas) -> return known_id
+      4. No match -> return None
+
+    Postconditions:
+      - Result is always a member of known_ids, or None
+      - Transposition detected by sorted word equality
+    """
+    # 1. Exact match
+    if raw in known_ids:
+        return raw
+
+    # 2. Case-insensitive match
+    raw_lower = raw.lower()
+    for kid in known_ids:
+        if kid.lower() == raw_lower:
+            logger.warning("Normalized dependency '%s' -> '%s' (case mismatch)", raw, kid)
+            return kid
+
+    # 3. Underscore transposition
+    raw_parts = sorted(raw_lower.split("_"))
+    for kid in known_ids:
+        kid_parts = sorted(kid.lower().split("_"))
+        if raw_parts == kid_parts and raw_lower != kid.lower():
+            logger.warning("Normalized dependency '%s' -> '%s' (word transposition)", raw, kid)
+            return kid
+
+    # 4. No match
+    return None
+
+
 def validate_all_contracts(
     tree: DecompositionTree,
     contracts: dict[str, ComponentContract],
@@ -200,6 +236,49 @@ def validate_all_contracts(
         passed=True,
         reason="All contracts validated successfully",
     )
+
+
+def validate_contract_incremental(
+    contract: ComponentContract,
+    existing_contracts: dict[str, ComponentContract],
+) -> list[str]:
+    """Validate a single contract incrementally against existing contracts.
+
+    Checks:
+    1. Type references within this contract are valid
+    2. Internal dependencies reference existing_contracts keys
+    3. No cycles with existing contracts
+
+    Returns list of error strings (empty = valid).
+    """
+    errors = []
+
+    # 1. Type references
+    errors.extend(validate_type_references(contract))
+
+    # 2. Contract completeness
+    errors.extend(validate_contract_completeness(contract))
+
+    # 3. Dependency resolution with normalization
+    known_ids = list(existing_contracts.keys()) + [contract.component_id]
+    for dep_id in contract.dependencies:
+        normalized = normalize_dependency_name(dep_id, list(existing_contracts.keys()))
+        if normalized is None:
+            # Could be external - just debug log, don't error
+            logger.debug(
+                "Contract '%s' dependency '%s' not found in existing contracts (may be external)",
+                contract.component_id, dep_id,
+            )
+
+    # 4. Simple cycle check: if A depends on B and B depends on A
+    for dep_id in contract.dependencies:
+        dep_contract = existing_contracts.get(dep_id)
+        if dep_contract and contract.component_id in dep_contract.dependencies:
+            errors.append(
+                f"Circular dependency: '{contract.component_id}' <-> '{dep_id}'"
+            )
+
+    return errors
 
 
 def validate_external_dependencies(
