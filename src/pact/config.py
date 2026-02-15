@@ -94,6 +94,12 @@ class GlobalConfig:
     # Model tiers
     model_tiers: ModelTierConfig = field(default_factory=ModelTierConfig)
 
+    # Monitoring
+    monitoring_enabled: bool = False
+    monitoring_auto_remediate: bool = True
+    monitoring_budget: dict = field(default_factory=dict)
+    monitoring_log_key_prefix: str = "PACT"
+
 
 @dataclass
 class ProjectConfig:
@@ -143,6 +149,15 @@ class ProjectConfig:
     # Model tiers
     model_tiers: ModelTierConfig | None = None
 
+    # Monitoring (per-project overrides)
+    monitoring_log_files: list[str] = field(default_factory=list)
+    monitoring_process_patterns: list[str] = field(default_factory=list)
+    monitoring_webhook_port: int = 0
+    monitoring_error_patterns: list[str] = field(
+        default_factory=lambda: ["ERROR", "CRITICAL", "Traceback"],
+    )
+    monitoring_auto_remediate: bool | None = None
+
 
 def load_global_config(config_path: str | Path | None = None) -> GlobalConfig:
     """Load global config from config.yaml."""
@@ -191,6 +206,10 @@ def load_global_config(config_path: str | Path | None = None) -> GlobalConfig:
         environment=raw.get("environment", {}),
         impatience=raw.get("impatience", "normal"),
         role_timeouts=raw.get("role_timeouts", {}),
+        monitoring_enabled=raw.get("monitoring_enabled", False),
+        monitoring_auto_remediate=raw.get("monitoring_auto_remediate", True),
+        monitoring_budget=raw.get("monitoring_budget", {}),
+        monitoring_log_key_prefix=raw.get("monitoring_log_key_prefix", "PACT"),
     )
 
     # Load model tiers
@@ -258,6 +277,14 @@ def load_project_config(project_dir: str | Path) -> ProjectConfig:
         environment=raw.get("environment"),
         impatience=raw.get("impatience"),
         role_timeouts=raw.get("role_timeouts"),
+        monitoring_log_files=raw.get("monitoring_log_files", []),
+        monitoring_process_patterns=raw.get("monitoring_process_patterns", []),
+        monitoring_webhook_port=raw.get("monitoring_webhook_port", 0),
+        monitoring_error_patterns=raw.get(
+            "monitoring_error_patterns",
+            ["ERROR", "CRITICAL", "Traceback"],
+        ),
+        monitoring_auto_remediate=raw.get("monitoring_auto_remediate"),
     )
 
     model_tiers_raw = raw.get("model_tiers", {})

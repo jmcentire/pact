@@ -32,7 +32,9 @@ Key principles:
 - All functions must match their contract signatures
 - Error cases must be handled as specified
 - Do not add features beyond the contract
-- Write clean, readable code"""
+- Write clean, readable code
+- ALL log statements must include the PACT log key for production traceability
+- Use the provided log key preamble at the top of every module"""
 
 
 class ImplementationResult:
@@ -136,7 +138,11 @@ async def author_code(
     )
 
     # Phase 3: Generate code — using the handoff brief as the mental model
-    from pact.interface_stub import render_handoff_brief
+    from pact.interface_stub import render_handoff_brief, render_log_key_preamble, project_id_hash
+
+    # Generate log key preamble for production traceability
+    pid = project_id_hash(contract.component_id)  # Use component as project proxy
+    log_preamble = render_log_key_preamble(pid, contract.component_id)
 
     all_contracts = dict(dependency_contracts or {})
     all_contracts[contract.component_id] = contract
@@ -152,6 +158,7 @@ async def author_code(
         sops=sops,
         external_context=external_context,
         learnings=learnings,
+        log_key_preamble=log_preamble,
     )
 
     # The handoff brief is the largest cacheable block

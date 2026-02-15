@@ -30,7 +30,7 @@ When a module fails in production, the response isn't "debug the implementation.
 
 This inverts the traditional relationship between code and tests. Code is cheap (agents generate it in minutes). Contracts are expensive (they encode hard-won understanding of what the system actually needs to do). Pact makes that inversion explicit: you spend your time on contracts, agents spend their time on code.
 
-The practical upside: when someone asks "who's debugging this at 3am?" -- agents are. They see the failure, diagnose the root cause, add a test, rebuild the module, and verify it passes. The contract ensures they can't introduce regressions. The human reviews the *contract change* in the morning, not the code.
+The practical upside: when someone asks "who's debugging this at 3am?" -- agents are. The Sentinel watches production logs, detects errors, attributes them to the right component via embedded PACT log keys, spawns a knowledge-flashed fixer agent loaded with the full contract/test context, adds a reproducer test, rebuilds the module, and verifies all tests pass. The contract ensures they can't introduce regressions. The human reviews the *contract change* in the morning, not the code.
 
 ## Quick Start
 
@@ -121,6 +121,10 @@ pact build my-project sync_tracker --competitive --agents 3
 | `pact log <project>` | Show audit trail (`--tail N`, `--json`) |
 | `pact ping` | Test API connection and show pricing |
 | `pact signal <project>` | Resume a paused daemon |
+| `pact watch <project>...` | Start Sentinel production monitor (Ctrl+C to stop) |
+| `pact report <project> <error>` | Manually report a production error |
+| `pact incidents <project>` | List active/recent incidents |
+| `pact incident <project> <id>` | Show incident details + diagnostic report |
 
 ## Configuration
 
@@ -140,6 +144,16 @@ model_pricing:
   claude-opus-4-6: [15.00, 75.00]
   claude-sonnet-4-5-20250929: [3.00, 15.00]
   claude-haiku-4-5-20251001: [0.80, 4.00]
+
+# Production monitoring (opt-in)
+monitoring_enabled: false
+monitoring_auto_remediate: true
+monitoring_budget:
+  per_incident_cap: 5.00
+  hourly_cap: 10.00
+  daily_cap: 25.00
+  weekly_cap: 100.00
+  monthly_cap: 300.00
 ```
 
 **Per-project** (`pact.yaml` in project directory):
@@ -155,6 +169,18 @@ shaping: true               # Enable shaping phase (default: false)
 shaping_depth: standard      # light | standard | thorough
 shaping_rigor: moderate      # relaxed | moderate | strict
 shaping_budget_pct: 0.15    # Max budget fraction for shaping
+
+# Production monitoring (per-project)
+monitoring_log_files:
+  - "/var/log/myapp/app.log"
+  - "/var/log/myapp/error.log"
+monitoring_process_patterns:
+  - "myapp-server"
+monitoring_webhook_port: 9876
+monitoring_error_patterns:
+  - "ERROR"
+  - "CRITICAL"
+  - "Traceback"
 ```
 
 Project config overrides global. Both are optional.
@@ -177,13 +203,14 @@ my-project/
     implementations/   # Per-component code
     compositions/      # Integration glue
     learnings/         # Accumulated learnings
+    monitoring/        # Incidents, budget state, diagnostic reports
 ```
 
 ## Development
 
 ```bash
 make dev          # Install with LLM backend support
-make test         # Run full test suite (426 tests)
+make test         # Run full test suite (901 tests)
 make test-quick   # Stop on first failure
 make clean        # Remove venv and caches
 ```

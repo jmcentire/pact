@@ -98,6 +98,10 @@ class EventBus:
             "human_needed": self._on_human_needed,
             "run_complete": self._on_run_complete,
             "budget_warning": self._on_budget_warning,
+            "incident_detected": self._on_incident_detected,
+            "incident_remediating": self._on_incident_remediating,
+            "incident_resolved": self._on_incident_resolved,
+            "incident_escalated": self._on_incident_escalated,
         }
         handler = handlers.get(event.kind)
         if handler:
@@ -241,3 +245,56 @@ class EventBus:
             await self.slack.notify(
                 f":warning: *{event.project_name}* budget warning: {event.detail}"
             )
+
+    # ── Monitoring Event Handlers ────────────────────────────────────
+
+    async def _on_incident_detected(self, event: PactEvent) -> None:
+        if self.slack.configured:
+            await self.slack.notify(
+                f":rotating_light: *{event.project_name}* incident detected: {event.detail}"
+            )
+        if self.linear.configured and self._linear_team_id:
+            try:
+                await self.linear.create_issue(
+                    self._linear_team_id,
+                    f"[pact] Incident: {event.detail[:80]}",
+                    body=(
+                        f"**Incident detected by Pact monitoring**\n\n"
+                        f"Component: {event.component_id or 'unknown'}\n"
+                        f"Detail: {event.detail}"
+                    ),
+                )
+            except Exception:
+                pass
+
+    async def _on_incident_remediating(self, event: PactEvent) -> None:
+        if self.slack.configured:
+            await self.slack.notify(
+                f":wrench: *{event.project_name}* auto-remediating: {event.detail}"
+            )
+
+    async def _on_incident_resolved(self, event: PactEvent) -> None:
+        if self.slack.configured:
+            await self.slack.notify(
+                f":white_check_mark: *{event.project_name}* incident resolved: {event.detail}"
+            )
+
+    async def _on_incident_escalated(self, event: PactEvent) -> None:
+        if self.slack.configured:
+            await self.slack.notify(
+                f":sos: *{event.project_name}* incident escalated: {event.detail}"
+            )
+        if self.linear.configured and self._linear_team_id:
+            try:
+                await self.linear.create_issue(
+                    self._linear_team_id,
+                    f"[pact] ESCALATION: {event.detail[:80]}",
+                    body=(
+                        f"**Pact could not auto-fix this incident**\n\n"
+                        f"Component: {event.component_id or 'unknown'}\n"
+                        f"Detail: {event.detail}\n\n"
+                        f"See diagnostic report in .pact/monitoring/reports/"
+                    ),
+                )
+            except Exception:
+                pass

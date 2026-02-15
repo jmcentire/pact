@@ -44,6 +44,10 @@ Two independent levers:
 - `plan_only: true` -- Stop after contracts, use `pact build` to target specific nodes
 - `max_concurrent_agents: 4` -- Concurrency limit for parallel modes
 
+### Production Monitoring & Auto-Remediation
+
+Opt-in (`monitoring_enabled: true`). Pact-generated code embeds `PACT:<project_hash>:<component_id>` log keys. The Sentinel watches log files, processes, and webhooks for errors, attributes them to components via log keys (or LLM triage), and spawns knowledge-flashed fixer agents that add a reproducer test and rebuild the black box. Multi-window budget caps (per-incident/hourly/daily/weekly/monthly) prevent runaway spend.
+
 ### Casual-Pace Scheduling
 
 Poll-based, not event-loop. Agents invoked for focused bursts, state fully persisted between bursts.
@@ -69,17 +73,25 @@ src/pact/
   budget.py            # Per-project spend tracking
   lifecycle.py         # Run state machine
   daemon.py            # Event-driven FIFO-based coordinator
-  interface_stub.py    # Interface stub generation
+  interface_stub.py    # Interface stub generation + log key preamble
   cli.py               # CLI entry points
+
+  # Monitoring subsystem
+  schemas_monitoring.py # Monitoring models (Signal, Incident, MonitoringBudget, etc.)
+  signals.py           # Signal ingestion (LogTailer, ProcessWatcher, WebhookReceiver)
+  incidents.py         # Incident lifecycle + multi-window budget enforcement
+  remediator.py        # Knowledge-flashed fixer (reproducer test + rebuild)
+  sentinel.py          # Long-running monitor coordinator
 
   agents/
     base.py            # AgentBase (reuses Backend protocol)
     research.py        # Best-practices research + plan evaluation
     contract_author.py # Generates interface contracts
     test_author.py     # Generates functional tests from contracts
-    code_author.py     # Implements black boxes
+    code_author.py     # Implements black boxes (embeds PACT log keys)
     shaper.py          # Shape Up pitch generation agent
     trace_analyst.py   # I/O tracing for diagnosis
+    triage.py          # Error-to-component mapping + diagnostic reports
 
   backends/
     __init__.py        # Backend protocol + factory
@@ -110,6 +122,10 @@ src/pact/
     implementations/   # Per-component code + attempts/
     compositions/      # Integration glue
     learnings/         # Accumulated learnings
+    monitoring/        # Incidents, budget state, diagnostic reports
+      incidents.json   # All incidents with lifecycle state
+      budget.json      # Running budget totals per window
+      reports/         # Per-incident diagnostic reports (markdown)
 ```
 
 ## Key Schemas
@@ -122,10 +138,22 @@ src/pact/
 | `TestResults` | Aggregated pass/fail with failure details |
 | `ScoredAttempt` | Competitive attempt with pass rate + duration scoring |
 | `RunState` | Mutable lifecycle: phase, status, component tasks, spend |
+| `Incident` | Tracked production error with lifecycle (detected→triaging→remediating→resolved/escalated) |
+| `MonitoringBudget` | Multi-window spend caps (per-incident, hourly, daily, weekly, monthly) |
+| `Signal` | Raw error signal from log file, process, webhook, or manual report |
+
+## Monitoring Commands
+
+```bash
+pact watch <project-dir>...           # Start Sentinel monitor (Ctrl+C to stop)
+pact report <project-dir> <error>     # Manually report a production error
+pact incidents <project-dir>          # List active/recent incidents
+pact incident <project-dir> <id>      # Show incident details + diagnostic report
+```
 
 ## Testing
 
 ```bash
-make test          # 426 tests, ~0.5s
+make test          # 901 tests, ~4s
 make test-quick    # Stop on first failure
 ```

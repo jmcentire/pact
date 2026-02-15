@@ -526,6 +526,82 @@ class TestAgentWithLearnings:
         assert "Lesson 0" not in result
 
 
+class TestMonitoringCommands:
+    """Verify monitoring CLI commands are registered."""
+
+    def test_watch_command_registered(self):
+        """pact watch is in the CLI."""
+        from pact.cli import main
+        import argparse
+        # Parse --help to verify watch is listed
+        # Instead, just verify the function exists
+        from pact.cli import cmd_watch
+        assert callable(cmd_watch)
+
+    def test_report_command_registered(self):
+        from pact.cli import cmd_report
+        assert callable(cmd_report)
+
+    def test_incidents_command_registered(self):
+        from pact.cli import cmd_incidents
+        assert callable(cmd_incidents)
+
+    def test_incident_command_registered(self):
+        from pact.cli import cmd_incident
+        assert callable(cmd_incident)
+
+    def test_report_creates_incident(self, tmp_path: Path, capsys):
+        from pact.cli import cmd_report
+        import argparse
+
+        project = ProjectManager(tmp_path)
+        project.init()
+
+        args = argparse.Namespace(
+            project_dir=str(tmp_path),
+            error_text="TypeError: NoneType",
+        )
+        import asyncio
+        asyncio.run(cmd_report(args))
+
+        captured = capsys.readouterr()
+        assert "Incident created" in captured.out
+
+    def test_incidents_no_data(self, tmp_path: Path, capsys):
+        from pact.cli import cmd_incidents
+        import argparse
+
+        project = ProjectManager(tmp_path)
+        project.init()
+
+        args = argparse.Namespace(
+            project_dir=str(tmp_path),
+            show_all=False,
+            json_output=False,
+        )
+        cmd_incidents(args)
+        captured = capsys.readouterr()
+        assert "No incidents" in captured.out or "No active" in captured.out
+
+    def test_incident_not_found(self, tmp_path: Path, capsys):
+        from pact.cli import cmd_incident
+        import argparse
+
+        project = ProjectManager(tmp_path)
+        project.init()
+        # Create the monitoring directory so it can look for incidents
+        (tmp_path / ".pact" / "monitoring").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".pact" / "monitoring" / "incidents.json").write_text('{"incidents": {}}')
+
+        args = argparse.Namespace(
+            project_dir=str(tmp_path),
+            incident_id="nonexistent",
+        )
+        cmd_incident(args)
+        captured = capsys.readouterr()
+        assert "not found" in captured.out.lower()
+
+
 class TestConfigIntegrationFields:
     def test_global_config_defaults(self):
         gc = GlobalConfig()

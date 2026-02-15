@@ -22,6 +22,10 @@ Commands:
   pact clean <project-dir>             Clean up artifacts
   pact resume <project-dir>            Resume a failed or paused run
   pact diff <project-dir> <id>         Diff between competitive implementations
+  pact watch <project-dir>...          Start the Sentinel monitor
+  pact report <project-dir> <error>    Manually report a production error
+  pact incidents <project-dir>         List active/recent incidents
+  pact incident <project-dir> <id>     Show incident details + diagnostic report
 """
 
 from __future__ import annotations
@@ -163,6 +167,26 @@ def main() -> None:
     p_diff.add_argument("project_dir", help="Project directory path")
     p_diff.add_argument("component_id", help="Component ID to diff")
 
+    # watch (monitoring)
+    p_watch = subparsers.add_parser("watch", help="Start the Sentinel production monitor")
+    p_watch.add_argument("project_dirs", nargs="+", help="Project directories to monitor")
+
+    # report (manual error report)
+    p_report = subparsers.add_parser("report", help="Manually report a production error")
+    p_report.add_argument("project_dir", help="Project directory path")
+    p_report.add_argument("error_text", help="Error description text")
+
+    # incidents (list)
+    p_incidents = subparsers.add_parser("incidents", help="List active/recent incidents")
+    p_incidents.add_argument("project_dir", help="Project directory path")
+    p_incidents.add_argument("--all", action="store_true", dest="show_all", help="Include resolved/escalated")
+    p_incidents.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
+
+    # incident (detail)
+    p_incident = subparsers.add_parser("incident", help="Show incident details + diagnostic report")
+    p_incident.add_argument("project_dir", help="Project directory path")
+    p_incident.add_argument("incident_id", help="Incident ID")
+
     args = parser.parse_args()
 
     if args.verbose:
@@ -216,6 +240,14 @@ def main() -> None:
         cmd_resume(args)
     elif args.command == "diff":
         cmd_diff(args)
+    elif args.command == "watch":
+        asyncio.run(cmd_watch(args))
+    elif args.command == "report":
+        asyncio.run(cmd_report(args))
+    elif args.command == "incidents":
+        cmd_incidents(args)
+    elif args.command == "incident":
+        cmd_incident(args)
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -1472,6 +1504,186 @@ def cmd_diff(args: argparse.Namespace) -> None:
             print()
             for line in diff:
                 print(line, end="")
+
+
+async def cmd_watch(args: argparse.Namespace) -> None:
+    """Start the Sentinel production monitor."""
+    from pathlib import Path
+    from pact.schemas_monitoring import MonitoringTarget
+    from pact.sentinel import Sentinel
+
+    global_config = load_global_config()
+
+    if not global_config.monitoring_enabled:
+        print("Monitoring is disabled. Set monitoring_enabled: true in config.yaml")
+        return
+
+    targets: list[MonitoringTarget] = []
+    for project_dir in args.project_dirs:
+        project_config = load_project_config(project_dir)
+        target = MonitoringTarget(
+            project_dir=str(Path(project_dir).resolve()),
+            label=Path(project_dir).name,
+            log_files=project_config.monitoring_log_files,
+            process_patterns=project_config.monitoring_process_patterns,
+            webhook_port=project_config.monitoring_webhook_port,
+            error_patterns=project_config.monitoring_error_patterns,
+        )
+        targets.append(target)
+
+    if not targets:
+        print("No projects to watch.")
+        return
+
+    # Use the first project's .pact dir for state
+    state_dir = Path(args.project_dirs[0]).resolve() / ".pact"
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    sentinel = Sentinel(
+        config=global_config,
+        targets=targets,
+        state_dir=state_dir,
+    )
+
+    print(f"Sentinel starting: watching {len(targets)} project(s)")
+    for t in targets:
+        print(f"  {t.label or t.project_dir}")
+        if t.log_files:
+            print(f"    Log files: {', '.join(t.log_files)}")
+        if t.process_patterns:
+            print(f"    Processes: {', '.join(t.process_patterns)}")
+        if t.webhook_port:
+            print(f"    Webhook port: {t.webhook_port}")
+    print(f"\nAuto-remediate: {global_config.monitoring_auto_remediate}")
+    print("Press Ctrl+C to stop.\n")
+
+    # Write PID file
+    pid_path = state_dir / "sentinel.pid"
+    import os
+    pid_path.write_text(str(os.getpid()))
+
+    try:
+        await sentinel.run()
+    except KeyboardInterrupt:
+        sentinel.stop()
+    finally:
+        if pid_path.exists():
+            pid_path.unlink()
+
+
+async def cmd_report(args: argparse.Namespace) -> None:
+    """Manually report a production error."""
+    from pathlib import Path
+    from pact.incidents import IncidentManager
+    from pact.schemas_monitoring import MonitoringBudget, Signal
+
+    project_dir = str(Path(args.project_dir).resolve())
+    state_dir = Path(args.project_dir).resolve() / ".pact"
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    from datetime import datetime
+    budget = MonitoringBudget()
+    mgr = IncidentManager(state_dir, budget)
+
+    signal = Signal(
+        source="manual",
+        raw_text=args.error_text,
+        timestamp=datetime.now().isoformat(),
+    )
+    incident = mgr.create_incident(signal, project_dir)
+    print(f"Incident created: {incident.id}")
+    print(f"  Status: {incident.status}")
+    print(f"  Project: {project_dir}")
+    print(f"  Error: {args.error_text[:100]}")
+
+
+def cmd_incidents(args: argparse.Namespace) -> None:
+    """List active/recent incidents."""
+    from pathlib import Path
+    from pact.incidents import IncidentManager
+    from pact.schemas_monitoring import MonitoringBudget
+
+    state_dir = Path(args.project_dir).resolve() / ".pact"
+    if not (state_dir / "monitoring" / "incidents.json").exists():
+        print("No incidents found.")
+        return
+
+    budget = MonitoringBudget()
+    mgr = IncidentManager(state_dir, budget)
+
+    if getattr(args, "show_all", False):
+        incidents = mgr.get_recent_incidents(50)
+    else:
+        incidents = mgr.get_active_incidents()
+
+    if not incidents:
+        print("No active incidents.")
+        return
+
+    if getattr(args, "json_output", False):
+        print(json.dumps([i.model_dump() for i in incidents], indent=2, default=str))
+        return
+
+    print(f"{'ID':<14s} {'Status':<14s} {'Component':<20s} {'Spend':<10s} {'Error'}")
+    print("-" * 80)
+    for inc in incidents:
+        error_preview = ""
+        if inc.signals:
+            error_preview = inc.signals[0].raw_text[:30]
+        print(
+            f"{inc.id:<14s} {inc.status:<14s} "
+            f"{inc.component_id or 'unknown':<20s} "
+            f"${inc.spend_usd:<9.2f} {error_preview}"
+        )
+
+
+def cmd_incident(args: argparse.Namespace) -> None:
+    """Show incident details and diagnostic report."""
+    from pathlib import Path
+    from pact.incidents import IncidentManager
+    from pact.schemas_monitoring import MonitoringBudget
+
+    state_dir = Path(args.project_dir).resolve() / ".pact"
+    if not (state_dir / "monitoring" / "incidents.json").exists():
+        print("No incidents found.")
+        return
+
+    budget = MonitoringBudget()
+    mgr = IncidentManager(state_dir, budget)
+
+    incident = mgr.get_incident(args.incident_id)
+    if not incident:
+        print(f"Incident not found: {args.incident_id}")
+        return
+
+    print(f"Incident: {incident.id}")
+    print(f"  Status: {incident.status}")
+    print(f"  Component: {incident.component_id or 'unknown'}")
+    print(f"  Project: {incident.project_dir}")
+    print(f"  Created: {incident.created_at}")
+    print(f"  Updated: {incident.updated_at}")
+    print(f"  Spend: ${incident.spend_usd:.2f}")
+    print(f"  Remediation attempts: {incident.remediation_attempts}")
+    print(f"  Resolution: {incident.resolution or 'pending'}")
+
+    if incident.signals:
+        print(f"\nSignals ({len(incident.signals)}):")
+        for s in incident.signals[:10]:
+            print(f"  [{s.source}] {s.raw_text[:100]}")
+
+    if incident.diagnostic_report:
+        print(f"\n{'=' * 60}")
+        print("DIAGNOSTIC REPORT")
+        print(f"{'=' * 60}")
+        print(incident.diagnostic_report)
+
+    # Check for report file
+    report_path = state_dir / "monitoring" / "reports" / f"{incident.id}.md"
+    if report_path.exists() and not incident.diagnostic_report:
+        print(f"\n{'=' * 60}")
+        print("DIAGNOSTIC REPORT (from file)")
+        print(f"{'=' * 60}")
+        print(report_path.read_text())
 
 
 if __name__ == "__main__":

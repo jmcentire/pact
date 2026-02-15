@@ -22,6 +22,8 @@ Four output formats:
 
 from __future__ import annotations
 
+import hashlib
+
 from pact.schemas import (
     ComponentContract,
     ComponentTask,
@@ -355,6 +357,46 @@ def render_compact_deps(contracts: dict[str, ComponentContract]) -> str:
     return "\n\n".join(parts)
 
 
+# ── Log Key Preamble ─────────────────────────────────────────────────
+
+
+def render_log_key_preamble(
+    project_id: str,
+    component_id: str,
+    prefix: str = "PACT",
+) -> str:
+    """Generate a logging preamble that embeds the PACT log key.
+
+    Returns Python code that sets up a logger with the embedded key.
+    The key format is PREFIX:project_hash:component_id and appears in
+    every log line, enabling automatic error attribution by the Sentinel.
+    """
+    key = f"{prefix}:{project_id}:{component_id}"
+    return f'''import logging
+
+_PACT_KEY = "{key}"
+logger = logging.getLogger(__name__)
+
+
+class PactFormatter(logging.Formatter):
+    """Formatter that injects the PACT log key into every record."""
+
+    def format(self, record):
+        record.pact_key = _PACT_KEY
+        return super().format(record)
+
+
+def _log(level: str, msg: str, **kwargs) -> None:
+    """Log with PACT key embedded for production traceability."""
+    getattr(logger, level)(f"[{{_PACT_KEY}}] {{msg}}", **kwargs)
+'''
+
+
+def project_id_hash(project_dir: str) -> str:
+    """Generate a 6-char project ID hash from a project directory path."""
+    return hashlib.sha256(project_dir.encode()).hexdigest()[:6]
+
+
 # ── Handoff Brief ────────────────────────────────────────────────────
 
 
@@ -371,6 +413,7 @@ def render_handoff_brief(
     learnings: str = "",
     pitch_context: str = "",
     include_test_code: bool = True,
+    log_key_preamble: str = "",
 ) -> str:
     """Render a complete handoff document for a fresh agent.
 
@@ -399,6 +442,15 @@ def render_handoff_brief(
     lines.append(render_stub(contract))
     lines.append("```")
     lines.append("")
+
+    # Section 2b: Log key preamble (for production traceability)
+    if log_key_preamble:
+        lines.append("## LOG KEY PREAMBLE (include at top of every module)")
+        lines.append("```python")
+        lines.append(log_key_preamble)
+        lines.append("```")
+        lines.append("ALL log statements MUST include the PACT log key for production traceability.")
+        lines.append("")
 
     # Section 3: Dependencies
     if contract.dependencies:

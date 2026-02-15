@@ -113,6 +113,56 @@ class TestResolveBackend:
         assert resolve_backend("unknown", pc, gc) == "claude_code"
 
 
+class TestMonitoringConfigFields:
+    def test_global_config_monitoring_defaults(self):
+        gc = GlobalConfig()
+        assert gc.monitoring_enabled is False
+        assert gc.monitoring_auto_remediate is True
+        assert gc.monitoring_budget == {}
+        assert gc.monitoring_log_key_prefix == "PACT"
+
+    def test_project_config_monitoring_defaults(self):
+        pc = ProjectConfig()
+        assert pc.monitoring_log_files == []
+        assert pc.monitoring_process_patterns == []
+        assert pc.monitoring_webhook_port == 0
+        assert "ERROR" in pc.monitoring_error_patterns
+        assert pc.monitoring_auto_remediate is None
+
+    def test_load_global_config_monitoring(self, tmp_path: Path):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(yaml.dump({
+            "monitoring_enabled": True,
+            "monitoring_auto_remediate": False,
+            "monitoring_log_key_prefix": "MYAPP",
+            "monitoring_budget": {
+                "per_incident_cap": 2.00,
+                "hourly_cap": 5.00,
+            },
+        }))
+        gc = load_global_config(config_path)
+        assert gc.monitoring_enabled is True
+        assert gc.monitoring_auto_remediate is False
+        assert gc.monitoring_log_key_prefix == "MYAPP"
+        assert gc.monitoring_budget["per_incident_cap"] == 2.00
+
+    def test_load_project_config_monitoring(self, tmp_path: Path):
+        config_path = tmp_path / "pact.yaml"
+        config_path.write_text(yaml.dump({
+            "monitoring_log_files": ["/var/log/app.log"],
+            "monitoring_process_patterns": ["myapp"],
+            "monitoring_webhook_port": 9876,
+            "monitoring_error_patterns": ["FATAL", "CRITICAL"],
+            "monitoring_auto_remediate": False,
+        }))
+        pc = load_project_config(tmp_path)
+        assert pc.monitoring_log_files == ["/var/log/app.log"]
+        assert pc.monitoring_process_patterns == ["myapp"]
+        assert pc.monitoring_webhook_port == 9876
+        assert pc.monitoring_error_patterns == ["FATAL", "CRITICAL"]
+        assert pc.monitoring_auto_remediate is False
+
+
 class TestBidirectionalConfigFields:
     def test_global_config_bidirectional_defaults(self):
         gc = GlobalConfig()
