@@ -663,6 +663,72 @@ def cmd_answer(args: argparse.Namespace) -> None:
     print("\nInterview complete. Run 'pact run' to proceed.")
 
 
+STOPWORDS = frozenset({
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "shall",
+    "should", "may", "might", "can", "could", "must",
+    "for", "to", "in", "of", "on", "at", "by", "with", "from", "about",
+    "into", "through", "during", "before", "after", "above", "below",
+    "between", "out", "off", "over", "under", "again", "further",
+    "then", "once", "here", "there", "when", "where", "why", "how",
+    "all", "each", "every", "both", "few", "more", "most", "other",
+    "some", "such", "no", "nor", "not", "only", "own", "same",
+    "so", "than", "too", "very", "just", "because", "as", "until",
+    "while", "if", "or", "and", "but", "yet", "what", "which", "who",
+    "whom", "this", "that", "these", "those", "i", "me", "my", "we",
+    "our", "you", "your", "he", "him", "his", "she", "her", "it", "its",
+    "they", "them", "their",
+})
+
+
+def match_answer_to_question(
+    question: str,
+    assumptions: list[str],
+    question_index: int = 0,
+) -> tuple[str, float]:
+    """Match a question to the best assumption for auto-approval.
+
+    Algorithm (in order):
+      1. Keyword overlap (>= 2 significant words shared): use best match
+         Confidence: word_overlap / max(len_q_words, len_a_words)
+      2. Index-based pairing: if question_index < len(assumptions), use assumptions[question_index]
+         Confidence: 0.5
+      3. No match: return ("Accepted as stated", 0.0)
+
+    Significant words: exclude STOPWORDS
+    """
+    def significant_words(text: str) -> set[str]:
+        return {w.lower().strip("?.,!:;\"'()") for w in text.split()} - STOPWORDS - {""}
+
+    q_words = significant_words(question)
+    if not q_words:
+        if question_index < len(assumptions):
+            return assumptions[question_index], 0.5
+        return "Accepted as stated", 0.0
+
+    # 1. Keyword overlap matching
+    best_match = ""
+    best_confidence = 0.0
+    for assumption in assumptions:
+        a_words = significant_words(assumption)
+        overlap = q_words & a_words
+        if len(overlap) >= 2:
+            confidence = len(overlap) / max(len(q_words), len(a_words))
+            if confidence > best_confidence:
+                best_confidence = confidence
+                best_match = assumption
+
+    if best_match and best_confidence > 0.0:
+        return best_match, best_confidence
+
+    # 2. Index-based fallback
+    if question_index < len(assumptions):
+        return assumptions[question_index], 0.5
+
+    # 3. No match
+    return "Accepted as stated", 0.0
+
+
 def cmd_approve(args: argparse.Namespace) -> None:
     """Approve interview with defaults and signal daemon to continue."""
     from pact.daemon import send_signal
@@ -678,14 +744,12 @@ def cmd_approve(args: argparse.Namespace) -> None:
         print("Already approved.")
     else:
         # Accept all assumptions as answers
-        for q in interview.questions:
+        for i, q in enumerate(interview.questions):
             if q not in interview.user_answers:
-                matching = next(
-                    (a for a in interview.assumptions
-                     if any(word in a.lower() for word in q.lower().split()[:3])),
-                    interview.assumptions[0] if interview.assumptions else "Accepted",
+                answer, confidence = match_answer_to_question(
+                    q, interview.assumptions, question_index=i,
                 )
-                interview.user_answers[q] = matching
+                interview.user_answers[q] = answer
         interview.approved = True
         project.save_interview(interview)
         print("Interview approved with default assumptions.")

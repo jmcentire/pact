@@ -8,6 +8,7 @@ single source of truth for all inter-agent communication.
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -52,6 +53,23 @@ class ErrorCase(BaseModel):
     error_data: dict[str, str] = {}
 
 
+class SideEffectKind(StrEnum):
+    """Categorized side effect types for contract functions."""
+    NONE = "none"
+    READS_FILE = "reads_file"
+    WRITES_FILE = "writes_file"
+    NETWORK_CALL = "network_call"
+    MUTATES_STATE = "mutates_state"
+    LOGGING = "logging"
+
+
+class SideEffect(BaseModel):
+    """Structured side effect declaration."""
+    kind: SideEffectKind
+    target: str = Field(default="", description="What is read/written/called")
+    description: str = Field(default="", description="Additional context")
+
+
 class FunctionContract(BaseModel):
     """Contract for a single function — inputs, output, errors, invariants."""
     name: str
@@ -63,6 +81,7 @@ class FunctionContract(BaseModel):
     postconditions: list[str] = []
     idempotent: bool = False
     side_effects: list[str] = []
+    structured_side_effects: list[SideEffect] = []
 
 
 class ComponentContract(BaseModel):
@@ -414,3 +433,20 @@ class LearningEntry(BaseModel):
     source_project_id: str = ""
     confidence: float = Field(ge=0.0, le=1.0)
     created_at: str = ""
+
+
+# ── Artifact Metadata (PBOM) ─────────────────────────────────────
+
+
+class ArtifactMetadata(BaseModel):
+    """Provenance metadata for a generated artifact."""
+    pact_version: str = "0.1.0"
+    model: str = Field(default="", description="Model ID that generated this artifact")
+    component_id: str = ""
+    artifact_type: Literal["contract", "test_suite", "implementation", "composition"] = "contract"
+    contract_version: int = 1
+    cost_input_tokens: int = 0
+    cost_output_tokens: int = 0
+    cost_usd: float = 0.0
+    timestamp: str = Field(default="", description="ISO 8601 generation timestamp")
+    run_id: str = Field(default="", description="Unique run identifier")
