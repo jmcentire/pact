@@ -70,6 +70,14 @@ class SideEffect(BaseModel):
     description: str = Field(default="", description="Additional context")
 
 
+
+class PerformanceBudget(BaseModel):
+    """Optional performance constraints on a function."""
+    p95_latency_ms: int | None = Field(default=None, ge=1, description="95th percentile latency cap in ms")
+    max_memory_mb: int | None = Field(default=None, ge=1, description="Peak memory cap in MB")
+    complexity: str | None = Field(default=None, description="Big-O complexity, e.g. 'O(n log n)'")
+
+
 class FunctionContract(BaseModel):
     """Contract for a single function — inputs, output, errors, invariants."""
     name: str
@@ -82,6 +90,7 @@ class FunctionContract(BaseModel):
     idempotent: bool = False
     side_effects: list[str] = []
     structured_side_effects: list[SideEffect] = []
+    performance_budget: PerformanceBudget | None = None
 
 
 class ComponentContract(BaseModel):
@@ -162,6 +171,88 @@ class InterviewResult(BaseModel):
     assumptions: list[str] = []
     user_answers: dict[str, str] = {}
     approved: bool = False
+
+
+# ── Interview V2 Models ─────────────────────────────────────────────
+
+
+class QuestionType(StrEnum):
+    """Types of interview questions with validation semantics."""
+    FREETEXT = "freetext"
+    BOOLEAN = "boolean"
+    ENUM = "enum"
+    NUMERIC = "numeric"
+
+
+class InterviewQuestion(BaseModel):
+    """A typed interview question with validation."""
+    id: str = Field(description="Unique question identifier, e.g. q_001")
+    text: str = Field(description="The question text")
+    question_type: QuestionType = QuestionType.FREETEXT
+    options: list[str] = Field(default_factory=list, description="Valid options for enum type")
+    default: str = Field(default="", description="Default answer if auto-approved")
+    range_min: float | None = Field(default=None, description="Min value for numeric type")
+    range_max: float | None = Field(default=None, description="Max value for numeric type")
+    depends_on: str | None = Field(default=None, description="Question ID this depends on")
+    depends_value: str | None = Field(default=None, description="Required answer on depends_on to show this question")
+
+
+def validate_answer(question: InterviewQuestion, answer: str) -> str | None:
+    """Validate an answer against question type constraints.
+
+    Returns None if valid, error message string if invalid.
+
+    Rules:
+      - BOOLEAN: answer in ("yes", "no", "true", "false")
+      - ENUM: answer in question.options (case-insensitive)
+      - NUMERIC: parseable as float, within range if specified
+      - FREETEXT: non-empty string
+    """
+    if question.question_type == QuestionType.BOOLEAN:
+        if answer.lower() not in ("yes", "no", "true", "false"):
+            return f"Boolean question requires yes/no/true/false, got '{answer}'"
+        return None
+
+    if question.question_type == QuestionType.ENUM:
+        lower_options = [o.lower() for o in question.options]
+        if answer.lower() not in lower_options:
+            return f"Answer '{answer}' not in valid options: {question.options}"
+        return None
+
+    if question.question_type == QuestionType.NUMERIC:
+        try:
+            val = float(answer)
+        except ValueError:
+            return f"Numeric question requires a number, got '{answer}'"
+        if question.range_min is not None and val < question.range_min:
+            return f"Value {val} below minimum {question.range_min}"
+        if question.range_max is not None and val > question.range_max:
+            return f"Value {val} above maximum {question.range_max}"
+        return None
+
+    # FREETEXT
+    if not answer.strip():
+        return "Freetext answer cannot be empty"
+    return None
+
+
+class AnswerSource(StrEnum):
+    """Where an answer came from — provenance tracking."""
+    USER_INTERACTIVE = "user_interactive"
+    AUTO_ASSUMPTION = "auto_assumption"
+    INTEGRATION_SLACK = "integration_slack"
+    INTEGRATION_LINEAR = "integration_linear"
+    CLI_APPROVE = "cli_approve"
+
+
+class AuditedAnswer(BaseModel):
+    """An answer with full provenance."""
+    question_id: str
+    answer: str
+    source: AnswerSource
+    confidence: float = Field(ge=0.0, le=1.0, description="Match confidence for auto-filled")
+    timestamp: str = Field(default="", description="ISO 8601 timestamp")
+    matched_assumption: str | None = Field(default=None, description="Which assumption was matched, if any")
 
 
 # ── Research & Planning Models ───────────────────────────────────────

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
 import yaml
@@ -72,6 +73,10 @@ class GlobalConfig:
     # Environment
     environment: dict = field(default_factory=dict)  # Raw YAML dict for EnvironmentSpec
 
+    # Timeouts
+    impatience: str = "normal"           # patient | normal | impatient
+    role_timeouts: dict[str, int] = field(default_factory=dict)
+
 
 @dataclass
 class ProjectConfig:
@@ -113,6 +118,10 @@ class ProjectConfig:
 
     # Environment
     environment: dict | None = None
+
+    # Timeouts
+    impatience: str | None = None
+    role_timeouts: dict[str, int] | None = None
 
 
 def load_global_config(config_path: str | Path | None = None) -> GlobalConfig:
@@ -160,6 +169,8 @@ def load_global_config(config_path: str | Path | None = None) -> GlobalConfig:
         shaping_rigor=raw.get("shaping_rigor", "moderate"),
         shaping_budget_pct=raw.get("shaping_budget_pct", 0.15),
         environment=raw.get("environment", {}),
+        impatience=raw.get("impatience", "normal"),
+        role_timeouts=raw.get("role_timeouts", {}),
     )
 
     # Apply pricing overrides if configured
@@ -216,6 +227,8 @@ def load_project_config(project_dir: str | Path) -> ProjectConfig:
         shaping_rigor=raw.get("shaping_rigor"),
         shaping_budget_pct=raw.get("shaping_budget_pct"),
         environment=raw.get("environment"),
+        impatience=raw.get("impatience"),
+        role_timeouts=raw.get("role_timeouts"),
     )
 
 
@@ -314,6 +327,58 @@ class EnvironmentSpec:
         return missing
 
 
+class ImpatienceLevel(StrEnum):
+    """How aggressively to timeout stalled agents."""
+    PATIENT = "patient"       # 2x base timeout
+    NORMAL = "normal"         # 1x base timeout
+    IMPATIENT = "impatient"   # 0.5x base timeout
+
+
+class TimeoutConfig:
+    """Per-role and per-phase timeout configuration."""
+    
+    DEFAULT_ROLE_TIMEOUTS = {
+        "decomposer": 300,
+        "contract_author": 300,
+        "test_author": 300,
+        "code_author": 300,
+        "trace_analyst": 180,
+        "shaper": 300,
+    }
+    
+    IMPATIENCE_MULTIPLIERS = {
+        ImpatienceLevel.PATIENT: 2.0,
+        ImpatienceLevel.NORMAL: 1.0,
+        ImpatienceLevel.IMPATIENT: 0.5,
+    }
+    
+    TIMEOUT_FLOOR = 30  # Minimum timeout in seconds
+    
+    def __init__(
+        self,
+        impatience: ImpatienceLevel = ImpatienceLevel.NORMAL,
+        role_timeouts: dict[str, int] | None = None,
+    ):
+        self.impatience = impatience
+        self.role_timeouts = dict(self.DEFAULT_ROLE_TIMEOUTS)
+        if role_timeouts:
+            self.role_timeouts.update(role_timeouts)
+    
+    def get_timeout(self, role: str) -> int:
+        """Return effective timeout for a role, scaled by impatience level.
+        
+        Postconditions:
+          - PATIENT: role_timeout * 2
+          - NORMAL: role_timeout * 1
+          - IMPATIENT: role_timeout * 0.5
+          - Result is always >= 30 (floor)
+        """
+        base = self.role_timeouts.get(role, 300)  # Default 300s for unknown roles
+        multiplier = self.IMPATIENCE_MULTIPLIERS.get(self.impatience, 1.0)
+        effective = int(base * multiplier)
+        return max(effective, self.TIMEOUT_FLOOR)
+
+
 def resolve_environment(project: ProjectConfig, global_cfg: GlobalConfig) -> EnvironmentSpec:
     """Resolve environment spec from project or global config."""
     raw = project.environment if project.environment else global_cfg.environment
@@ -325,4 +390,24 @@ def resolve_environment(project: ProjectConfig, global_cfg: GlobalConfig) -> Env
         extra_path_dirs=raw.get("extra_path_dirs", []),
         required_tools=raw.get("required_tools", ["pytest"]),
         env_vars=raw.get("env_vars", {}),
+    )
+
+
+def resolve_timeout_config(
+    project: ProjectConfig, global_cfg: GlobalConfig,
+) -> "TimeoutConfig":
+    """Resolve timeout config from project or global config."""
+    impatience_str = project.impatience or global_cfg.impatience
+    try:
+        impatience = ImpatienceLevel(impatience_str)
+    except ValueError:
+        impatience = ImpatienceLevel.NORMAL
+    
+    role_timeouts = dict(global_cfg.role_timeouts)
+    if project.role_timeouts:
+        role_timeouts.update(project.role_timeouts)
+    
+    return TimeoutConfig(
+        impatience=impatience,
+        role_timeouts=role_timeouts if role_timeouts else None,
     )
