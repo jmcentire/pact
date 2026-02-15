@@ -48,6 +48,27 @@ class AgentBase:
         """Call LLM with schema enforcement. Returns (result, input_tokens, output_tokens)."""
         return await self._backend.assess(schema, prompt, system, max_tokens)
 
+    async def assess_cached(
+        self,
+        schema: type[T],
+        prompt: str,
+        system: str,
+        cache_prefix: str = "",
+        max_tokens: int = 32768,
+    ) -> tuple[T, int, int]:
+        """Call LLM with optional prompt caching.
+
+        If the backend supports assess_with_cache and cache_prefix is non-empty,
+        uses the cached path. Otherwise falls back to regular assess().
+        """
+        if cache_prefix and hasattr(self._backend, 'assess_with_cache'):
+            return await self._backend.assess_with_cache(
+                schema, prompt, system,
+                cache_prefix=cache_prefix,
+                max_tokens=max_tokens,
+            )
+        return await self._backend.assess(schema, prompt, system, max_tokens)
+
     def with_learnings(self, learnings: list[dict]) -> str:
         """Format learnings as context string for prompts."""
         if not learnings:

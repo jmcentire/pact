@@ -13,10 +13,11 @@ Even for dynamically-typed target languages, the stub gives agents a
 precise conceptual model. We don't need the language to be strongly typed;
 we just need agents to know the valid shapes, constraints, and expectations.
 
-Three output formats:
-  1. render_stub()        — Python-style interface stub (.pyi-like)
+Four output formats:
+  1. render_stub()           — Python-style interface stub (.pyi-like)
   2. render_dependency_map() — compact reference for all dependencies
-  3. render_handoff_brief()  — complete context for agent handoff
+  3. render_compact_deps()   — function signatures + type shapes (~80% smaller)
+  4. render_handoff_brief()  — complete context for agent handoff
 """
 
 from __future__ import annotations
@@ -314,6 +315,46 @@ def render_dependency_map(
     return "\n".join(lines)
 
 
+def render_compact_deps(contracts: dict[str, ComponentContract]) -> str:
+    """Compact dependency reference: function signatures + type shapes only.
+
+    ~80% fewer tokens than full render_stub() while preserving all type
+    information needed for contract authoring.
+
+    Example output:
+        ## pricing_engine
+        calculate_price(unit_id: str, dates: DateRange) -> PriceResult
+        DateRange = {check_in: date, check_out: date}
+        PriceResult = {total: float, breakdown: list[LineItem]}
+    """
+    if not contracts:
+        return ""
+
+    parts = []
+    for comp_id, contract in contracts.items():
+        lines = [f"## {contract.name} ({comp_id})"]
+
+        # Function signatures
+        for func in contract.functions:
+            inputs = ", ".join(f"{i.name}: {i.type_ref}" for i in func.inputs)
+            lines.append(f"{func.name}({inputs}) -> {func.output_type}")
+
+        # Type shapes (compact)
+        for typedef in contract.types:
+            if typedef.fields:
+                field_strs = ", ".join(f"{f.name}: {f.type_ref}" for f in typedef.fields)
+                lines.append(f"{typedef.name} = {{{field_strs}}}")
+            elif typedef.kind == "enum":
+                variants = ", ".join(v for v in (typedef.variants or []))
+                lines.append(f"{typedef.name} = enum({variants})")
+            else:
+                lines.append(f"{typedef.name} = {typedef.kind}")
+
+        parts.append("\n".join(lines))
+
+    return "\n\n".join(parts)
+
+
 # ── Handoff Brief ────────────────────────────────────────────────────
 
 
@@ -329,6 +370,7 @@ def render_handoff_brief(
     external_context: str = "",
     learnings: str = "",
     pitch_context: str = "",
+    include_test_code: bool = True,
 ) -> str:
     """Render a complete handoff document for a fresh agent.
 
@@ -368,21 +410,30 @@ def render_handoff_brief(
 
     # Section 4: Tests to pass
     if test_suite:
-        lines.append(f"## TESTS TO PASS ({len(test_suite.test_cases)} cases)")
-        for tc in test_suite.test_cases:
-            marker = ""
-            if test_results and test_results.failure_details:
-                failed_ids = {f.test_id for f in test_results.failure_details}
-                if tc.id in failed_ids:
-                    marker = " ** PREVIOUSLY FAILED **"
-            lines.append(f"  - [{tc.category}] {tc.id}: {tc.description}{marker}")
-        lines.append("")
+        if include_test_code:
+            lines.append(f"## TESTS TO PASS ({len(test_suite.test_cases)} cases)")
+            for tc in test_suite.test_cases:
+                marker = ""
+                if test_results and test_results.failure_details:
+                    failed_ids = {f.test_id for f in test_results.failure_details}
+                    if tc.id in failed_ids:
+                        marker = " ** PREVIOUSLY FAILED **"
+                lines.append(f"  - [{tc.category}] {tc.id}: {tc.description}{marker}")
+            lines.append("")
 
-        if test_suite.generated_code:
-            lines.append("### Test code:")
-            lines.append("```python")
-            lines.append(test_suite.generated_code)
-            lines.append("```")
+            if test_suite.generated_code:
+                lines.append("### Test code:")
+                lines.append("```python")
+                lines.append(test_suite.generated_code)
+                lines.append("```")
+                lines.append("")
+        else:
+            # compact listing
+            if test_suite.test_cases:
+                lines.append(f"## TESTS TO PASS ({len(test_suite.test_cases)} cases)")
+                for tc in test_suite.test_cases:
+                    desc = tc.description or ""
+                    lines.append(f"- {tc.id}: {desc}")
             lines.append("")
 
     # Section 5: History (what's been tried)

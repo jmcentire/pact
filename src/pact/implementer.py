@@ -137,6 +137,121 @@ async def implement_component(
     return test_results
 
 
+async def implement_component_interactive(
+    team_backend: object,  # ClaudeCodeTeamBackend
+    project: ProjectManager,
+    component_id: str,
+    contract: ComponentContract,
+    test_suite: ContractTestSuite,
+    dependency_contracts: dict[str, ComponentContract] | None = None,
+    sops: str = "",
+    external_context: str = "",
+    learnings: str = "",
+) -> TestResults:
+    """Implement a component using a Claude Code interactive session.
+
+    Instead of the API-based research->plan->code pipeline, spawns a full
+    Claude Code session that can read files, write code, run tests, and
+    iterate -- all within one persistent context window.
+
+    Args:
+        team_backend: A ClaudeCodeTeamBackend instance.
+        project: ProjectManager for file paths.
+        component_id: Component to implement.
+        contract: The ComponentContract.
+        test_suite: Tests to pass.
+        dependency_contracts: Contracts of dependencies.
+        sops: Standard operating procedures.
+        external_context: Context from integrations.
+        learnings: Learnings from prior runs.
+
+    Returns:
+        TestResults from running contract tests after implementation.
+    """
+    from pact.interface_stub import render_handoff_brief
+    from pact.backends.claude_code_team import AgentTask
+
+    all_contracts = dict(dependency_contracts or {})
+    all_contracts[contract.component_id] = contract
+
+    handoff = render_handoff_brief(
+        component_id=contract.component_id,
+        contract=contract,
+        contracts=all_contracts,
+        test_suite=test_suite,
+        sops=sops,
+        external_context=external_context,
+        learnings=learnings,
+    )
+
+    # Write test file so the agent can run it
+    test_file = project.test_code_path(component_id)
+    if not test_file.exists() and test_suite.generated_code:
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text(test_suite.generated_code)
+
+    src_dir = project.impl_src_dir(component_id)
+    src_dir.mkdir(parents=True, exist_ok=True)
+
+    prompt = f"""You are implementing a software component. Here is your handoff brief:
+
+{handoff}
+
+## Instructions
+
+1. Read the test file at: {test_file}
+2. Implement the component in: {src_dir}/
+3. Create a Python module that implements all types and functions from the contract
+4. Run the tests with: python3 -m pytest {test_file} -v
+5. If tests fail, read the errors, fix your implementation, and re-run
+6. Iterate until ALL tests pass
+7. When done, write a file at {src_dir}/DONE.txt containing "PASSED" if all tests passed
+
+Important:
+- All type names and function signatures must match the interface stub EXACTLY
+- Handle all error cases as specified
+- Dependencies should be accepted as constructor/function parameters (dependency injection)
+"""
+
+    output_file = str(src_dir / ".agent_output.json")
+    task = AgentTask(
+        prompt=prompt,
+        output_file=output_file,
+        pane_name=f"impl-{component_id[:12]}",
+        working_dir=str(project.project_dir),
+        max_turns=30,
+    )
+
+    try:
+        await team_backend.spawn_agent(task)
+        await team_backend.wait_for_completion(output_file, timeout=600)
+    except Exception as e:
+        logger.error("Interactive implementation failed for %s: %s", component_id, e)
+
+    # Save metadata
+    project.save_impl_metadata(component_id, {
+        "attempt": 1,
+        "timestamp": datetime.now().isoformat(),
+        "method": "interactive",
+    })
+
+    project.append_audit(
+        "implementation",
+        f"{component_id} interactive implementation",
+    )
+
+    # Run contract tests to get results
+    test_results = await run_contract_tests(test_file, src_dir)
+    project.save_test_results(component_id, test_results)
+
+    project.append_audit(
+        "test_run",
+        f"{component_id}: {test_results.passed}/{test_results.total} passed",
+    )
+
+    return test_results
+
+
 async def _run_one_competitor(
     agent: AgentBase,
     project: ProjectManager,

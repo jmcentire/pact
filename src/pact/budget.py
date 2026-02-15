@@ -81,6 +81,8 @@ class BudgetTracker:
     _project_tokens_out: int = 0
     _daily_spend: float = field(default=0.0)
     _day_start: float = field(default_factory=time.monotonic)
+    _cache_creation_tokens: int = 0
+    _cache_read_tokens: int = 0
 
     def set_model_pricing(self, model: str) -> None:
         inp, out = pricing_for_model(model)
@@ -155,6 +157,27 @@ class BudgetTracker:
     def daily_spend(self) -> float:
         self._maybe_reset_day()
         return self._daily_spend
+
+    def record_cache_tokens(self, creation: int, read: int) -> None:
+        """Record prompt cache token usage."""
+        self._cache_creation_tokens += creation
+        self._cache_read_tokens += read
+
+    @property
+    def cache_creation_tokens(self) -> int:
+        return self._cache_creation_tokens
+
+    @property
+    def cache_read_tokens(self) -> int:
+        return self._cache_read_tokens
+
+    @property
+    def cache_hit_rate(self) -> float:
+        """Fraction of cacheable tokens that hit cache (0.0 - 1.0)."""
+        total = self._cache_creation_tokens + self._cache_read_tokens
+        if total == 0:
+            return 0.0
+        return self._cache_read_tokens / total
 
 
 class PhaseBudget(BaseModel):

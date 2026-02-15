@@ -77,6 +77,30 @@ class ClaudeCodeTeamBackend:
         self._max_concurrent = max_concurrent
         self._prompt_dir = Path(tempfile.mkdtemp(prefix="cf-prompts-"))
         self._active_panes: dict[str, int] = {}  # pane_name -> pane_id
+        self._preamble_path: Path | None = None
+
+    def write_shared_preamble(self, context: str) -> Path:
+        """Write shared project context to a preamble file.
+
+        All agents spawned after this call will reference this file
+        instead of receiving the full context in their prompt.
+
+        Args:
+            context: Project context (SOPs, decomposition, coding standards).
+
+        Returns:
+            Path to the preamble file.
+        """
+        preamble_path = self._prompt_dir / "shared_preamble.md"
+        preamble_path.write_text(context)
+        self._preamble_path = preamble_path
+        logger.info("Wrote shared preamble: %s (%d chars)", preamble_path, len(context))
+        return preamble_path
+
+    @property
+    def preamble_path(self) -> Path | None:
+        """Path to the shared preamble file, if written."""
+        return getattr(self, '_preamble_path', None)
 
     async def ensure_session(self) -> None:
         """Ensure the tmux session exists."""
@@ -102,9 +126,17 @@ class ClaudeCodeTeamBackend:
         """
         await self.ensure_session()
 
+        # Prepend preamble reference if shared context exists
+        prompt_text = task.prompt
+        if self.preamble_path and self.preamble_path.exists():
+            prompt_text = (
+                f"First, read the shared project context at {self.preamble_path}\n\n"
+                + prompt_text
+            )
+
         # Write prompt to file
         prompt_file = self._prompt_dir / f"{task.pane_name}_{uuid4().hex[:6]}.md"
-        await asyncio.to_thread(prompt_file.write_text, task.prompt)
+        await asyncio.to_thread(prompt_file.write_text, prompt_text)
 
         # Build the claude command
         # The agent reads its prompt, does its work, and writes output

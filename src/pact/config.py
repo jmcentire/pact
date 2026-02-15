@@ -15,6 +15,20 @@ import yaml
 
 
 @dataclass
+class ModelTierConfig:
+    """Model selection by phase tier.
+
+    Not all phases need the most capable (expensive) model:
+    - primary: contract, test, and code authoring (needs highest quality)
+    - research: research + plan evaluation (can use faster model)
+    - fast: validation, formatting, simple checks (cheapest model)
+    """
+    primary: str = "claude-opus-4-6"
+    research: str = "claude-sonnet-4-5-20250929"
+    fast: str = "claude-haiku-4-5-20251001"
+
+
+@dataclass
 class GlobalConfig:
     """Global pact configuration."""
     model: str = "claude-opus-4-6"
@@ -77,6 +91,9 @@ class GlobalConfig:
     impatience: str = "normal"           # patient | normal | impatient
     role_timeouts: dict[str, int] = field(default_factory=dict)
 
+    # Model tiers
+    model_tiers: ModelTierConfig = field(default_factory=ModelTierConfig)
+
 
 @dataclass
 class ProjectConfig:
@@ -122,6 +139,9 @@ class ProjectConfig:
     # Timeouts
     impatience: str | None = None
     role_timeouts: dict[str, int] | None = None
+
+    # Model tiers
+    model_tiers: ModelTierConfig | None = None
 
 
 def load_global_config(config_path: str | Path | None = None) -> GlobalConfig:
@@ -173,6 +193,15 @@ def load_global_config(config_path: str | Path | None = None) -> GlobalConfig:
         role_timeouts=raw.get("role_timeouts", {}),
     )
 
+    # Load model tiers
+    model_tiers_raw = raw.get("model_tiers", {})
+    if model_tiers_raw:
+        config.model_tiers = ModelTierConfig(
+            primary=model_tiers_raw.get("primary", config.model_tiers.primary),
+            research=model_tiers_raw.get("research", config.model_tiers.research),
+            fast=model_tiers_raw.get("fast", config.model_tiers.fast),
+        )
+
     # Apply pricing overrides if configured
     if config.model_pricing:
         from pact.budget import set_model_pricing_table
@@ -198,7 +227,7 @@ def load_project_config(project_dir: str | Path) -> ProjectConfig:
     with open(config_path) as f:
         raw = yaml.safe_load(f) or {}
 
-    return ProjectConfig(
+    cfg = ProjectConfig(
         budget=raw.get("budget", 10.00),
         model=raw.get("model", ""),
         backend=raw.get("backend", "anthropic"),
@@ -231,6 +260,16 @@ def load_project_config(project_dir: str | Path) -> ProjectConfig:
         role_timeouts=raw.get("role_timeouts"),
     )
 
+    model_tiers_raw = raw.get("model_tiers", {})
+    if model_tiers_raw:
+        cfg.model_tiers = ModelTierConfig(
+            primary=model_tiers_raw.get("primary", ModelTierConfig().primary),
+            research=model_tiers_raw.get("research", ModelTierConfig().research),
+            fast=model_tiers_raw.get("fast", ModelTierConfig().fast),
+        )
+
+    return cfg
+
 
 def resolve_model(role: str, project: ProjectConfig, global_cfg: GlobalConfig) -> str:
     """Resolve the model for a role: project override > global role > global default."""
@@ -248,6 +287,13 @@ def resolve_backend(role: str, project: ProjectConfig, global_cfg: GlobalConfig)
     if role in global_cfg.role_backends:
         return global_cfg.role_backends[role]
     return project.backend or "anthropic"
+
+
+def resolve_model_tiers(global_cfg: GlobalConfig, project_cfg: ProjectConfig | None = None) -> ModelTierConfig:
+    """Resolve model tiers with project overriding global."""
+    if project_cfg and project_cfg.model_tiers:
+        return project_cfg.model_tiers
+    return global_cfg.model_tiers
 
 
 @dataclass

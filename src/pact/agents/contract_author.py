@@ -120,6 +120,17 @@ async def author_contract(
             dep_stubs += render_stub(dc) + "\n"
         dep_stubs += "```\n"
 
+    # Build cache prefix from static context
+    cache_parts = []
+    if sops:
+        cache_parts.append(f"Project Operating Procedures:\n{sops}")
+    if dep_stubs:
+        cache_parts.append(dep_stubs)
+    if decisions_summary:
+        cache_parts.append(decisions_summary)
+    cache_prefix = "\n\n".join(cache_parts)
+
+    # Dynamic prompt (component-specific)
     prompt = f"""Generate a complete ComponentContract for:
 
 Component: {component_name} (id: {component_id})
@@ -131,8 +142,6 @@ Research recommended: {research.recommended_approach}
 Plan: {plan.plan_summary}
 
 Dependencies: {dep_ids}
-{dep_stubs}
-{decisions_summary}
 
 Requirements:
 - component_id must be "{component_id}"
@@ -144,8 +153,8 @@ Requirements:
 - List all dependencies by component_id
 - All type references must resolve to types defined in this contract or primitives (str, int, float, bool, None, bytes, dict, list, any)"""
 
-    contract, in_tok, out_tok = await agent.assess(
-        ComponentContract, prompt, CONTRACT_SYSTEM,
+    contract, in_tok, out_tok = await agent.assess_cached(
+        ComponentContract, prompt, CONTRACT_SYSTEM, cache_prefix=cache_prefix,
     )
 
     # Ensure required fields are set correctly

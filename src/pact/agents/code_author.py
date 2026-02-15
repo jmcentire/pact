@@ -61,6 +61,7 @@ async def author_code(
     max_plan_revisions: int = 2,
     external_context: str = "",
     learnings: str = "",
+    prior_research: ResearchReport | None = None,
 ) -> ImplementationResult:
     """Generate implementation code following the Research-First Protocol.
 
@@ -99,15 +100,26 @@ async def author_code(
         f"{failure_context}"
     )
 
-    # Phase 1: Research
-    research = await research_phase(
-        agent, task_desc,
-        role_context=(
-            "Focus on algorithmic approaches, existing libraries, "
-            "performance considerations, security best practices for the domain."
-        ),
-        sops=sops,
-    )
+    # Phase 1: Research (or augment prior)
+    if prior_research:
+        from pact.agents.research import augment_research
+        research = await augment_research(
+            agent, prior_research,
+            supplemental_focus=(
+                "Focus on algorithmic approaches, existing libraries, "
+                "performance considerations, security best practices for the domain."
+            ),
+            sops=sops,
+        )
+    else:
+        research = await research_phase(
+            agent, task_desc,
+            role_context=(
+                "Focus on algorithmic approaches, existing libraries, "
+                "performance considerations, security best practices for the domain."
+            ),
+            sops=sops,
+        )
 
     # Phase 2: Plan
     plan_desc = (
@@ -142,9 +154,11 @@ async def author_code(
         learnings=learnings,
     )
 
-    prompt = f"""Implement the component described in this handoff brief.
+    # The handoff brief is the largest cacheable block
+    cache_prefix = handoff
 
-{handoff}
+    # Dynamic prompt
+    prompt = f"""Implement the component described in the handoff brief above.
 
 Research approach: {research.recommended_approach}
 Plan: {plan.plan_summary}
@@ -170,8 +184,8 @@ Example response format:
         """Generated implementation files."""
         files: dict[str, str]
 
-    response, in_tok, out_tok = await agent.assess(
-        CodeResponse, prompt, CODE_SYSTEM,
+    response, in_tok, out_tok = await agent.assess_cached(
+        CodeResponse, prompt, CODE_SYSTEM, cache_prefix=cache_prefix,
     )
 
     logger.info(

@@ -34,12 +34,69 @@ Key principles:
 - Include clear assertions with helpful failure messages"""
 
 
+def _render_focused_contract(contract: ComponentContract) -> str:
+    """Render a focused contract summary for test authoring.
+
+    Includes all information needed for test generation while omitting
+    redundant metadata (component_id, version, etc. already in task_desc).
+    ~50-70% smaller than model_dump_json().
+    """
+    parts = []
+
+    # Types with full field details
+    if contract.types:
+        parts.append("Types:")
+        for t in contract.types:
+            if t.fields:
+                fields = ", ".join(f"{f.name}: {f.type_ref}" for f in t.fields)
+                parts.append(f"  {t.name} ({t.kind}): {{{fields}}}")
+            elif t.kind == "enum" and t.variants:
+                variants = ", ".join(t.variants)
+                parts.append(f"  {t.name} (enum): [{variants}]")
+            else:
+                parts.append(f"  {t.name} ({t.kind})")
+            if t.description:
+                parts.append(f"    # {t.description}")
+
+    # Functions with inputs, outputs, preconditions, postconditions, error cases
+    if contract.functions:
+        parts.append("\nFunctions:")
+        for f in contract.functions:
+            inputs = ", ".join(f"{i.name}: {i.type_ref}" for i in f.inputs)
+            parts.append(f"  {f.name}({inputs}) -> {f.output_type}")
+            if f.description:
+                parts.append(f"    # {f.description}")
+            if f.preconditions:
+                for pre in f.preconditions:
+                    parts.append(f"    precondition: {pre}")
+            if f.postconditions:
+                for post in f.postconditions:
+                    parts.append(f"    postcondition: {post}")
+            if f.error_cases:
+                for err in f.error_cases:
+                    cond = f" when {err.condition}" if err.condition else ""
+                    parts.append(f"    error: {err.name}{cond}")
+
+    # Invariants
+    if contract.invariants:
+        parts.append("\nInvariants:")
+        for inv in contract.invariants:
+            parts.append(f"  - {inv}")
+
+    # Dependencies
+    if contract.dependencies:
+        parts.append(f"\nDependencies: {', '.join(contract.dependencies)}")
+
+    return "\n".join(parts)
+
+
 async def author_tests(
     agent: AgentBase,
     contract: ComponentContract,
     dependency_contracts: dict[str, ComponentContract] | None = None,
     sops: str = "",
     max_plan_revisions: int = 2,
+    prior_research: ResearchReport | None = None,
 ) -> tuple[ContractTestSuite, ResearchReport, PlanEvaluation]:
     """Generate a ContractTestSuite following the Research-First Protocol.
 
@@ -64,16 +121,28 @@ async def author_tests(
         f"Types:\n{type_summary}"
     )
 
-    # Phase 1: Research
-    research = await research_phase(
-        agent, task_desc,
-        role_context=(
-            "Focus on testing methodologies for this type of component, "
-            "coverage strategies, common test anti-patterns, "
-            "property-based testing opportunities."
-        ),
-        sops=sops,
-    )
+    # Phase 1: Research (or augment prior)
+    if prior_research:
+        from pact.agents.research import augment_research
+        research = await augment_research(
+            agent, prior_research,
+            supplemental_focus=(
+                "Focus on testing methodologies for this type of component, "
+                "coverage strategies, common test anti-patterns, "
+                "property-based testing opportunities."
+            ),
+            sops=sops,
+        )
+    else:
+        research = await research_phase(
+            agent, task_desc,
+            role_context=(
+                "Focus on testing methodologies for this type of component, "
+                "coverage strategies, common test anti-patterns, "
+                "property-based testing opportunities."
+            ),
+            sops=sops,
+        )
 
     # Phase 2: Plan
     plan_desc = (
@@ -91,7 +160,7 @@ async def author_tests(
     )
 
     # Phase 3: Generate tests
-    contract_json = contract.model_dump_json(indent=2)
+    contract_summary = _render_focused_contract(contract)
 
     dep_mock_info = ""
     if dependency_contracts:
@@ -101,12 +170,14 @@ async def author_tests(
                 inputs_str = ", ".join(f"{i.name}: {i.type_ref}" for i in func.inputs)
                 dep_mock_info += f"  - {func.name}({inputs_str}) -> {func.output_type}\n"
 
+    # Build cache prefix from static contract info
+    cache_parts = [f"Contract:\n{contract_summary}"]
+    if dep_mock_info:
+        cache_parts.append(dep_mock_info)
+    cache_prefix = "\n\n".join(cache_parts)
+
+    # Dynamic prompt
     prompt = f"""Generate a complete ContractTestSuite with executable pytest code.
-
-Contract (JSON):
-{contract_json}
-
-{dep_mock_info}
 
 Research approach: {research.recommended_approach}
 Plan: {plan.plan_summary}
@@ -129,8 +200,8 @@ Requirements:
 The generated_code field should contain the COMPLETE test file content,
 ready to be saved as contract_test.py and run with pytest."""
 
-    suite, in_tok, out_tok = await agent.assess(
-        ContractTestSuite, prompt, TEST_SYSTEM,
+    suite, in_tok, out_tok = await agent.assess_cached(
+        ContractTestSuite, prompt, TEST_SYSTEM, cache_prefix=cache_prefix,
     )
 
     # Ensure required fields
