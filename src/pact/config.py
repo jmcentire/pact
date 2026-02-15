@@ -6,6 +6,7 @@ ProjectConfig: per-project from pact.yaml.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -68,6 +69,9 @@ class GlobalConfig:
     shaping_rigor: str = "moderate"   # relaxed | moderate | strict
     shaping_budget_pct: float = 0.15  # Max fraction of budget for shaping
 
+    # Environment
+    environment: dict = field(default_factory=dict)  # Raw YAML dict for EnvironmentSpec
+
 
 @dataclass
 class ProjectConfig:
@@ -106,6 +110,9 @@ class ProjectConfig:
     shaping_depth: str | None = None      # light | standard | thorough
     shaping_rigor: str | None = None      # relaxed | moderate | strict
     shaping_budget_pct: float | None = None
+
+    # Environment
+    environment: dict | None = None
 
 
 def load_global_config(config_path: str | Path | None = None) -> GlobalConfig:
@@ -152,6 +159,7 @@ def load_global_config(config_path: str | Path | None = None) -> GlobalConfig:
         shaping_depth=raw.get("shaping_depth", "standard"),
         shaping_rigor=raw.get("shaping_rigor", "moderate"),
         shaping_budget_pct=raw.get("shaping_budget_pct", 0.15),
+        environment=raw.get("environment", {}),
     )
 
     # Apply pricing overrides if configured
@@ -207,6 +215,7 @@ def load_project_config(project_dir: str | Path) -> ProjectConfig:
         shaping_depth=raw.get("shaping_depth"),
         shaping_rigor=raw.get("shaping_rigor"),
         shaping_budget_pct=raw.get("shaping_budget_pct"),
+        environment=raw.get("environment"),
     )
 
 
@@ -253,4 +262,67 @@ def resolve_parallel_config(
             else global_cfg.max_concurrent_agents,
         plan_only=project.plan_only if project.plan_only is not None
             else global_cfg.plan_only,
+    )
+
+
+@dataclass
+class EnvironmentSpec:
+    """Standardized execution environment for test harness and agents."""
+    python_path: str = "python3"
+    inherit_path: bool = True
+    extra_path_dirs: list[str] = field(default_factory=list)
+    required_tools: list[str] = field(default_factory=lambda: ["pytest"])
+    env_vars: dict[str, str] = field(default_factory=dict)
+
+    def build_env(self, pythonpath: str) -> dict[str, str]:
+        """Build the subprocess environment dict.
+
+        Returns a dict suitable for passing as env= to subprocess calls.
+        """
+        env: dict[str, str] = {}
+
+        # PATH construction
+        path_parts: list[str] = []
+        if self.inherit_path:
+            parent_path = os.environ.get("PATH", "")
+            if parent_path:
+                path_parts.append(parent_path)
+        if self.extra_path_dirs:
+            path_parts.extend(self.extra_path_dirs)
+        if not path_parts:
+            path_parts.append("/usr/bin:/usr/local/bin")
+        env["PATH"] = ":".join(path_parts)
+
+        # PYTHONPATH
+        env["PYTHONPATH"] = pythonpath
+
+        # Additional env vars
+        env.update(self.env_vars)
+
+        return env
+
+    def validate_environment(self) -> list[str]:
+        """Check that all required tools are available.
+
+        Returns list of missing tools (empty = all present).
+        """
+        import shutil
+        missing = []
+        for tool in self.required_tools:
+            if shutil.which(tool) is None:
+                missing.append(tool)
+        return missing
+
+
+def resolve_environment(project: ProjectConfig, global_cfg: GlobalConfig) -> EnvironmentSpec:
+    """Resolve environment spec from project or global config."""
+    raw = project.environment if project.environment else global_cfg.environment
+    if not raw:
+        return EnvironmentSpec()
+    return EnvironmentSpec(
+        python_path=raw.get("python_path", "python3"),
+        inherit_path=raw.get("inherit_path", True),
+        extra_path_dirs=raw.get("extra_path_dirs", []),
+        required_tools=raw.get("required_tools", ["pytest"]),
+        env_vars=raw.get("env_vars", {}),
     )

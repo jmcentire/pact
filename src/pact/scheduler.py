@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from pact.agents.base import AgentBase
@@ -34,9 +35,106 @@ from pact.implementer import implement_all
 from pact.integrator import integrate_all
 from pact.lifecycle import advance_phase, format_run_summary
 from pact.project import ProjectManager
-from pact.schemas import ComponentTask, RunState
+from pact.schemas import ComponentTask, RunState, TestResults
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SystemicPattern:
+    """Detected pattern of identical failures across components."""
+    pattern_type: str          # "zero_tests", "import_error", "timeout", "identical_failure"
+    affected_components: list[str] = field(default_factory=list)
+    sample_error: str = ""
+    recommendation: str = ""
+
+
+def detect_systemic_failure(
+    results: dict[str, TestResults],
+    threshold: int = 3,
+) -> SystemicPattern | None:
+    """Detect when multiple components fail with the same root cause.
+
+    Args:
+        results: Map of component_id to TestResults
+        threshold: Minimum components with same failure to trigger detection
+
+    Returns:
+        SystemicPattern if detected, None if failures are heterogeneous.
+
+    Patterns detected:
+    - All 0/0 (total=0, passed=0) -> "zero_tests" (environment/PATH issue)
+    - All same error message in failure_details -> "identical_failure"
+    - All have errors but no passed tests -> "import_error" (likely missing dependency)
+    """
+    if len(results) < threshold:
+        return None
+
+    # Pattern 1: All zero-zero (no tests collected)
+    zero_zero = [
+        cid for cid, r in results.items()
+        if r.total == 0 and r.passed == 0
+    ]
+    if len(zero_zero) >= threshold:
+        sample = ""
+        for cid in zero_zero:
+            r = results[cid]
+            if r.failure_details:
+                sample = r.failure_details[0].error_message
+                break
+        return SystemicPattern(
+            pattern_type="zero_tests",
+            affected_components=zero_zero,
+            sample_error=sample or "No tests collected (0 total, 0 passed)",
+            recommendation="Check PATH and PYTHONPATH in test environment. Likely pytest not found or test collection failed globally.",
+        )
+
+    # Pattern 2: All have errors, no passes (likely import/collection error)
+    all_error_no_pass = [
+        cid for cid, r in results.items()
+        if r.errors > 0 and r.passed == 0
+    ]
+    if len(all_error_no_pass) >= threshold:
+        # Check if errors share a common message
+        error_msgs = []
+        for cid in all_error_no_pass:
+            r = results[cid]
+            for fd in r.failure_details:
+                if fd.error_message:
+                    error_msgs.append(fd.error_message)
+                    break
+
+        sample = error_msgs[0] if error_msgs else "Collection/import error"
+        return SystemicPattern(
+            pattern_type="import_error",
+            affected_components=all_error_no_pass,
+            sample_error=sample,
+            recommendation="Check for missing dependencies or import errors affecting all components.",
+        )
+
+    # Pattern 3: Identical failure messages across components
+    failed = {
+        cid: r for cid, r in results.items()
+        if not r.all_passed and r.failure_details
+    }
+    if len(failed) >= threshold:
+        # Group by first failure message
+        msg_groups: dict[str, list[str]] = {}
+        for cid, r in failed.items():
+            msg = r.failure_details[0].error_message if r.failure_details else ""
+            if msg:
+                msg_groups.setdefault(msg, []).append(cid)
+
+        for msg, cids in msg_groups.items():
+            if len(cids) >= threshold:
+                return SystemicPattern(
+                    pattern_type="identical_failure",
+                    affected_components=cids,
+                    sample_error=msg,
+                    recommendation=f"All {len(cids)} components failed with identical error. Fix the root cause rather than individual components.",
+                )
+
+    return None
 
 
 class Scheduler:
@@ -381,6 +479,27 @@ class Scheduler:
                 external_context=external_context,
                 learnings=learnings,
             )
+
+            # Check for systemic failure pattern
+            systemic = detect_systemic_failure(results)
+            if systemic:
+                logger.warning(
+                    "Systemic failure detected: %s (%d components). %s",
+                    systemic.pattern_type,
+                    len(systemic.affected_components),
+                    systemic.recommendation,
+                )
+                state.pause(
+                    f"Systemic failure: {systemic.pattern_type} "
+                    f"({len(systemic.affected_components)} components). "
+                    f"{systemic.recommendation}"
+                )
+                self.project.save_state(state)
+                self.project.append_audit(
+                    "systemic_failure",
+                    f"{systemic.pattern_type}: {systemic.sample_error[:200]}",
+                )
+                return state
 
             # Emit per-component events
             for cid, r in results.items():
