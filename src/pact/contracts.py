@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import logging
+from pathlib import Path
 
 from pact.schemas import (
     ComponentContract,
@@ -166,12 +167,26 @@ def validate_all_contracts(
         else:
             all_errors.extend(validate_test_suite(test_suites[node_id]))
 
-    # Check dependency contracts reference valid components
+    # Check dependency contracts — distinguish internal vs external
+    tree_component_ids = set(tree.nodes.keys()) if tree else set()
+
     for cid, contract in contracts.items():
         for dep_id in contract.dependencies:
-            if dep_id not in contracts:
+            if dep_id in contracts:
+                continue  # Internal dependency with contract — OK
+
+            if dep_id in tree_component_ids:
+                # Internal (in decomposition tree) but missing contract — error
                 all_errors.append(
-                    f"Contract '{cid}' depends on '{dep_id}' which has no contract"
+                    f"Contract '{cid}' depends on '{dep_id}' which is in the "
+                    f"decomposition tree but has no contract"
+                )
+            else:
+                # External dependency (not in tree) — just log, don't error
+                logger.debug(
+                    "Contract '%s' has external dependency '%s' "
+                    "(not in decomposition tree, skipping validation)",
+                    cid, dep_id,
                 )
 
     if all_errors:
@@ -185,3 +200,36 @@ def validate_all_contracts(
         passed=True,
         reason="All contracts validated successfully",
     )
+
+
+def validate_external_dependencies(
+    contract: ComponentContract,
+    source_tree: Path | None = None,
+) -> list[str]:
+    """Validate that external dependencies (in contract.requires) resolve to existing modules.
+
+    Args:
+        contract: The contract to validate
+        source_tree: Root of source tree to check file existence. If None, skip file checks.
+
+    Returns:
+        List of warning strings (not errors — external deps are advisory).
+    """
+    warnings = []
+    if not source_tree or not contract.requires:
+        return warnings
+
+    for req in contract.requires:
+        # Convert dotted path to file path: "agents.base" -> "agents/base.py"
+        parts = req.split(".")
+        possible_paths = [
+            source_tree / "/".join(parts) / "__init__.py",
+            source_tree / ("/".join(parts) + ".py"),
+        ]
+        if not any(p.exists() for p in possible_paths):
+            warnings.append(
+                f"Contract '{contract.component_id}' requires '{req}' "
+                f"but no matching file found in source tree"
+            )
+
+    return warnings

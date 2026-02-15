@@ -16,6 +16,7 @@ Phase transitions:
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import uuid4
 
@@ -68,3 +69,63 @@ def format_run_summary(state: RunState) -> str:
     if state.pause_reason:
         lines.append(f"  Reason: {state.pause_reason}")
     return "\n".join(lines)
+
+
+@dataclass
+class ResumeStrategy:
+    """Computed strategy for resuming a failed/paused run."""
+    last_checkpoint: str  # Component ID of last successful checkpoint
+    completed_components: list[str] = field(default_factory=list)  # Components with passing tests on disk
+    resume_phase: str = ""  # Phase to resume from
+    cleared_fields: list[str] = field(default_factory=list)  # State fields that will be reset
+
+
+def compute_resume_strategy(state: RunState, project_dir: str = "") -> ResumeStrategy:
+    """Analyze failed state and determine safe resume point.
+
+    Rules:
+    - If state.status not in ("failed", "paused", "budget_exceeded") -> raise ValueError
+    - resume_phase should be state.phase (resume from where it failed)
+    - But if phase is "diagnose", resume_phase should be "implement"
+    - completed_components: look at state.component_tasks for status=="completed"
+    - cleared_fields always includes "pause_reason"
+    """
+    if state.status == "active":
+        raise ValueError("Run is already active")
+    if state.status == "completed":
+        raise ValueError("Run is already completed")
+
+    # Determine resume phase
+    resume_phase = state.phase
+    if resume_phase == "diagnose":
+        resume_phase = "implement"
+
+    # Identify completed components
+    completed_components = [
+        t.component_id for t in state.component_tasks
+        if t.status == "completed"
+    ]
+
+    # Find last checkpoint (last completed component, or empty)
+    last_checkpoint = completed_components[-1] if completed_components else ""
+
+    return ResumeStrategy(
+        last_checkpoint=last_checkpoint,
+        completed_components=completed_components,
+        resume_phase=resume_phase,
+        cleared_fields=["pause_reason"],
+    )
+
+
+def execute_resume(state: RunState, strategy: ResumeStrategy) -> RunState:
+    """Apply resume strategy.
+
+    - Set state.status = "active"
+    - Set state.pause_reason = ""
+    - Set state.phase = strategy.resume_phase
+    - Return the modified state
+    """
+    state.status = "active"
+    state.pause_reason = ""
+    state.phase = strategy.resume_phase
+    return state

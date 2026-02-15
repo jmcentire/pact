@@ -20,6 +20,7 @@ Commands:
   pact cost <project-dir>              Estimate remaining cost
   pact doctor                          Diagnose common issues
   pact clean <project-dir>             Clean up artifacts
+  pact resume <project-dir>            Resume a failed or paused run
   pact diff <project-dir> <id>         Diff between competitive implementations
 """
 
@@ -152,6 +153,11 @@ def main() -> None:
     p_clean.add_argument("--stale", action="store_true", help="Remove stale FIFO, PID, shutdown sentinels")
     p_clean.add_argument("--all", action="store_true", dest="clean_all", help="Remove all .pact/ state")
 
+    # resume
+    p_resume = subparsers.add_parser("resume", help="Resume a failed or paused run")
+    p_resume.add_argument("project_dir", help="Project directory path")
+    p_resume.add_argument("--from-phase", default=None, help="Override resume phase")
+
     # diff
     p_diff = subparsers.add_parser("diff", help="Diff between implementations or attempts")
     p_diff.add_argument("project_dir", help="Project directory path")
@@ -206,6 +212,8 @@ def main() -> None:
         cmd_doctor(args)
     elif args.command == "clean":
         cmd_clean(args)
+    elif args.command == "resume":
+        cmd_resume(args)
     elif args.command == "diff":
         cmd_diff(args)
 
@@ -1268,6 +1276,54 @@ def cmd_clean(args: argparse.Namespace) -> None:
 
     print(f"\nTotal: {total_size:,} bytes")
     print("\nUse --stale, --attempts, or --all to remove specific artifacts.")
+
+
+def cmd_resume(args: argparse.Namespace) -> None:
+    """Resume a failed or paused run."""
+    from pact.lifecycle import compute_resume_strategy, execute_resume
+    from pact.daemon import send_signal
+
+    project = ProjectManager(args.project_dir)
+    if not project.has_state():
+        print("No active run found.")
+        return
+
+    state = project.load_state()
+
+    if state.status == "active":
+        print("Run is already active.")
+        return
+
+    if state.status == "completed":
+        print("Run already completed.")
+        return
+
+    try:
+        strategy = compute_resume_strategy(state)
+    except ValueError as e:
+        print(f"Cannot resume: {e}")
+        return
+
+    if args.from_phase:
+        strategy.resume_phase = args.from_phase
+
+    # Log the original failure before clearing
+    original_reason = state.pause_reason
+    project.append_audit("daemon_resume", f"Resuming from {state.status}: {original_reason}")
+
+    state = execute_resume(state, strategy)
+    project.save_state(state)
+
+    print(f"Resumed from {strategy.resume_phase}")
+    print(f"  Original failure: {original_reason}")
+    print(f"  Completed components: {len(strategy.completed_components)}")
+
+    # Signal daemon if running
+    sent = send_signal(args.project_dir, "resumed")
+    if sent:
+        print("Daemon signaled to continue.")
+    else:
+        print(f"Start daemon with: pact daemon {args.project_dir}")
 
 
 def cmd_diff(args: argparse.Namespace) -> None:

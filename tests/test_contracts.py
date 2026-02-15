@@ -300,10 +300,20 @@ class TestValidateAllContracts:
         assert any("missing test suite" in d for d in gate.details)
 
     def test_unresolved_dependency(self):
+        """Internal dep (in tree) without contract -> error.
+        External dep (not in tree) is allowed.
+        """
         tree = DecompositionTree(
             root_id="a",
             nodes={
-                "a": DecompositionNode(component_id="a", name="A", description="a"),
+                "a": DecompositionNode(
+                    component_id="a", name="A", description="a",
+                    children=["missing_dep"],
+                ),
+                "missing_dep": DecompositionNode(
+                    component_id="missing_dep", name="M", description="m",
+                    parent_id="a",
+                ),
             },
         )
         c = _make_contract(component_id="a", dependencies=["missing_dep"])

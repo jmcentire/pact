@@ -21,6 +21,7 @@ async def run_contract_tests(
     test_file: Path,
     impl_dir: Path,
     timeout: int = 120,
+    environment: "EnvironmentSpec | None" = None,
 ) -> TestResults:
     """Run pytest on a contract test file against an implementation.
 
@@ -42,6 +43,16 @@ async def run_contract_tests(
         )
 
     env_path = f"{impl_dir}:{impl_dir.parent}"
+
+    if environment:
+        env = environment.build_env(env_path)
+    else:
+        # Default: inherit parent PATH (fixes the 0/0 test failure root cause)
+        env = {
+            "PYTHONPATH": env_path,
+            "PATH": os.environ.get("PATH", "/usr/bin:/usr/local/bin"),
+        }
+
     cmd = [
         "python3", "-m", "pytest",
         str(test_file),
@@ -54,7 +65,7 @@ async def run_contract_tests(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env={"PYTHONPATH": env_path, "PATH": os.environ.get("PATH", "/usr/bin:/usr/local/bin")},
+            env=env,
             cwd=str(impl_dir.parent),
         )
         stdout, stderr = await asyncio.wait_for(

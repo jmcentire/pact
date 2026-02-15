@@ -35,6 +35,31 @@ from pact.schemas import RunState
 logger = logging.getLogger(__name__)
 
 
+class ActivityTracker:
+    """Tracks daemon activity to prevent false idle timeouts."""
+
+    def __init__(self) -> None:
+        self._last_activity = time.monotonic()
+        self._activity_type = "init"
+
+    def record_activity(self, activity_type: str) -> None:
+        """Reset idle timer. Called on API calls, state transitions, audit entries."""
+        self._last_activity = time.monotonic()
+        self._activity_type = activity_type
+
+    def idle_seconds(self) -> float:
+        """Seconds since last recorded activity."""
+        return time.monotonic() - self._last_activity
+
+    def is_idle(self, max_idle: int) -> bool:
+        """True only when no activity for max_idle seconds."""
+        return self.idle_seconds() >= max_idle
+
+    @property
+    def last_activity_type(self) -> str:
+        return self._activity_type
+
+
 class Daemon:
     """FIFO-based coordinator. Fires phases immediately, blocks only on human input."""
 
@@ -60,6 +85,7 @@ class Daemon:
         self.poll_integrations = poll_integrations
         self.poll_interval = poll_interval
         self.max_poll_attempts = max_poll_attempts
+        self.activity = ActivityTracker()
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -136,6 +162,7 @@ class Daemon:
                     return state
 
                 logger.info("Received signal: %s", signal_msg.strip())
+                self.activity.record_activity("fifo_signal")
 
                 if signal_msg.strip() == "shutdown":
                     logger.info("Shutdown signal received — exiting cleanly")
@@ -160,6 +187,7 @@ class Daemon:
                     self.scheduler.run_once(),
                     timeout=self.max_idle,
                 )
+                self.activity.record_activity("phase_complete")
             except asyncio.TimeoutError:
                 logger.error(
                     "Phase %s timed out after %ds", state.phase, self.max_idle,
