@@ -56,6 +56,14 @@ class OpenAIBackend:
     def set_model(self, model: str) -> None:
         self._model = model
 
+    # Model-specific output token limits
+    _MAX_OUTPUT_TOKENS: dict[str, int] = {
+        "gpt-4o": 16384,
+        "gpt-4o-mini": 16384,
+        "gpt-4-turbo": 4096,
+    }
+    _DEFAULT_MAX_OUTPUT = 16384
+
     async def assess(
         self,
         schema: type[T],
@@ -64,6 +72,10 @@ class OpenAIBackend:
         max_tokens: int = 32768,
     ) -> tuple[T, int, int]:
         """Call LLM with schema enforcement via tool_choice."""
+        # Cap max_tokens to model's limit
+        model_max = self._MAX_OUTPUT_TOKENS.get(self._model, self._DEFAULT_MAX_OUTPUT)
+        max_tokens = min(max_tokens, model_max)
+
         tool_name = schema.__name__
         tool_schema = schema.model_json_schema()
         tool_schema.pop("title", None)
