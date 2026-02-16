@@ -187,5 +187,90 @@ class ClaudeCodeBackend:
 
         raise RuntimeError(f"No valid JSON found: {text[:200]}")
 
+    async def implement(
+        self,
+        prompt: str,
+        working_dir: Path | None = None,
+        max_turns: int = 30,
+        timeout: int = 600,
+    ) -> tuple[str, int, int]:
+        """Run an iterative Claude Code session with full tool access.
+
+        Unlike assess() which extracts structured JSON in one shot,
+        implement() gives Claude Code multiple turns to write code,
+        run tests, read errors, and fix — like a human developer.
+
+        Args:
+            prompt: The implementation prompt (handoff brief + instructions).
+            working_dir: Working directory for the session.
+            max_turns: Maximum agentic turns (tool use round-trips).
+            timeout: Maximum wall-clock seconds.
+
+        Returns:
+            (output_text, input_tokens, output_tokens)
+        """
+        cmd = [
+            "claude", "-p",
+            "--output-format", "json",
+            "--model", self._model,
+            "--max-turns", str(max_turns),
+            "--allowedTools",
+            "Read,Write,Edit,Bash,Glob,Grep",
+        ]
+
+        cwd = str(working_dir or self._repo_path or Path.cwd())
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
+            env=env,
+        )
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=prompt.encode()), timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "claude implement timed out after %ds (pid=%s), killing",
+                timeout, proc.pid,
+            )
+            proc.kill()
+            await proc.wait()
+            raise RuntimeError(
+                f"claude implement timed out after {timeout}s"
+            )
+
+        raw = stdout.decode()
+
+        # Parse CLI output for token tracking
+        in_tok = 0
+        out_tok = 0
+        result_text = raw
+        try:
+            cli_response = json.loads(raw)
+            result_text = cli_response.get("result", raw)
+            if isinstance(result_text, dict):
+                result_text = json.dumps(result_text)
+            in_tok = cli_response.get("input_tokens", 0)
+            out_tok = cli_response.get("output_tokens", 0)
+        except json.JSONDecodeError:
+            pass  # Non-JSON output is fine for implement()
+
+        if not self._budget.record_tokens_validated(
+            in_tok, out_tok,
+            prompt_text=prompt if in_tok == 0 else "",
+            response_text=raw if out_tok == 0 else "",
+        ):
+            raise BudgetExceeded(
+                f"Budget exceeded after {in_tok}+{out_tok} tokens"
+            )
+
+        return result_text, in_tok, out_tok
+
     async def close(self) -> None:
         pass

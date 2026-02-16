@@ -31,7 +31,7 @@ from pact.config import (
 from pact.decomposer import decompose_and_contract, run_interview
 from pact.diagnoser import determine_recovery_action, diagnose_failure
 from pact.events import EventBus, PactEvent
-from pact.implementer import implement_all
+from pact.implementer import implement_all, implement_all_iterative, implement_component_iterative
 from pact.integrator import integrate_all
 from pact.lifecycle import advance_phase, format_run_summary
 from pact.project import ProjectManager
@@ -463,71 +463,101 @@ class Scheduler:
 
         pcfg = resolve_parallel_config(self.project_config, self.global_config)
 
-        agent = self._make_agent("code_author")
-        try:
-            results = await implement_all(
-                agent, self.project, tree,
-                max_attempts=max_attempts,
+        # Detect if code_author backend supports iterative implementation
+        code_author_backend = resolve_backend(
+            "code_author", self.project_config, self.global_config,
+        )
+        code_author_model = resolve_model(
+            "code_author", self.project_config, self.global_config,
+        )
+
+        if code_author_backend in ("claude_code", "claude_code_team"):
+            # Iterative path: Claude Code writes, tests, fixes in a loop
+            logger.info(
+                "Using iterative Claude Code implementation (%s, %s)",
+                code_author_backend, code_author_model,
+            )
+            results = await implement_all_iterative(
+                project=self.project,
+                tree=tree,
+                budget=self.budget,
+                model=code_author_model,
                 sops=sops,
-                max_plan_revisions=self.global_config.max_plan_revisions,
                 parallel=pcfg.parallel,
-                competitive=pcfg.competitive,
-                competitive_agents=pcfg.agent_count,
                 max_concurrent=pcfg.max_concurrent,
-                agent_factory=self._make_agent_factory("code_author") if (pcfg.parallel or pcfg.competitive) else None,
                 target_components=target_components,
                 external_context=external_context,
                 learnings=learnings,
             )
-
-            # Check for systemic failure pattern
-            systemic = detect_systemic_failure(results)
-            if systemic:
-                logger.warning(
-                    "Systemic failure detected: %s (%d components). %s",
-                    systemic.pattern_type,
-                    len(systemic.affected_components),
-                    systemic.recommendation,
+        else:
+            # API-based path: structured extraction with blind retries
+            agent = self._make_agent("code_author")
+            try:
+                results = await implement_all(
+                    agent, self.project, tree,
+                    max_attempts=max_attempts,
+                    sops=sops,
+                    max_plan_revisions=self.global_config.max_plan_revisions,
+                    parallel=pcfg.parallel,
+                    competitive=pcfg.competitive,
+                    competitive_agents=pcfg.agent_count,
+                    max_concurrent=pcfg.max_concurrent,
+                    agent_factory=self._make_agent_factory("code_author") if (pcfg.parallel or pcfg.competitive) else None,
+                    target_components=target_components,
+                    external_context=external_context,
+                    learnings=learnings,
                 )
-                state.pause(
-                    f"Systemic failure: {systemic.pattern_type} "
-                    f"({len(systemic.affected_components)} components). "
-                    f"{systemic.recommendation}"
-                )
-                self.project.save_state(state)
-                self.project.append_audit(
-                    "systemic_failure",
-                    f"{systemic.pattern_type}: {systemic.sample_error[:200]}",
-                )
-                return state
+            finally:
+                await agent.close()
 
-            # Emit per-component events
-            for cid, r in results.items():
-                if r.all_passed:
-                    await self.event_bus.emit(PactEvent(
-                        kind="component_complete",
-                        project_name=self.project.project_dir.name,
-                        component_id=cid,
-                        test_results=r,
-                    ))
-                else:
-                    await self.event_bus.emit(PactEvent(
-                        kind="component_failed",
-                        project_name=self.project.project_dir.name,
-                        component_id=cid,
-                        detail=f"{r.failed}/{r.total} tests failed",
-                        test_results=r,
-                    ))
+        # --- Common post-implementation logic (both paths) ---
 
-            # Check for failures
-            failed = [cid for cid, r in results.items() if not r.all_passed]
-            if failed:
-                state.phase = "diagnose"
-                state.pause_reason = f"Components failed: {', '.join(failed)}"
+        # Check for systemic failure pattern
+        systemic = detect_systemic_failure(results)
+        if systemic:
+            logger.warning(
+                "Systemic failure detected: %s (%d components). %s",
+                systemic.pattern_type,
+                len(systemic.affected_components),
+                systemic.recommendation,
+            )
+            state.pause(
+                f"Systemic failure: {systemic.pattern_type} "
+                f"({len(systemic.affected_components)} components). "
+                f"{systemic.recommendation}"
+            )
+            self.project.save_state(state)
+            self.project.append_audit(
+                "systemic_failure",
+                f"{systemic.pattern_type}: {systemic.sample_error[:200]}",
+            )
+            return state
+
+        # Emit per-component events
+        for cid, r in results.items():
+            if r.all_passed:
+                await self.event_bus.emit(PactEvent(
+                    kind="component_complete",
+                    project_name=self.project.project_dir.name,
+                    component_id=cid,
+                    test_results=r,
+                ))
             else:
-                advance_phase(state)  # -> integrate
-        finally:
-            await agent.close()
+                await self.event_bus.emit(PactEvent(
+                    kind="component_failed",
+                    project_name=self.project.project_dir.name,
+                    component_id=cid,
+                    detail=f"{r.failed}/{r.total} tests failed",
+                    test_results=r,
+                ))
+
+        # Check for failures
+        failed = [cid for cid, r in results.items() if not r.all_passed]
+        if failed:
+            state.phase = "diagnose"
+            state.pause_reason = f"Components failed: {', '.join(failed)}"
+        else:
+            advance_phase(state)  # -> integrate
 
         return state
 
@@ -633,7 +663,31 @@ class Scheduler:
             if dep_id in contracts
         }
 
-        if competitive:
+        # Detect backend for routing
+        code_author_backend = resolve_backend(
+            "code_author", self.project_config, self.global_config,
+        )
+        code_author_model = resolve_model(
+            "code_author", self.project_config, self.global_config,
+        )
+
+        if code_author_backend in ("claude_code", "claude_code_team") and not competitive:
+            # Iterative path: Claude Code writes, tests, fixes in a loop
+            logger.info(
+                "Building %s iteratively via Claude Code (%s)",
+                component_id, code_author_model,
+            )
+            test_results = await implement_component_iterative(
+                project=self.project,
+                component_id=component_id,
+                contract=contract,
+                test_suite=test_suites[component_id],
+                budget=self.budget,
+                model=code_author_model,
+                dependency_contracts=dep_contracts or None,
+                sops=sops,
+            )
+        elif competitive:
             from pact.implementer import implement_component_competitive
             agent_factory = self._make_agent_factory("code_author")
             test_results = await implement_component_competitive(

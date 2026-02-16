@@ -213,3 +213,185 @@ class TestImplementComponentInteractive:
         assert meta_path.exists()
         meta = json.loads(meta_path.read_text())
         assert meta.get("method") == "interactive"
+
+
+class TestImplementComponentIterative:
+    """Tests for the iterative Claude Code implementation path."""
+
+    def test_function_exists(self):
+        from pact.implementer import implement_component_iterative
+        assert callable(implement_component_iterative)
+
+    def test_implement_all_iterative_exists(self):
+        from pact.implementer import implement_all_iterative
+        assert callable(implement_all_iterative)
+
+    def test_prompt_contains_contract_info(self, tmp_path):
+        """The iterative prompt should include contract info and test instructions."""
+        from pact.implementer import implement_component_iterative
+        from pact.project import ProjectManager
+        from pact.budget import BudgetTracker
+
+        project = ProjectManager(tmp_path)
+        project.init()
+        contract = _make_contract()
+        test_suite = _make_test_suite()
+
+        captured_prompts = []
+
+        async def mock_implement(self, prompt, **kwargs):
+            captured_prompts.append(prompt)
+            return "done", 100, 50
+
+        import asyncio
+        with patch(
+            "pact.backends.claude_code.ClaudeCodeBackend.implement",
+            mock_implement,
+        ):
+            budget = BudgetTracker(per_project_cap=10.0)
+            asyncio.run(implement_component_iterative(
+                project=project,
+                component_id="test_comp",
+                contract=contract,
+                test_suite=test_suite,
+                budget=budget,
+                model="claude-sonnet-4-5-20250929",
+            ))
+
+        assert len(captured_prompts) == 1
+        prompt = captured_prompts[0]
+        assert "Test Component" in prompt
+        assert "process" in prompt
+        assert "pytest" in prompt
+        assert "Pydantic v2" in prompt
+
+    def test_test_file_written(self, tmp_path):
+        """Test file should be written before Claude Code session starts."""
+        from pact.implementer import implement_component_iterative
+        from pact.project import ProjectManager
+        from pact.budget import BudgetTracker
+
+        project = ProjectManager(tmp_path)
+        project.init()
+        contract = _make_contract()
+        test_suite = _make_test_suite()
+
+        async def mock_implement(self, prompt, **kwargs):
+            return "done", 100, 50
+
+        import asyncio
+        with patch(
+            "pact.backends.claude_code.ClaudeCodeBackend.implement",
+            mock_implement,
+        ):
+            budget = BudgetTracker(per_project_cap=10.0)
+            asyncio.run(implement_component_iterative(
+                project=project,
+                component_id="test_comp",
+                contract=contract,
+                test_suite=test_suite,
+                budget=budget,
+            ))
+
+        test_file = project.test_code_path("test_comp")
+        assert test_file.exists()
+
+    def test_metadata_saved_with_iterative_method(self, tmp_path):
+        """Metadata should record method=iterative_claude_code."""
+        from pact.implementer import implement_component_iterative
+        from pact.project import ProjectManager
+        from pact.budget import BudgetTracker
+
+        project = ProjectManager(tmp_path)
+        project.init()
+        contract = _make_contract()
+        test_suite = _make_test_suite()
+
+        async def mock_implement(self, prompt, **kwargs):
+            return "done", 100, 50
+
+        import asyncio
+        with patch(
+            "pact.backends.claude_code.ClaudeCodeBackend.implement",
+            mock_implement,
+        ):
+            budget = BudgetTracker(per_project_cap=10.0)
+            asyncio.run(implement_component_iterative(
+                project=project,
+                component_id="test_comp",
+                contract=contract,
+                test_suite=test_suite,
+                budget=budget,
+                model="claude-sonnet-4-5-20250929",
+            ))
+
+        meta_path = project.impl_dir("test_comp") / "metadata.json"
+        assert meta_path.exists()
+        meta = json.loads(meta_path.read_text())
+        assert meta.get("method") == "iterative_claude_code"
+        assert meta.get("model") == "claude-sonnet-4-5-20250929"
+
+    def test_handles_implement_failure(self, tmp_path):
+        """Should handle Claude Code session failures gracefully."""
+        from pact.implementer import implement_component_iterative
+        from pact.project import ProjectManager
+        from pact.budget import BudgetTracker
+
+        project = ProjectManager(tmp_path)
+        project.init()
+        contract = _make_contract()
+        test_suite = _make_test_suite()
+
+        async def mock_implement_fail(self, prompt, **kwargs):
+            raise RuntimeError("Claude CLI not found")
+
+        import asyncio
+        with patch(
+            "pact.backends.claude_code.ClaudeCodeBackend.implement",
+            mock_implement_fail,
+        ):
+            budget = BudgetTracker(per_project_cap=10.0)
+            result = asyncio.run(implement_component_iterative(
+                project=project,
+                component_id="test_comp",
+                contract=contract,
+                test_suite=test_suite,
+                budget=budget,
+            ))
+
+        # Should still return TestResults (not crash)
+        assert result is not None
+
+    def test_audit_entries_written(self, tmp_path):
+        """Implementation and test_run audit entries should be created."""
+        from pact.implementer import implement_component_iterative
+        from pact.project import ProjectManager
+        from pact.budget import BudgetTracker
+
+        project = ProjectManager(tmp_path)
+        project.init()
+        contract = _make_contract()
+        test_suite = _make_test_suite()
+
+        async def mock_implement(self, prompt, **kwargs):
+            return "done", 100, 50
+
+        import asyncio
+        with patch(
+            "pact.backends.claude_code.ClaudeCodeBackend.implement",
+            mock_implement,
+        ):
+            budget = BudgetTracker(per_project_cap=10.0)
+            asyncio.run(implement_component_iterative(
+                project=project,
+                component_id="test_comp",
+                contract=contract,
+                test_suite=test_suite,
+                budget=budget,
+            ))
+
+        audit_path = tmp_path / ".pact" / "audit.jsonl"
+        assert audit_path.exists()
+        content = audit_path.read_text()
+        assert "iterative" in content
+        assert "test_run" in content

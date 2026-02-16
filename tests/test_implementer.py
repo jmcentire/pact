@@ -413,3 +413,137 @@ class TestSnakeCaseMatch:
 
     def test_fuzzy_match_underscore_stripped(self):
         assert _fuzzy_match("FineTuneBackend", {"fine_tune_backend"}) == "fine_tune_backend"
+
+
+class TestClaudeCodeBackendImplement:
+    """Test the ClaudeCodeBackend.implement() method (subprocess mocked)."""
+
+    def test_implement_method_exists(self):
+        from pact.backends.claude_code import ClaudeCodeBackend
+        assert hasattr(ClaudeCodeBackend, "implement")
+
+    def test_implement_returns_tuple(self):
+        """implement() should return (text, in_tokens, out_tokens)."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch, MagicMock
+        from pact.backends.claude_code import ClaudeCodeBackend
+        from pact.budget import BudgetTracker
+
+        budget = BudgetTracker(per_project_cap=10.0)
+        backend = ClaudeCodeBackend(budget=budget, model="test-model")
+
+        mock_proc = MagicMock()
+        mock_proc.communicate = AsyncMock(return_value=(
+            b'{"result": "done", "input_tokens": 500, "output_tokens": 200}',
+            b'',
+        ))
+        mock_proc.pid = 1234
+        mock_proc.returncode = 0
+
+        async def mock_create(*args, **kwargs):
+            return mock_proc
+
+        with patch("asyncio.create_subprocess_exec", mock_create):
+            result = asyncio.run(backend.implement("test prompt"))
+
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+        text, in_tok, out_tok = result
+        assert in_tok == 500
+        assert out_tok == 200
+
+    def test_implement_passes_max_turns(self):
+        """implement() should pass --max-turns to the claude CLI."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch, MagicMock
+        from pact.backends.claude_code import ClaudeCodeBackend
+        from pact.budget import BudgetTracker
+
+        budget = BudgetTracker(per_project_cap=10.0)
+        backend = ClaudeCodeBackend(budget=budget, model="test-model")
+
+        captured_cmds = []
+
+        mock_proc = MagicMock()
+        mock_proc.communicate = AsyncMock(return_value=(
+            b'{"result": "ok", "input_tokens": 100, "output_tokens": 50}',
+            b'',
+        ))
+        mock_proc.pid = 1234
+
+        async def mock_create(*args, **kwargs):
+            captured_cmds.append(args)
+            return mock_proc
+
+        with patch("asyncio.create_subprocess_exec", mock_create):
+            asyncio.run(backend.implement("test", max_turns=25))
+
+        # Check that --max-turns 25 is in the command
+        cmd_args = captured_cmds[0]
+        assert "--max-turns" in cmd_args
+        idx = cmd_args.index("--max-turns")
+        assert cmd_args[idx + 1] == "25"
+
+    def test_implement_passes_allowed_tools(self):
+        """implement() should pass --allowedTools with full tool access."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch, MagicMock
+        from pact.backends.claude_code import ClaudeCodeBackend
+        from pact.budget import BudgetTracker
+
+        budget = BudgetTracker(per_project_cap=10.0)
+        backend = ClaudeCodeBackend(budget=budget, model="test-model")
+
+        captured_cmds = []
+
+        mock_proc = MagicMock()
+        mock_proc.communicate = AsyncMock(return_value=(
+            b'{"result": "ok", "input_tokens": 100, "output_tokens": 50}',
+            b'',
+        ))
+        mock_proc.pid = 1234
+
+        async def mock_create(*args, **kwargs):
+            captured_cmds.append(args)
+            return mock_proc
+
+        with patch("asyncio.create_subprocess_exec", mock_create):
+            asyncio.run(backend.implement("test"))
+
+        cmd_args = captured_cmds[0]
+        assert "--allowedTools" in cmd_args
+        idx = cmd_args.index("--allowedTools")
+        tools = cmd_args[idx + 1]
+        assert "Write" in tools
+        assert "Edit" in tools
+        assert "Bash" in tools
+
+    def test_implement_pipes_prompt_via_stdin(self):
+        """implement() should send prompt via stdin, not as CLI arg."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch, MagicMock
+        from pact.backends.claude_code import ClaudeCodeBackend
+        from pact.budget import BudgetTracker
+
+        budget = BudgetTracker(per_project_cap=10.0)
+        backend = ClaudeCodeBackend(budget=budget, model="test-model")
+
+        captured_kwargs = []
+
+        mock_proc = MagicMock()
+        mock_proc.communicate = AsyncMock(return_value=(
+            b'{"result": "ok", "input_tokens": 100, "output_tokens": 50}',
+            b'',
+        ))
+        mock_proc.pid = 1234
+
+        async def mock_create(*args, **kwargs):
+            captured_kwargs.append(kwargs)
+            return mock_proc
+
+        long_prompt = "x" * 10000
+        with patch("asyncio.create_subprocess_exec", mock_create):
+            asyncio.run(backend.implement(long_prompt))
+
+        # Should use stdin (PIPE), not pass prompt as CLI arg
+        assert captured_kwargs[0].get("stdin") is not None
