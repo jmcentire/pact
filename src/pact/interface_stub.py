@@ -43,11 +43,21 @@ from pact.schemas import (
 
 
 _PYTHON_BUILTINS = frozenset({
+    # Builtin types
     "int", "float", "str", "bool", "list", "dict", "set", "tuple",
-    "frozenset", "bytes", "None", "type", "object", "Exception",
-    "ValueError", "TypeError", "KeyError", "IndexError", "RuntimeError",
-    "AttributeError", "NotImplementedError", "StopIteration",
-    "True", "False", "Any", "Optional", "Union",
+    "frozenset", "bytes", "bytearray", "None", "type", "object",
+    # Builtin exceptions
+    "Exception", "ValueError", "TypeError", "KeyError", "IndexError",
+    "RuntimeError", "AttributeError", "NotImplementedError", "StopIteration",
+    "OSError", "IOError", "FileNotFoundError", "PermissionError",
+    # Builtin constants
+    "True", "False",
+    # typing module
+    "Any", "Optional", "Union", "Callable", "Iterator", "Generator",
+    "Sequence", "Mapping", "Iterable",
+    # Common stdlib/library types used as type refs, not exports
+    "Path", "datetime", "timedelta", "date", "Decimal", "UUID",
+    "SecretStr", "BaseModel",
 })
 
 
@@ -64,6 +74,8 @@ def get_required_exports(contract: ComponentContract) -> list[str]:
     exports: list[str] = []
     for t in contract.types:
         name = t.name
+        if t.kind == "primitive":
+            continue  # Primitives are builtins/imports, not exports
         if _is_importable_export(name):
             exports.append(name)
     for func in contract.functions:

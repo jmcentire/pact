@@ -66,8 +66,11 @@ def _find_defined_names(source: str) -> set[str]:
 def _fuzzy_match(missing_name: str, available: set[str]) -> str | None:
     """Find a likely match for a missing export name.
 
-    Checks: exact case-insensitive match, then substring containment.
+    Checks: exact case-insensitive match, then word-boundary substring match.
     Returns the best matching defined name, or None.
+
+    Requires the shorter name to be at least 4 characters and cover at least
+    40% of the longer name to avoid false positives (e.g., "str" in "constraints").
     """
     missing_lower = missing_name.lower()
 
@@ -76,12 +79,20 @@ def _fuzzy_match(missing_name: str, available: set[str]) -> str | None:
         if name.lower() == missing_lower:
             return name
 
-    # Missing name is a suffix/prefix of a defined name (e.g. Phase -> TaskPhase)
+    # Substring matching with quality threshold
+    if len(missing_name) < 4:
+        return None  # Too short for reliable substring matching
+
     candidates = []
     for name in available:
         name_lower = name.lower()
+        # Check containment in either direction
         if missing_lower in name_lower or name_lower in missing_lower:
-            candidates.append(name)
+            # Quality check: shorter must cover ≥40% of longer
+            shorter = min(len(missing_lower), len(name_lower))
+            longer = max(len(missing_lower), len(name_lower))
+            if shorter / longer >= 0.4:
+                candidates.append(name)
 
     if len(candidates) == 1:
         return candidates[0]
