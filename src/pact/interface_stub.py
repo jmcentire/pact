@@ -42,22 +42,50 @@ from pact.schemas import (
 # ── Interface Stub Rendering ─────────────────────────────────────────
 
 
+_PYTHON_BUILTINS = frozenset({
+    "int", "float", "str", "bool", "list", "dict", "set", "tuple",
+    "frozenset", "bytes", "None", "type", "object", "Exception",
+    "ValueError", "TypeError", "KeyError", "IndexError", "RuntimeError",
+    "AttributeError", "NotImplementedError", "StopIteration",
+    "True", "False", "Any", "Optional", "Union",
+})
+
+
 def get_required_exports(contract: ComponentContract) -> list[str]:
     """Extract the list of names that an implementation MUST export.
 
     These are the type names, function names, and error class names
     from the contract. Tests import these by name and fail at collection
     if any are missing.
+
+    Filters out: dotted names (methods), dunder names, Python builtins,
+    and primitive type aliases.
     """
     exports: list[str] = []
     for t in contract.types:
-        exports.append(t.name)
+        name = t.name
+        if _is_importable_export(name):
+            exports.append(name)
     for func in contract.functions:
-        exports.append(func.name)
+        name = func.name
+        if _is_importable_export(name):
+            exports.append(name)
         for err in func.error_cases:
             if err.error_type and err.error_type not in exports:
-                exports.append(err.error_type)
+                if _is_importable_export(err.error_type):
+                    exports.append(err.error_type)
     return exports
+
+
+def _is_importable_export(name: str) -> bool:
+    """Check if a name is a valid top-level importable export."""
+    if "." in name:  # Method names like TaskRegistry.__init__
+        return False
+    if name.startswith("__") and name.endswith("__"):  # Dunders
+        return False
+    if name in _PYTHON_BUILTINS:  # Builtins
+        return False
+    return True
 
 
 def render_stub(contract: ComponentContract) -> str:

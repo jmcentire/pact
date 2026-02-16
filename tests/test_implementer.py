@@ -185,6 +185,39 @@ class TestGetRequiredExports:
         exports = get_required_exports(contract)
         assert exports.count("MyError") == 1
 
+    def test_filters_dotted_method_names(self):
+        contract = _make_contract(functions=[
+            FunctionContract(
+                name="TaskRegistry.__init__",
+                description="",
+                inputs=[],
+                output_type="None",
+            ),
+        ])
+        exports = get_required_exports(contract)
+        assert "TaskRegistry.__init__" not in exports
+
+    def test_filters_dunder_names(self):
+        contract = _make_contract(functions=[
+            FunctionContract(
+                name="__contains__",
+                description="",
+                inputs=[],
+                output_type="bool",
+            ),
+        ])
+        exports = get_required_exports(contract)
+        assert "__contains__" not in exports
+
+    def test_filters_builtins(self):
+        contract = _make_contract(types=[
+            TypeSpec(name="frozenset", kind="primitive"),
+            TypeSpec(name="MyCustomType", kind="struct"),
+        ])
+        exports = get_required_exports(contract)
+        assert "frozenset" not in exports
+        assert "MyCustomType" in exports
+
 
 class TestValidateAndFixExports:
     """Test the export validation and auto-fix gate."""
