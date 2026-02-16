@@ -151,6 +151,9 @@ class OpenAIBackend:
             tool_call = message.tool_calls[0]
             try:
                 raw = json.loads(tool_call.function.arguments)
+                # Strip null values so Pydantic uses defaults (strict mode
+                # makes fields nullable for OpenAI but Pydantic expects str)
+                _strip_nulls(raw)
                 parsed = schema.model_validate(raw)
                 return parsed, in_tok, out_tok
             except (json.JSONDecodeError, ValidationError) as e:
@@ -204,6 +207,7 @@ class OpenAIBackend:
             content = response.choices[0].message.content or ""
             try:
                 raw = json.loads(content)
+                _strip_nulls(raw)
                 parsed = schema.model_validate(raw)
                 return parsed, in_tok, out_tok
             except (json.JSONDecodeError, ValidationError) as e:
@@ -216,6 +220,22 @@ class OpenAIBackend:
 
     async def close(self) -> None:
         await self._client.close()
+
+
+def _strip_nulls(data: dict) -> None:
+    """Remove keys with None values so Pydantic uses field defaults.
+
+    Strict mode makes fields nullable for OpenAI compliance, but the
+    Pydantic model expects actual values (str, not None). Stripping
+    nulls lets Pydantic fall back to defaults like empty string.
+    """
+    null_keys = [k for k, v in data.items() if v is None]
+    for k in null_keys:
+        del data[k]
+    # Recurse into nested dicts (but not lists — those may legitimately contain null)
+    for v in data.values():
+        if isinstance(v, dict):
+            _strip_nulls(v)
 
 
 def _is_strict_compatible(schema: dict) -> bool:
