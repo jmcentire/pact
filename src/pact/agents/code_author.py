@@ -28,9 +28,14 @@ Your job is to produce an implementation that passes all contract tests.
 
 Key principles:
 - Implement exactly what the contract specifies, nothing more
-- All types defined in the contract must be implemented
-- All functions must match their contract signatures
-- Error cases must be handled as specified
+- CRITICAL: All types, functions, and error classes must use the EXACT names
+  from the contract stub. Check the REQUIRED EXPORTS list at the bottom of the
+  stub — every name listed there MUST be importable from your module. Tests
+  import these names directly and will fail at collection if any are missing
+  or renamed.
+- All functions must match their contract signatures exactly
+- Error/exception classes referenced in error_cases MUST use the exact class
+  names shown (e.g., ConfigFileNotFoundError, not FileNotFoundError)
 - Do not add features beyond the contract
 - Write clean, readable code
 - ALL log statements must include the PACT log key for production traceability
@@ -64,6 +69,7 @@ async def author_code(
     external_context: str = "",
     learnings: str = "",
     prior_research: ResearchReport | None = None,
+    prior_source: dict[str, str] | None = None,
 ) -> ImplementationResult:
     """Generate implementation code following the Research-First Protocol.
 
@@ -164,16 +170,71 @@ async def author_code(
     # The handoff brief is the largest cacheable block
     cache_prefix = handoff
 
-    # Dynamic prompt
-    prompt = f"""Implement the component described in the handoff brief above.
+    # Determine if we should use patch mode (high pass rate, targeted fixes)
+    use_patch_mode = (
+        prior_test_results is not None
+        and prior_test_results.total > 0
+        and prior_test_results.passed / prior_test_results.total >= 0.8
+    )
+
+    if use_patch_mode:
+        # Patch mode: preserve working code, only fix specific failures
+        failing_tests = []
+        if prior_test_results and prior_test_results.failure_details:
+            for fd in prior_test_results.failure_details[:10]:
+                failing_tests.append(f"  - {fd.test_id}: {fd.error_message}")
+        failing_summary = "\n".join(failing_tests) if failing_tests else "  (see prior failures above)"
+
+        # Include prior source in the cache prefix so the model can patch it
+        if prior_source:
+            prior_source_section = "\n\n## PRIOR IMPLEMENTATION (patch this, do NOT rewrite)\n"
+            for fname, content in prior_source.items():
+                prior_source_section += f"### {fname}\n```python\n{content}\n```\n"
+            cache_prefix += prior_source_section
+
+        prompt = f"""The prior implementation passed {prior_test_results.passed}/{prior_test_results.total} tests.
+It is MOSTLY CORRECT. Do NOT rewrite from scratch.
+
+Your task: produce a PATCHED version that fixes ONLY the failing tests while
+preserving all passing behavior. The failing tests are:
+{failing_summary}
+
+CRITICAL CONSTRAINTS:
+- Keep the same overall structure and architecture
+- Keep all type names, class names, and function names EXACTLY as they are
+- Only modify the specific logic that causes the listed test failures
+- Do NOT rename anything — the REQUIRED EXPORTS must remain unchanged
+- If a test fails due to edge case handling, add the edge case handling
+- If a test fails due to incorrect computation, fix the computation
+
+Research approach: {research.recommended_approach}
+Plan: {plan.plan_summary}
+
+Respond with a JSON object containing a "files" dict where keys are filenames
+and values are file contents. Include the COMPLETE file (not just the diff).
+
+Example response format:
+{{"files": {{"module.py": "# complete patched implementation..."}}}}"""
+
+        logger.info(
+            "Using PATCH mode for %s (%d/%d passed previously)",
+            contract.component_id,
+            prior_test_results.passed,
+            prior_test_results.total,
+        )
+    else:
+        # Full implementation mode
+        prompt = f"""Implement the component described in the handoff brief above.
 
 Research approach: {research.recommended_approach}
 Plan: {plan.plan_summary}
 
 Requirements:
 - Produce a single Python module implementing all types and functions
-- All type names and function signatures must match the interface stub EXACTLY
-- Handle all error cases as specified in the stub docstrings
+- CRITICAL: All type names, function names, and error class names must match
+  the interface stub EXACTLY. See the REQUIRED EXPORTS list at the bottom of
+  the stub — every name there MUST be importable from your module
+- Handle all error cases using the EXACT exception class names from the stub
 - Dependencies should be accepted as constructor/function parameters (dependency injection)
 - Code must be clean, well-structured Python with type annotations
 - Must pass ALL tests listed in the brief

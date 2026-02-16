@@ -20,8 +20,11 @@ from collections.abc import Callable
 from datetime import datetime
 from uuid import uuid4
 
+from pathlib import Path
+
 from pact.agents.base import AgentBase
 from pact.agents.code_author import author_code
+from pact.interface_stub import get_required_exports
 from pact.project import ProjectManager
 from pact.resolution import ScoredAttempt, format_resolution_summary, select_winner
 from pact.schemas import (
@@ -33,6 +36,133 @@ from pact.schemas import (
 from pact.test_harness import run_contract_tests
 
 logger = logging.getLogger(__name__)
+
+
+def _find_defined_names(source: str) -> set[str]:
+    """Extract top-level defined names from Python source code.
+
+    Finds class definitions, function definitions, and top-level
+    assignments (including type aliases).
+    """
+    import ast
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+
+    names: set[str] = set()
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+    return names
+
+
+def _fuzzy_match(missing_name: str, available: set[str]) -> str | None:
+    """Find a likely match for a missing export name.
+
+    Checks: exact case-insensitive match, then substring containment.
+    Returns the best matching defined name, or None.
+    """
+    missing_lower = missing_name.lower()
+
+    # Exact case-insensitive match
+    for name in available:
+        if name.lower() == missing_lower:
+            return name
+
+    # Missing name is a suffix/prefix of a defined name (e.g. Phase -> TaskPhase)
+    candidates = []
+    for name in available:
+        name_lower = name.lower()
+        if missing_lower in name_lower or name_lower in missing_lower:
+            candidates.append(name)
+
+    if len(candidates) == 1:
+        return candidates[0]
+
+    return None
+
+
+def validate_and_fix_exports(
+    src_dir: Path,
+    contract: ComponentContract,
+) -> list[str]:
+    """Check implementation files for missing required exports and auto-fix.
+
+    For each missing export, attempts to find a fuzzy match among defined
+    names and injects an alias (e.g., `Phase = TaskPhase`).
+
+    Returns list of exports that could NOT be fixed (truly missing).
+    """
+    required = get_required_exports(contract)
+    if not required:
+        return []
+
+    # Collect all defined names across implementation files
+    py_files = list(src_dir.rglob("*.py"))
+    if not py_files:
+        return required  # No files at all
+
+    # Find the main module file (component_id.py or first .py file)
+    main_file = None
+    component_module = contract.component_id.replace("-", "_")
+    for f in py_files:
+        if f.name == f"{component_module}.py":
+            main_file = f
+            break
+    if not main_file:
+        # Try any non-__init__ file, then __init__
+        non_init = [f for f in py_files if f.name != "__init__.py"]
+        main_file = non_init[0] if non_init else py_files[0]
+
+    source = main_file.read_text()
+    defined = _find_defined_names(source)
+
+    # Check what's missing
+    missing = [name for name in required if name not in defined]
+    if not missing:
+        return []
+
+    # Try to auto-fix with aliases
+    aliases: list[str] = []
+    still_missing: list[str] = []
+
+    for name in missing:
+        match = _fuzzy_match(name, defined)
+        if match:
+            aliases.append(f"{name} = {match}")
+            logger.info(
+                "Auto-aliased missing export: %s = %s", name, match,
+            )
+        else:
+            still_missing.append(name)
+
+    if aliases:
+        # Inject aliases at the end of the file
+        alias_block = (
+            "\n\n# ── Auto-injected export aliases (Pact export gate) ──\n"
+            + "\n".join(aliases)
+            + "\n"
+        )
+        source += alias_block
+        main_file.write_text(source)
+        logger.info(
+            "Injected %d export aliases into %s", len(aliases), main_file.name,
+        )
+
+    if still_missing:
+        logger.warning(
+            "Cannot auto-fix %d missing exports: %s",
+            len(still_missing), still_missing,
+        )
+
+    return still_missing
 
 
 async def implement_component(
@@ -55,6 +185,7 @@ async def implement_component(
     """
     prior_failures: list[str] = []
     last_test_results: TestResults | None = None
+    last_source: dict[str, str] | None = None
 
     for attempt in range(1, max_attempts + 1):
         logger.info(
@@ -73,10 +204,12 @@ async def implement_component(
             max_plan_revisions=max_plan_revisions,
             external_context=external_context,
             learnings=learnings,
+            prior_source=last_source,
         )
 
         # Save implementation files
         src_dir = project.impl_src_dir(component_id)
+        last_source = dict(result.files)  # Save for patch mode on next attempt
         for filename, content in result.files.items():
             filepath = src_dir / filename
             filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -95,6 +228,16 @@ async def implement_component(
             "implementation",
             f"{component_id} attempt {attempt}: {len(result.files)} files",
         )
+
+        # Export validation gate — check and fix before running tests
+        unfixable = validate_and_fix_exports(src_dir, contract)
+        if unfixable:
+            # Add specific missing-export feedback for the next attempt
+            for name in unfixable:
+                prior_failures.append(
+                    f"MISSING EXPORT: Your module does not define '{name}'. "
+                    f"The contract requires this exact name to be importable."
+                )
 
         # Run contract tests
         test_file = project.test_code_path(component_id)
@@ -302,6 +445,9 @@ async def _run_one_competitor(
             "files": list(result.files.keys()),
             "type": "competitive",
         })
+
+        # Export validation gate
+        validate_and_fix_exports(src_dir, contract)
 
         # Run contract tests against this attempt's src
         test_file = project.test_code_path(component_id)
