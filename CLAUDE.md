@@ -158,6 +158,6 @@ pact incident <project-dir> <id>      # Show incident details + diagnostic repor
 ## Testing
 
 ```bash
-make test          # 920 tests, ~4s
+make test          # 1000 tests, ~5s
 make test-quick    # Stop on first failure
 ```
