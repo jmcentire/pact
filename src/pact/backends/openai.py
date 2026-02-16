@@ -80,9 +80,11 @@ class OpenAIBackend:
         tool_schema = schema.model_json_schema()
         tool_schema.pop("title", None)
 
-        # Ensure all properties have explicit types for strict mode
-        # and add additionalProperties: false for strict compliance
-        _prepare_strict_schema(tool_schema)
+        # Try strict mode first; fall back to non-strict if schema is incompatible
+        # (e.g., free-form dicts like dict[str, str] can't use strict mode)
+        use_strict = _is_strict_compatible(tool_schema)
+        if use_strict:
+            _prepare_strict_schema(tool_schema)
 
         for attempt in range(3):
             try:
@@ -99,7 +101,7 @@ class OpenAIBackend:
                             "name": tool_name,
                             "description": schema.__doc__ or f"Extract {tool_name}",
                             "parameters": tool_schema,
-                            "strict": True,
+                            **({"strict": True} if use_strict else {}),
                         },
                     }],
                     tool_choice={
@@ -142,6 +144,28 @@ class OpenAIBackend:
 
     async def close(self) -> None:
         await self._client.close()
+
+
+def _is_strict_compatible(schema: dict) -> bool:
+    """Check if a JSON schema is compatible with OpenAI strict mode.
+
+    Strict mode can't handle free-form objects (additionalProperties with
+    a type schema, e.g., dict[str, str]). Detect these and fall back.
+    """
+    if isinstance(schema, dict):
+        # Free-form dict: additionalProperties is a type schema, not just true/false
+        ap = schema.get("additionalProperties")
+        if isinstance(ap, dict):
+            return False
+        for value in schema.values():
+            if isinstance(value, dict):
+                if not _is_strict_compatible(value):
+                    return False
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict) and not _is_strict_compatible(item):
+                        return False
+    return True
 
 
 def _prepare_strict_schema(schema: dict) -> None:
