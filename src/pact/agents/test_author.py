@@ -196,6 +196,12 @@ Requirements:
   (or a reasonable module path based on the component)
 - Each test should have clear assertions
 - test_language must be "python"
+- ONLY use pytest and unittest.mock — do NOT use hypothesis, property-based
+  testing libraries, or any other third-party libraries that may not be installed.
+  If you want randomized testing, use random directly.
+- For enum types, access variants using the EXACT names from the contract
+  (e.g., if the contract says variants: ["active", "paused"], use
+  MyEnum.active, NOT MyEnum.ACTIVE)
 
 The generated_code field should contain the COMPLETE test file content,
 ready to be saved as contract_test.py and run with pytest."""

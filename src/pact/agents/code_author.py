@@ -36,6 +36,9 @@ Key principles:
 - All functions must match their contract signatures exactly
 - Error/exception classes referenced in error_cases MUST use the exact class
   names shown (e.g., ConfigFileNotFoundError, not FileNotFoundError)
+- For enum types: member names must EXACTLY match the variant names from the
+  contract/stub. If the stub shows `active = "active"`, use lowercase `active`
+  as the member name — do NOT convert to UPPERCASE convention
 - Do not add features beyond the contract
 - Write clean, readable code
 - ALL log statements must include the PACT log key for production traceability
