@@ -42,6 +42,24 @@ from pact.schemas import (
 # ── Interface Stub Rendering ─────────────────────────────────────────
 
 
+def get_required_exports(contract: ComponentContract) -> list[str]:
+    """Extract the list of names that an implementation MUST export.
+
+    These are the type names, function names, and error class names
+    from the contract. Tests import these by name and fail at collection
+    if any are missing.
+    """
+    exports: list[str] = []
+    for t in contract.types:
+        exports.append(t.name)
+    for func in contract.functions:
+        exports.append(func.name)
+        for err in func.error_cases:
+            if err.error_type and err.error_type not in exports:
+                exports.append(err.error_type)
+    return exports
+
+
 def render_stub(contract: ComponentContract) -> str:
     """Render a contract as a Python-style interface stub.
 
@@ -114,6 +132,15 @@ def render_stub(contract: ComponentContract) -> str:
     # Function signatures
     for func in contract.functions:
         lines.extend(_render_function(func))
+        lines.append("")
+
+    # Required exports checklist — ensures implementations export exact names
+    exports = get_required_exports(contract)
+    if exports:
+        lines.append("# ── REQUIRED EXPORTS ──────────────────────────────────")
+        lines.append("# Your implementation module MUST export ALL of these names")
+        lines.append("# with EXACTLY these spellings. Tests import them by name.")
+        lines.append(f"# __all__ = {exports}")
         lines.append("")
 
     return "\n".join(lines)

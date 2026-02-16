@@ -67,6 +67,10 @@ class AgentBase:
                 cache_prefix=cache_prefix,
                 max_tokens=max_tokens,
             )
+        # Backend doesn't support caching — prepend cache_prefix to prompt
+        # so the context is not lost (critical for handoff briefs)
+        if cache_prefix:
+            prompt = f"{cache_prefix}\n\n{prompt}"
         return await self._backend.assess(schema, prompt, system, max_tokens)
 
     def with_learnings(self, learnings: list[dict]) -> str:
