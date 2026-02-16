@@ -32,7 +32,7 @@ from pact.decomposer import decompose_and_contract, run_interview
 from pact.diagnoser import determine_recovery_action, diagnose_failure
 from pact.events import EventBus, PactEvent
 from pact.implementer import implement_all, implement_all_iterative, implement_component_iterative
-from pact.integrator import integrate_all
+from pact.integrator import integrate_all, integrate_all_iterative
 from pact.lifecycle import advance_phase, format_run_summary
 from pact.project import ProjectManager
 from pact.schemas import ComponentTask, RunState, TestResults
@@ -582,25 +582,45 @@ class Scheduler:
 
         pcfg = resolve_parallel_config(self.project_config, self.global_config)
 
-        agent = self._make_agent("code_author")
-        try:
-            results = await integrate_all(
-                agent, self.project, tree,
-                max_attempts=self.global_config.max_implementation_attempts,
+        code_author_backend = resolve_backend(
+            "code_author", self.project_config, self.global_config,
+        )
+        code_author_model = resolve_model(
+            "code_author", self.project_config, self.global_config,
+        )
+
+        if code_author_backend in ("claude_code", "claude_code_team"):
+            results = await integrate_all_iterative(
+                project=self.project,
+                tree=tree,
+                budget=self.budget,
+                model=code_author_model,
                 sops=sops,
                 parallel=pcfg.parallel,
                 max_concurrent=pcfg.max_concurrent,
-                agent_factory=self._make_agent_factory("code_author") if pcfg.parallel else None,
+                external_context=external_context,
+                learnings=learnings,
             )
+        else:
+            agent = self._make_agent("code_author")
+            try:
+                results = await integrate_all(
+                    agent, self.project, tree,
+                    max_attempts=self.global_config.max_implementation_attempts,
+                    sops=sops,
+                    parallel=pcfg.parallel,
+                    max_concurrent=pcfg.max_concurrent,
+                    agent_factory=self._make_agent_factory("code_author") if pcfg.parallel else None,
+                )
+            finally:
+                await agent.close()
 
-            failed = [cid for cid, r in results.items() if not r.all_passed]
-            if failed:
-                state.phase = "diagnose"
-                state.pause_reason = f"Integration failed: {', '.join(failed)}"
-            else:
-                state.complete()
-        finally:
-            await agent.close()
+        failed = [cid for cid, r in results.items() if not r.all_passed]
+        if failed:
+            state.phase = "diagnose"
+            state.pause_reason = f"Integration failed: {', '.join(failed)}"
+        else:
+            state.complete()
 
         return state
 

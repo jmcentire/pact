@@ -114,3 +114,8 @@ class TestSchedulerBackendRouting:
         from pact.scheduler import implement_all_iterative, implement_component_iterative
         assert callable(implement_all_iterative)
         assert callable(implement_component_iterative)
+
+    def test_iterative_integration_imports_available(self):
+        """Verify the iterative integration functions are importable from scheduler."""
+        from pact.scheduler import integrate_all_iterative
+        assert callable(integrate_all_iterative)

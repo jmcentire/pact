@@ -247,3 +247,231 @@ async def integrate_all(
 
     project.save_tree(tree)
     return results
+
+
+async def integrate_component_iterative(
+    project: ProjectManager,
+    parent_id: str,
+    parent_contract: ComponentContract,
+    parent_test_suite: ContractTestSuite,
+    child_contracts: dict[str, ComponentContract],
+    budget: object,  # BudgetTracker
+    model: str = "claude-opus-4-6",
+    sops: str = "",
+    external_context: str = "",
+    learnings: str = "",
+    max_turns: int = 30,
+    timeout: int = 600,
+) -> TestResults:
+    """Integrate child components via iterative Claude Code (write glue -> test -> fix).
+
+    Instead of asking the API to produce a JSON blob of glue code, gives Claude Code
+    full tool access to read child implementations, write glue code, run parent tests,
+    read errors, and iterate within a single session.
+
+    Returns:
+        TestResults from running parent-level tests.
+    """
+    from pact.backends.claude_code import ClaudeCodeBackend
+
+    children_summary = "\n".join(
+        f"  - {cid}: {c.name} — {', '.join(f.name for f in c.functions)}"
+        for cid, c in child_contracts.items()
+    )
+
+    parent_funcs = "\n".join(
+        f"  - {f.name}({', '.join(i.name + ': ' + i.type_ref for i in f.inputs)}) -> {f.output_type}"
+        for f in parent_contract.functions
+    )
+
+    # Gather child implementation paths
+    child_impl_paths = "\n".join(
+        f"  - {cid}: {project.impl_src_dir(cid)}/"
+        for cid in child_contracts
+    )
+
+    # Write test file so the agent can run it
+    test_file = project.test_code_path(parent_id)
+    if not test_file.exists() and parent_test_suite.generated_code:
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text(parent_test_suite.generated_code)
+
+    comp_dir = project.composition_dir(parent_id)
+
+    prompt = f"""You are an integration engineer. Wire child components together into the parent interface.
+
+## Parent Component: {parent_contract.name} (id: {parent_id})
+
+Parent functions:
+{parent_funcs}
+
+Parent contract (JSON):
+{parent_contract.model_dump_json(indent=2)}
+
+## Children
+
+{children_summary}
+
+Child contracts:
+{chr(10).join(f'{cid}: {c.model_dump_json(indent=2)}' for cid, c in child_contracts.items())}
+
+## Child Implementation Locations
+
+{child_impl_paths}
+
+## Your Task
+
+Generate glue code that composes child implementations into the parent interface.
+
+1. Read the child implementations to understand their actual APIs
+2. Read the parent test file: {test_file}
+3. Write glue code in: {comp_dir}/glue.py
+4. The glue code should:
+   - Import from each child's module (they're under .pact/implementations/<child_id>/src/)
+   - Implement each parent function by delegating to appropriate children
+   - Handle data transformation between child interfaces
+   - Propagate errors according to parent contract
+   - NOT add business logic — only wiring
+5. Run tests: python3 -m pytest {test_file} -v
+6. If tests fail, read the errors, fix your glue code, and re-run
+7. Keep iterating until ALL tests pass
+
+{f'SOPs: {sops}' if sops else ''}
+{f'Context: {external_context}' if external_context else ''}
+{f'Learnings: {learnings}' if learnings else ''}
+"""
+
+    logger.info("Integrating %s iteratively via Claude Code (%s)", parent_id, model)
+
+    backend = ClaudeCodeBackend(
+        budget=budget,
+        model=model,
+        repo_path=project.project_dir,
+        timeout=timeout,
+    )
+
+    try:
+        await backend.implement(
+            prompt=prompt,
+            working_dir=project.project_dir,
+            max_turns=max_turns,
+            timeout=timeout,
+        )
+    except Exception as e:
+        logger.error("Iterative integration failed for %s: %s", parent_id, e)
+
+    project.append_audit(
+        "integration",
+        f"{parent_id} iterative claude_code ({model})",
+    )
+
+    # Run parent tests for official results
+    test_results = await run_contract_tests(test_file, comp_dir)
+
+    # Save results
+    results_path = comp_dir / "test_results.json"
+    results_path.write_text(test_results.model_dump_json(indent=2))
+
+    project.append_audit(
+        "test_run",
+        f"integration {parent_id}: {test_results.passed}/{test_results.total} passed",
+    )
+
+    logger.info(
+        "Integration %s iterative result: %d/%d passed",
+        parent_id, test_results.passed, test_results.total,
+    )
+
+    return test_results
+
+
+async def integrate_all_iterative(
+    project: ProjectManager,
+    tree: DecompositionTree,
+    budget: object,  # BudgetTracker
+    model: str = "claude-opus-4-6",
+    sops: str = "",
+    parallel: bool = False,
+    max_concurrent: int = 4,
+    external_context: str = "",
+    learnings: str = "",
+    max_turns: int = 30,
+    timeout: int = 600,
+) -> dict[str, TestResults]:
+    """Integrate all non-leaf components via iterative Claude Code, deepest first.
+
+    Returns:
+        Dict of parent_id -> TestResults.
+    """
+    contracts = project.load_all_contracts()
+    test_suites = project.load_all_test_suites()
+    results: dict[str, TestResults] = {}
+
+    # Get depth-ordered groups (deepest first)
+    if parallel:
+        groups = tree.non_leaf_parallel_groups()
+    else:
+        order = tree.topological_order()
+        groups = [[cid] for cid in order
+                  if tree.nodes.get(cid) and tree.nodes[cid].children]
+
+    async def _integrate_one(component_id: str) -> tuple[str, TestResults] | None:
+        node = tree.nodes.get(component_id)
+        if not node or not node.children:
+            return None
+
+        if component_id not in contracts:
+            logger.warning("No contract for parent %s", component_id)
+            return None
+
+        child_contracts = {
+            cid: contracts[cid]
+            for cid in node.children
+            if cid in contracts
+        }
+
+        test_suite = test_suites.get(component_id)
+        if not test_suite:
+            logger.warning("No test suite for parent %s", component_id)
+            return None
+
+        test_results = await integrate_component_iterative(
+            project, component_id,
+            contracts[component_id],
+            test_suite,
+            child_contracts,
+            budget=budget,
+            model=model,
+            sops=sops,
+            external_context=external_context,
+            learnings=learnings,
+            max_turns=max_turns,
+            timeout=timeout,
+        )
+
+        node.implementation_status = (
+            "tested" if test_results.all_passed else "failed"
+        )
+        node.test_results = test_results
+        return component_id, test_results
+
+    for group in groups:
+        if parallel and len(group) > 1:
+            sem = asyncio.Semaphore(max_concurrent)
+
+            async def _limited(cid: str) -> tuple[str, TestResults] | None:
+                async with sem:
+                    return await _integrate_one(cid)
+
+            gather_results = await asyncio.gather(*[_limited(cid) for cid in group])
+            for result in gather_results:
+                if result:
+                    results[result[0]] = result[1]
+        else:
+            for component_id in group:
+                result = await _integrate_one(component_id)
+                if result:
+                    results[result[0]] = result[1]
+
+    project.save_tree(tree)
+    return results
