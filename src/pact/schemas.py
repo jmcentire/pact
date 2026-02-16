@@ -480,6 +480,7 @@ class RunState(BaseModel):
     created_at: str = ""
     completed_at: str = ""
     pause_reason: str = ""
+    phase_cycles: int = 0
 
     def record_tokens(self, input_tokens: int, output_tokens: int, cost: float) -> None:
         self.total_tokens += input_tokens + output_tokens
