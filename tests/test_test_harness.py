@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from pact.test_harness import parse_pytest_output
+import asyncio
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+
+from pact.test_harness import parse_pytest_output, run_contract_tests
 
 
 class TestParsePytestOutput:
@@ -60,3 +64,63 @@ tests/test_example.py::test_add ERROR
         result = parse_pytest_output("", "")
         assert result.total == 0
         assert result.all_passed is False
+
+
+class TestExtraPaths:
+    """Test that extra_paths are included in PYTHONPATH."""
+
+    def test_extra_paths_included(self, tmp_path):
+        """extra_paths should appear in the PYTHONPATH env var."""
+        test_file = tmp_path / "test_example.py"
+        test_file.write_text("def test_pass(): pass")
+        impl_dir = tmp_path / "impl"
+        impl_dir.mkdir()
+        extra = [tmp_path / "child_a" / "src", tmp_path / "child_b" / "src"]
+        for p in extra:
+            p.mkdir(parents=True)
+
+        captured_env = {}
+
+        original_exec = asyncio.create_subprocess_exec
+
+        async def mock_exec(*args, **kwargs):
+            captured_env.update(kwargs.get("env", {}))
+            proc = AsyncMock()
+            proc.communicate = AsyncMock(
+                return_value=(b"test_x PASSED\n1 passed", b""),
+            )
+            proc.returncode = 0
+            return proc
+
+        with patch("pact.test_harness.asyncio.create_subprocess_exec", side_effect=mock_exec):
+            asyncio.run(run_contract_tests(test_file, impl_dir, extra_paths=extra))
+
+        pythonpath = captured_env.get("PYTHONPATH", "")
+        for p in extra:
+            assert str(p) in pythonpath
+
+    def test_no_extra_paths(self, tmp_path):
+        """Without extra_paths, PYTHONPATH should just have impl_dir."""
+        test_file = tmp_path / "test_example.py"
+        test_file.write_text("def test_pass(): pass")
+        impl_dir = tmp_path / "impl"
+        impl_dir.mkdir()
+
+        captured_env = {}
+
+        async def mock_exec(*args, **kwargs):
+            captured_env.update(kwargs.get("env", {}))
+            proc = AsyncMock()
+            proc.communicate = AsyncMock(
+                return_value=(b"test_x PASSED\n1 passed", b""),
+            )
+            proc.returncode = 0
+            return proc
+
+        with patch("pact.test_harness.asyncio.create_subprocess_exec", side_effect=mock_exec):
+            asyncio.run(run_contract_tests(test_file, impl_dir))
+
+        pythonpath = captured_env.get("PYTHONPATH", "")
+        assert str(impl_dir) in pythonpath
+        # Should only have impl_dir and parent
+        assert len(pythonpath.split(":")) == 2

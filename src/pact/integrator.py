@@ -128,7 +128,14 @@ The glue code should:
             test_file.parent.mkdir(parents=True, exist_ok=True)
             test_file.write_text(parent_test_suite.generated_code)
 
-        test_results = await run_contract_tests(test_file, comp_dir)
+        # Include child implementation src/ dirs so glue code can import them
+        child_paths = [
+            project.impl_src_dir(cid) for cid in child_contracts
+        ]
+
+        test_results = await run_contract_tests(
+            test_file, comp_dir, extra_paths=child_paths,
+        )
 
         # Save results
         results_path = comp_dir / "test_results.json"
@@ -284,10 +291,13 @@ async def integrate_component_iterative(
         for f in parent_contract.functions
     )
 
-    # Gather child implementation paths
-    child_impl_paths = "\n".join(
-        f"  - {cid}: {project.impl_src_dir(cid)}/"
-        for cid in child_contracts
+    # Gather child implementation paths and build PYTHONPATH for test runs
+    child_src_dirs = {
+        cid: project.impl_src_dir(cid) for cid in child_contracts
+    }
+    child_impl_listing = "\n".join(
+        f"  - {cid}: {path}/"
+        for cid, path in child_src_dirs.items()
     )
 
     # Write test file so the agent can run it
@@ -297,6 +307,13 @@ async def integrate_component_iterative(
         test_file.write_text(parent_test_suite.generated_code)
 
     comp_dir = project.composition_dir(parent_id)
+
+    module_name = parent_id.replace("-", "_")
+
+    # Build PYTHONPATH that includes child implementation dirs
+    pythonpath_parts = [str(comp_dir), str(comp_dir.parent)]
+    pythonpath_parts.extend(str(p) for p in child_src_dirs.values())
+    pythonpath_str = ":".join(pythonpath_parts)
 
     prompt = f"""You are an integration engineer. Wire child components together into the parent interface.
 
@@ -317,24 +334,37 @@ Child contracts:
 
 ## Child Implementation Locations
 
-{child_impl_paths}
+{child_impl_listing}
+
+## CRITICAL: Module Structure Convention
+
+The test file imports: `from src.{module_name} import ...`
+
+You MUST write your glue module at: {comp_dir}/src/{module_name}.py
+
+Create the directory if needed: mkdir -p {comp_dir}/src/
+
+Children are importable directly by name (they're on PYTHONPATH). For example:
+{chr(10).join(f'  import {cid.replace("-", "_")}' for cid in child_contracts)}
+
+Do NOT use sys.path manipulation. Just import children by their module name.
 
 ## Your Task
 
-Generate glue code that composes child implementations into the parent interface.
-
-1. Read the child implementations to understand their actual APIs
+1. Read each child implementation to understand their actual APIs:
+{chr(10).join(f'   - {path}/{cid.replace("-", "_")}.py' for cid, path in child_src_dirs.items())}
 2. Read the parent test file: {test_file}
-3. Write glue code in: {comp_dir}/glue.py
-4. The glue code should:
-   - Import from each child's module (they're under .pact/implementations/<child_id>/src/)
+3. Write your glue module at: {comp_dir}/src/{module_name}.py
+   - Create {comp_dir}/src/__init__.py if needed
+   - Import from each child module by name (e.g. `import <child_module_name>`)
+   - Re-export ALL types and functions that the test file imports
    - Implement each parent function by delegating to appropriate children
-   - Handle data transformation between child interfaces
-   - Propagate errors according to parent contract
-   - NOT add business logic — only wiring
-5. Run tests: python3 -m pytest {test_file} -v
-6. If tests fail, read the errors, fix your glue code, and re-run
-7. Keep iterating until ALL tests pass
+   - Match the exact type names, function signatures, and enum values from the contract
+   - Do NOT add business logic — only wiring and delegation
+4. Run tests with correct PYTHONPATH:
+   PYTHONPATH="{pythonpath_str}" python3 -m pytest {test_file} -v
+5. If tests fail, read the errors, fix your glue code, and re-run
+6. Keep iterating until ALL tests pass
 
 {f'SOPs: {sops}' if sops else ''}
 {f'Context: {external_context}' if external_context else ''}
@@ -365,8 +395,13 @@ Generate glue code that composes child implementations into the parent interface
         f"{parent_id} iterative claude_code ({model})",
     )
 
-    # Run parent tests for official results
-    test_results = await run_contract_tests(test_file, comp_dir)
+    # Run parent tests for official results — include child src/ dirs
+    child_paths = [
+        project.impl_src_dir(cid) for cid in child_contracts
+    ]
+    test_results = await run_contract_tests(
+        test_file, comp_dir, extra_paths=child_paths,
+    )
 
     # Save results
     results_path = comp_dir / "test_results.json"

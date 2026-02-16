@@ -22,6 +22,7 @@ async def run_contract_tests(
     impl_dir: Path,
     timeout: int = 120,
     environment: "EnvironmentSpec | None" = None,
+    extra_paths: list[Path] | None = None,
 ) -> TestResults:
     """Run pytest on a contract test file against an implementation.
 
@@ -29,6 +30,8 @@ async def run_contract_tests(
         test_file: Path to the contract_test.py file.
         impl_dir: Path to the implementation source directory (added to PYTHONPATH).
         timeout: Max seconds to wait for tests.
+        extra_paths: Additional directories to add to PYTHONPATH (e.g. child
+            implementation src/ dirs for composition tests).
 
     Returns:
         TestResults with pass/fail counts and failure details.
@@ -42,7 +45,10 @@ async def run_contract_tests(
             )],
         )
 
-    env_path = f"{impl_dir}:{impl_dir.parent}"
+    parts = [str(impl_dir), str(impl_dir.parent)]
+    if extra_paths:
+        parts.extend(str(p) for p in extra_paths)
+    env_path = ":".join(parts)
 
     if environment:
         env = environment.build_env(env_path)
