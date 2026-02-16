@@ -758,20 +758,57 @@ class Scheduler:
         return state
 
     async def _phase_diagnose(self, state: RunState, sops: str) -> RunState:
-        """Diagnose failures and determine recovery action."""
+        """Diagnose failures and determine recovery action.
+
+        Increments phase_cycles each time we enter diagnose. If the cycle
+        count exceeds max_phase_cycles, pauses for human review instead of
+        looping back to implement/integrate indefinitely.
+        """
+        state.phase_cycles += 1
+        max_cycles = self.global_config.max_phase_cycles
+
+        if state.phase_cycles > max_cycles:
+            state.pause(
+                f"Phase cycle limit reached ({state.phase_cycles} diagnose cycles, "
+                f"max={max_cycles}). Human review required."
+            )
+            logger.warning(
+                "Phase cycle limit reached (%d > %d) — pausing for human review",
+                state.phase_cycles, max_cycles,
+            )
+            return state
+
         tree = self.project.load_tree()
         if not tree:
             state.fail("No tree for diagnosis")
             return state
 
+        # Detect systemic failure before spending API calls on diagnosis
+        failed_nodes = [
+            n for n in tree.nodes.values()
+            if n.implementation_status == "failed" and n.test_results
+        ]
+        failed_results = {
+            n.component_id: n.test_results for n in failed_nodes
+        }
+
+        if len(failed_results) >= 3:
+            pattern = detect_systemic_failure(failed_results)
+            if pattern:
+                state.pause(
+                    f"Systemic failure in diagnose: {pattern.pattern_type} "
+                    f"across {len(pattern.affected_components)} components. "
+                    f"{pattern.recommendation}"
+                )
+                logger.warning(
+                    "Systemic failure detected in diagnose: %s (%d components)",
+                    pattern.pattern_type, len(pattern.affected_components),
+                )
+                return state
+
         agent = self._make_agent("trace_analyst")
         try:
-            for node in tree.nodes.values():
-                if node.implementation_status != "failed":
-                    continue
-                if not node.test_results:
-                    continue
-
+            for node in failed_nodes:
                 diagnosis = await diagnose_failure(
                     agent, self.project,
                     node.component_id,

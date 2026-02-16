@@ -119,3 +119,40 @@ class TestSchedulerBackendRouting:
         """Verify the iterative integration functions are importable from scheduler."""
         from pact.scheduler import integrate_all_iterative
         assert callable(integrate_all_iterative)
+
+
+class TestPhaseCycleDetection:
+    """Test that diagnose→implement/integrate loops are bounded."""
+
+    def test_phase_cycles_default_zero(self):
+        """New RunState should have phase_cycles=0."""
+        state = RunState(id="test", project_dir="/tmp/t")
+        assert state.phase_cycles == 0
+
+    def test_max_phase_cycles_in_global_config(self):
+        """GlobalConfig should have max_phase_cycles with default=3."""
+        gc = GlobalConfig()
+        assert gc.max_phase_cycles == 3
+
+    def test_phase_cycles_increments_are_persisted(self):
+        """phase_cycles should survive JSON round-trip."""
+        state = RunState(id="test", project_dir="/tmp/t", phase_cycles=5)
+        data = state.model_dump_json()
+        restored = RunState.model_validate_json(data)
+        assert restored.phase_cycles == 5
+
+    def test_phase_cycles_pauses_after_limit(self):
+        """When phase_cycles exceeds max, state should pause."""
+        state = RunState(
+            id="test", project_dir="/tmp/t",
+            phase="diagnose", status="active",
+            phase_cycles=3,  # Already at limit
+        )
+        # Simulating what _phase_diagnose does:
+        max_cycles = 3
+        state.phase_cycles += 1  # Now 4, exceeds 3
+        if state.phase_cycles > max_cycles:
+            state.pause(f"Phase cycle limit reached ({state.phase_cycles})")
+
+        assert state.status == "paused"
+        assert "cycle limit" in state.pause_reason

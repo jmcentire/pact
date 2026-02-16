@@ -52,6 +52,7 @@ class GlobalConfig:
 
     max_implementation_attempts: int = 3
     max_plan_revisions: int = 2
+    max_phase_cycles: int = 3
     autonomous_timeout: int = 600
 
     parallel_components: bool = False
