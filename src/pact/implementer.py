@@ -38,6 +38,78 @@ from pact.test_harness import run_contract_tests
 logger = logging.getLogger(__name__)
 
 
+def _fix_pydantic_v1_patterns(source: str) -> tuple[str, list[str]]:
+    """Mechanically fix common Pydantic v1 patterns that crash on v2.
+
+    Targets patterns that cause ImportError or PydanticUserError at
+    class/module definition time (not runtime logic errors).
+
+    Returns (fixed_source, list_of_changes_made).
+    """
+    import re as _re
+    changes: list[str] = []
+
+    # 1. Remove imports of removed symbols
+    removed_imports = {
+        r"from pydantic\.main import [^\n]+": "removed pydantic.main import",
+        r"from pydantic\.error_wrappers import [^\n]+": "removed pydantic.error_wrappers import",
+    }
+    for pattern, desc in removed_imports.items():
+        if _re.search(pattern, source):
+            source = _re.sub(pattern, "# (removed v1 import)", source)
+            changes.append(desc)
+
+    # 2. Remove 'Extra' from pydantic imports and replace usage
+    if "Extra" in source:
+        # Replace Extra.forbid / Extra.ignore with string literals
+        for attr, replacement in [
+            ("Extra.forbid", "'forbid'"),
+            ("Extra.ignore", "'ignore'"),
+            ("Extra.allow", "'allow'"),
+        ]:
+            if attr in source:
+                source = source.replace(attr, replacement)
+                changes.append(f"replaced {attr} with {replacement}")
+        # Remove Extra from import line
+        source = _re.sub(
+            r",\s*Extra\b", "", source,
+        )
+        source = _re.sub(
+            r"\bExtra\s*,\s*", "", source,
+        )
+
+    # 3. Replace regex= with pattern= in Field() calls
+    if "regex=" in source:
+        source = source.replace("regex=", "pattern=")
+        changes.append("replaced regex= with pattern= in Field()")
+
+    # 4. Remove always=True from validator decorators
+    if "always=True" in source:
+        source = _re.sub(r",\s*always\s*=\s*True", "", source)
+        source = _re.sub(r"always\s*=\s*True\s*,\s*", "", source)
+        changes.append("removed always=True from validators")
+
+    # 5. Fix BaseModelMetaclass usage in enum definitions
+    if "BaseModelMetaclass" in source:
+        source = source.replace(
+            "BaseModelMetaclass", "Enum"
+        )
+        # Ensure Enum is imported
+        if "from enum import" not in source and "import enum" not in source:
+            source = "from enum import Enum\n" + source
+        changes.append("replaced BaseModelMetaclass with Enum")
+
+    # 6. Replace condecimal/constr/conint with Annotated equivalents
+    #    (These may still work in v2 but can cause issues)
+    for v1_type in ("condecimal", "constr", "conint", "confloat"):
+        if v1_type in source and f"from pydantic import" in source:
+            # Just remove from import — usage will cause clear errors
+            # that the code author can fix on retry
+            pass  # Leave for retry with better error messages
+
+    return source, changes
+
+
 def _sanitize_filename(filename: str) -> str:
     """Strip redundant src/ prefix from code author filenames.
 
@@ -247,6 +319,17 @@ async def implement_component(
             filepath = src_dir / _sanitize_filename(filename)
             filepath.parent.mkdir(parents=True, exist_ok=True)
             filepath.write_text(content)
+
+        # Pydantic v1→v2 mechanical fixes (before running tests)
+        for py_file in src_dir.rglob("*.py"):
+            original = py_file.read_text()
+            fixed, fixes = _fix_pydantic_v1_patterns(original)
+            if fixes:
+                py_file.write_text(fixed)
+                logger.info(
+                    "Auto-fixed Pydantic v1 patterns in %s: %s",
+                    py_file.name, "; ".join(fixes),
+                )
 
         # Save metadata
         project.save_impl_metadata(component_id, {

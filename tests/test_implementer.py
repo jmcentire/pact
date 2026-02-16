@@ -7,6 +7,7 @@ from pathlib import Path
 
 from pact.implementer import (
     _find_defined_names,
+    _fix_pydantic_v1_patterns,
     _fuzzy_match,
     _sanitize_filename,
     validate_and_fix_exports,
@@ -300,3 +301,66 @@ class TestSanitizeFilename:
 
     def test_double_src_strips_once(self):
         assert _sanitize_filename("src/src/module.py") == "src/module.py"
+
+
+class TestFixPydanticV1Patterns:
+    """Test mechanical Pydantic v1→v2 fixups."""
+
+    def test_replaces_regex_with_pattern(self):
+        source = 'name: str = Field(..., regex=r"^[a-z]+$")'
+        fixed, changes = _fix_pydantic_v1_patterns(source)
+        assert 'pattern=r"^[a-z]+$"' in fixed
+        assert "regex=" not in fixed
+        assert changes
+
+    def test_removes_pydantic_main_import(self):
+        source = "from pydantic.main import ModelMetaclass\nclass Foo: pass"
+        fixed, changes = _fix_pydantic_v1_patterns(source)
+        assert "pydantic.main" not in fixed
+        assert changes
+
+    def test_removes_error_wrappers_import(self):
+        source = "from pydantic.error_wrappers import flatten_errors"
+        fixed, changes = _fix_pydantic_v1_patterns(source)
+        assert "error_wrappers" not in fixed
+        assert changes
+
+    def test_removes_always_true(self):
+        source = '@field_validator("name", always=True)\ndef check(cls, v): pass'
+        fixed, changes = _fix_pydantic_v1_patterns(source)
+        assert "always=True" not in fixed
+        assert "check" in fixed
+        assert changes
+
+    def test_replaces_extra_forbid(self):
+        source = 'class Foo(BaseModel, extra=Extra.forbid): pass'
+        fixed, changes = _fix_pydantic_v1_patterns(source)
+        assert "Extra.forbid" not in fixed
+        assert "'forbid'" in fixed
+        assert changes
+
+    def test_replaces_base_model_metaclass_with_enum(self):
+        source = 'class Phase(str, BaseModelMetaclass):\n    ACTIVE = "active"'
+        fixed, changes = _fix_pydantic_v1_patterns(source)
+        assert "BaseModelMetaclass" not in fixed
+        assert "Enum" in fixed
+        assert changes
+
+    def test_no_changes_for_clean_code(self):
+        source = 'from pydantic import BaseModel, Field\nclass Foo(BaseModel): pass'
+        fixed, changes = _fix_pydantic_v1_patterns(source)
+        assert fixed == source
+        assert not changes
+
+    def test_multiple_fixes_combined(self):
+        source = (
+            'from pydantic.main import ModelMetaclass\n'
+            'from pydantic import Field, Extra\n'
+            'class Foo(BaseModel, extra=Extra.forbid):\n'
+            '    name: str = Field(regex=r"^[a-z]+$")\n'
+        )
+        fixed, changes = _fix_pydantic_v1_patterns(source)
+        assert "pydantic.main" not in fixed
+        assert "Extra.forbid" not in fixed
+        assert "regex=" not in fixed
+        assert len(changes) >= 3
