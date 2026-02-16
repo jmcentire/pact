@@ -38,6 +38,18 @@ from pact.test_harness import run_contract_tests
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_filename(filename: str) -> str:
+    """Strip redundant src/ prefix from code author filenames.
+
+    Code authors often return {"src/module.py": "..."} but the file is
+    already written under impl_src_dir (which IS the src/ directory).
+    Writing src/module.py under src/ creates src/src/module.py.
+    """
+    if filename.startswith("src/"):
+        return filename[4:]
+    return filename
+
+
 def _find_defined_names(source: str) -> set[str]:
     """Extract top-level defined names from Python source code.
 
@@ -232,7 +244,7 @@ async def implement_component(
         src_dir = project.impl_src_dir(component_id)
         last_source = dict(result.files)  # Save for patch mode on next attempt
         for filename, content in result.files.items():
-            filepath = src_dir / filename
+            filepath = src_dir / _sanitize_filename(filename)
             filepath.parent.mkdir(parents=True, exist_ok=True)
             filepath.write_text(content)
 
@@ -456,7 +468,7 @@ async def _run_one_competitor(
         # Save to attempt directory (not main src)
         src_dir = project.attempt_src_dir(component_id, attempt_id)
         for filename, content in result.files.items():
-            filepath = src_dir / filename
+            filepath = src_dir / _sanitize_filename(filename)
             filepath.parent.mkdir(parents=True, exist_ok=True)
             filepath.write_text(content)
 

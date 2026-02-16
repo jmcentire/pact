@@ -40,6 +40,9 @@ Key principles:
   contract/stub. If the stub shows `active = "active"`, use lowercase `active`
   as the member name — do NOT convert to UPPERCASE convention
 - Do not add features beyond the contract
+- If the contract defines standalone functions (not methods on a class), implement
+  them as MODULE-LEVEL FUNCTIONS, not as methods of a class. Tests import and call
+  them directly by name (e.g., `from src.module import compute; compute(...)`)
 - Write clean, readable code
 - ALL log statements must include the PACT log key for production traceability
 - Use the provided log key preamble at the top of every module"""

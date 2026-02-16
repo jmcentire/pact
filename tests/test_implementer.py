@@ -8,6 +8,7 @@ from pathlib import Path
 from pact.implementer import (
     _find_defined_names,
     _fuzzy_match,
+    _sanitize_filename,
     validate_and_fix_exports,
 )
 from pact.interface_stub import get_required_exports
@@ -279,3 +280,23 @@ class TestValidateAndFixExports:
         contract = _make_contract()
         missing = validate_and_fix_exports(tmp_path, contract)
         assert missing == []
+
+
+class TestSanitizeFilename:
+    """Test filename sanitization for code author output."""
+
+    def test_strips_src_prefix(self):
+        assert _sanitize_filename("src/module.py") == "module.py"
+
+    def test_strips_src_nested(self):
+        assert _sanitize_filename("src/pkg/__init__.py") == "pkg/__init__.py"
+
+    def test_no_prefix_unchanged(self):
+        assert _sanitize_filename("module.py") == "module.py"
+
+    def test_nested_src_not_stripped(self):
+        # Only strip leading src/, not embedded
+        assert _sanitize_filename("lib/src/module.py") == "lib/src/module.py"
+
+    def test_double_src_strips_once(self):
+        assert _sanitize_filename("src/src/module.py") == "src/module.py"
