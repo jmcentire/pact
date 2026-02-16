@@ -187,6 +187,29 @@ def main() -> None:
     p_incident.add_argument("project_dir", help="Project directory path")
     p_incident.add_argument("incident_id", help="Incident ID")
 
+    # tasks
+    p_tasks = subparsers.add_parser("tasks", help="Generate/display task list")
+    p_tasks.add_argument("project_dir", help="Project directory path")
+    p_tasks.add_argument("--regenerate", action="store_true", help="Force regeneration")
+    p_tasks.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
+    p_tasks.add_argument("--phase", default=None, help="Filter by phase")
+    p_tasks.add_argument("--component", default=None, help="Filter by component")
+    p_tasks.add_argument("--complete", default=None, metavar="TASK_ID", help="Mark a task as completed")
+
+    # analyze
+    p_analyze = subparsers.add_parser("analyze", help="Run cross-artifact analysis")
+    p_analyze.add_argument("project_dir", help="Project directory path")
+    p_analyze.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
+
+    # checklist
+    p_checklist = subparsers.add_parser("checklist", help="Generate requirements checklist")
+    p_checklist.add_argument("project_dir", help="Project directory path")
+    p_checklist.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
+
+    # export-tasks
+    p_export = subparsers.add_parser("export-tasks", help="Export TASKS.md")
+    p_export.add_argument("project_dir", help="Project directory path")
+
     args = parser.parse_args()
 
     if args.verbose:
@@ -248,6 +271,14 @@ def main() -> None:
         cmd_incidents(args)
     elif args.command == "incident":
         cmd_incident(args)
+    elif args.command == "tasks":
+        cmd_tasks(args)
+    elif args.command == "analyze":
+        cmd_analyze(args)
+    elif args.command == "checklist":
+        cmd_checklist(args)
+    elif args.command == "export-tasks":
+        cmd_export_tasks(args)
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -1684,6 +1715,132 @@ def cmd_incident(args: argparse.Namespace) -> None:
         print("DIAGNOSTIC REPORT (from file)")
         print(f"{'=' * 60}")
         print(report_path.read_text())
+
+
+def cmd_tasks(args: argparse.Namespace) -> None:
+    """Generate/display task list."""
+    from pact.schemas_tasks import TaskPhase
+    from pact.task_list import generate_task_list, render_task_list_markdown
+
+    project = ProjectManager(args.project_dir)
+
+    # Handle --complete
+    if args.complete:
+        task_list = project.load_task_list()
+        if not task_list:
+            print("No task list found. Run 'pact tasks' first to generate one.")
+            return
+        if task_list.mark_complete(args.complete):
+            project.save_task_list(task_list)
+            print(f"Marked {args.complete} as completed.")
+        else:
+            print(f"Task not found: {args.complete}")
+        return
+
+    # Load or generate task list
+    task_list = project.load_task_list()
+    if task_list is None or args.regenerate:
+        tree = project.load_tree()
+        if not tree:
+            print("No decomposition tree found. Run decomposition first.")
+            return
+        contracts = project.load_all_contracts()
+        test_suites = project.load_all_test_suites()
+        task_list = generate_task_list(tree, contracts, test_suites, project.project_dir.name)
+        project.save_task_list(task_list)
+        project.append_audit("tasks_generated", f"{task_list.total} tasks")
+
+    # Filter
+    if args.phase:
+        try:
+            phase = TaskPhase(args.phase)
+        except ValueError:
+            print(f"Unknown phase: {args.phase}")
+            print(f"Valid phases: {', '.join(p.value for p in TaskPhase)}")
+            return
+        tasks = task_list.tasks_for_phase(phase)
+    elif args.component:
+        tasks = task_list.tasks_for_component(args.component)
+    else:
+        tasks = task_list.tasks
+
+    if getattr(args, "json_output", False):
+        print(json.dumps([t.model_dump() for t in tasks], indent=2, default=str))
+        return
+
+    # Render filtered or full
+    if args.phase or args.component:
+        for t in tasks:
+            checkbox = "[x]" if t.status == "completed" else "[ ]"
+            parallel = " [P]" if t.parallel else ""
+            comp = f" [{t.component_id}]" if t.component_id else ""
+            print(f"  {checkbox} {t.id}{parallel}{comp} {t.description}")
+        print(f"\n{len(tasks)} task(s)")
+    else:
+        print(render_task_list_markdown(task_list))
+
+
+def cmd_analyze(args: argparse.Namespace) -> None:
+    """Run cross-artifact analysis."""
+    from pact.analyzer import analyze_project, render_analysis_markdown
+
+    project = ProjectManager(args.project_dir)
+    tree = project.load_tree()
+    if not tree:
+        print("No decomposition tree found. Run decomposition first.")
+        return
+
+    contracts = project.load_all_contracts()
+    test_suites = project.load_all_test_suites()
+
+    report = analyze_project(tree, contracts, test_suites)
+    project.save_analysis(report)
+    project.append_audit("analysis", report.summary)
+
+    if getattr(args, "json_output", False):
+        print(report.model_dump_json(indent=2))
+        return
+
+    print(render_analysis_markdown(report))
+
+
+def cmd_checklist(args: argparse.Namespace) -> None:
+    """Generate requirements checklist."""
+    from pact.checklist_gen import generate_checklist, render_checklist_markdown
+
+    project = ProjectManager(args.project_dir)
+    tree = project.load_tree()
+    if not tree:
+        print("No decomposition tree found. Run decomposition first.")
+        return
+
+    contracts = project.load_all_contracts()
+    test_suites = project.load_all_test_suites()
+
+    checklist = generate_checklist(tree, contracts, test_suites, project.project_dir.name)
+    project.save_checklist(checklist)
+    project.append_audit("checklist", f"{len(checklist.items)} items")
+
+    if getattr(args, "json_output", False):
+        print(checklist.model_dump_json(indent=2))
+        return
+
+    print(render_checklist_markdown(checklist))
+
+
+def cmd_export_tasks(args: argparse.Namespace) -> None:
+    """Export TASKS.md."""
+    from pact.task_list import render_task_list_markdown
+
+    project = ProjectManager(args.project_dir)
+    task_list = project.load_task_list()
+    if not task_list:
+        print("No task list found. Run 'pact tasks' first to generate one.")
+        return
+
+    md = render_task_list_markdown(task_list)
+    project.tasks_md_path.write_text(md)
+    print(f"Exported: {project.tasks_md_path}")
 
 
 if __name__ == "__main__":

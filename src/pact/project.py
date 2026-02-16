@@ -107,6 +107,22 @@ class ProjectManager:
     def interview_path(self) -> Path:
         return self._decomp_dir / "interview.json"
 
+    @property
+    def tasks_json_path(self) -> Path:
+        return self._pact_dir / "tasks.json"
+
+    @property
+    def tasks_md_path(self) -> Path:
+        return self.project_dir / "TASKS.md"
+
+    @property
+    def analysis_path(self) -> Path:
+        return self._pact_dir / "analysis.json"
+
+    @property
+    def checklist_path(self) -> Path:
+        return self._pact_dir / "checklist.json"
+
     # ── Init ───────────────────────────────────────────────────────
 
     def init(self, budget: float = 10.00) -> None:
@@ -527,6 +543,62 @@ class ProjectManager:
             path.write_text(research.model_dump_json(indent=2))
         else:
             path.write_text(json.dumps(research, indent=2, default=str))
+
+    # ── Task List ──────────────────────────────────────────────────
+
+    def save_task_list(self, task_list: object) -> None:
+        """Save a TaskList to .pact/tasks.json and TASKS.md."""
+        self._pact_dir.mkdir(parents=True, exist_ok=True)
+        if hasattr(task_list, "model_dump_json"):
+            self.tasks_json_path.write_text(task_list.model_dump_json(indent=2))
+        else:
+            self.tasks_json_path.write_text(json.dumps(task_list, indent=2, default=str))
+
+        # Also render markdown
+        from pact.task_list import render_task_list_markdown
+        md = render_task_list_markdown(task_list)
+        self.tasks_md_path.write_text(md)
+
+    def load_task_list(self) -> object | None:
+        """Load a TaskList from .pact/tasks.json."""
+        if not self.tasks_json_path.exists():
+            return None
+        from pact.schemas_tasks import TaskList
+        return TaskList.model_validate_json(self.tasks_json_path.read_text())
+
+    # ── Analysis ──────────────────────────────────────────────────
+
+    def save_analysis(self, report: object) -> None:
+        """Save an AnalysisReport to .pact/analysis.json."""
+        self._pact_dir.mkdir(parents=True, exist_ok=True)
+        if hasattr(report, "model_dump_json"):
+            self.analysis_path.write_text(report.model_dump_json(indent=2))
+        else:
+            self.analysis_path.write_text(json.dumps(report, indent=2, default=str))
+
+    def load_analysis(self) -> object | None:
+        """Load an AnalysisReport from .pact/analysis.json."""
+        if not self.analysis_path.exists():
+            return None
+        from pact.schemas_tasks import AnalysisReport
+        return AnalysisReport.model_validate_json(self.analysis_path.read_text())
+
+    # ── Checklist ─────────────────────────────────────────────────
+
+    def save_checklist(self, checklist: object) -> None:
+        """Save a RequirementsChecklist to .pact/checklist.json."""
+        self._pact_dir.mkdir(parents=True, exist_ok=True)
+        if hasattr(checklist, "model_dump_json"):
+            self.checklist_path.write_text(checklist.model_dump_json(indent=2))
+        else:
+            self.checklist_path.write_text(json.dumps(checklist, indent=2, default=str))
+
+    def load_checklist(self) -> object | None:
+        """Load a RequirementsChecklist from .pact/checklist.json."""
+        if not self.checklist_path.exists():
+            return None
+        from pact.schemas_tasks import RequirementsChecklist
+        return RequirementsChecklist.model_validate_json(self.checklist_path.read_text())
 
     # ── Shaping Pitch ─────────────────────────────────────────────
 
