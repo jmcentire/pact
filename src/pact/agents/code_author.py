@@ -45,7 +45,15 @@ Key principles:
   them directly by name (e.g., `from src.module import compute; compute(...)`)
 - Write clean, readable code
 - ALL log statements must include the PACT log key for production traceability
-- Use the provided log key preamble at the top of every module"""
+- Use the provided log key preamble at the top of every module
+- IMPORTANT: If using Pydantic, use Pydantic v2 API exclusively:
+  - Use `model_validator` / `field_validator` decorators, NOT `@validator` / `@root_validator`
+  - Use `model_config = ConfigDict(...)`, NOT inner `class Config:`
+  - Use `Field(pattern=...)`, NOT `Field(regex=...)`
+  - Import from `pydantic` directly, NOT from `pydantic.main`, `pydantic.error_wrappers`, etc.
+  - Use `model_dump()` / `model_validate()`, NOT `.dict()` / `.parse_obj()`
+  - field_validator does NOT accept `always=True` — remove it
+  - Do NOT import `ModelMetaclass`, `flatten_errors`, or other v1 internals"""
 
 
 class ImplementationResult:

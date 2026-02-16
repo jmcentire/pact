@@ -296,9 +296,23 @@ async def implement_component(
 
         # Collect failure descriptions for next attempt (fresh agent gets these)
         for failure in test_results.failure_details:
-            prior_failures.append(
-                f"Test '{failure.test_id}': {failure.error_message}"
-            )
+            detail = f"Test '{failure.test_id}': {failure.error_message}"
+            # Include actual error from stderr when message is generic
+            # (e.g., import crashes that show "Failed to collect tests")
+            if failure.stderr and failure.error_message in (
+                "Failed to collect tests", "ERROR", "FAILED",
+            ):
+                # Extract the most relevant error lines from stderr
+                error_lines = [
+                    line for line in failure.stderr.splitlines()
+                    if any(kw in line for kw in (
+                        "Error", "error", "Import", "Module", "cannot",
+                        "No module", "Traceback", "raise", "invalid",
+                    ))
+                ]
+                if error_lines:
+                    detail += "\n  Actual error:\n  " + "\n  ".join(error_lines[-5:])
+            prior_failures.append(detail)
 
         logger.warning(
             "Component %s failed %d/%d tests on attempt %d",
