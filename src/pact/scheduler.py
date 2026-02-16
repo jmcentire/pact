@@ -420,6 +420,22 @@ class Scheduler:
                         for cid in tree.topological_order()
                     ]
 
+                    # Auto-generate task list
+                    try:
+                        from pact.task_list import generate_task_list
+                        contracts = self.project.load_all_contracts()
+                        test_suites = self.project.load_all_test_suites()
+                        task_list = generate_task_list(
+                            tree, contracts, test_suites,
+                            self.project.project_dir.name,
+                        )
+                        self.project.save_task_list(task_list)
+                        self.project.append_audit(
+                            "tasks_generated", f"{task_list.total} tasks",
+                        )
+                    except Exception as e:
+                        logger.debug("Task list generation failed: %s", e)
+
                 pcfg = resolve_parallel_config(self.project_config, self.global_config)
                 if pcfg.plan_only:
                     # Plan-only mode: stop after contracts + tests are generated
@@ -511,6 +527,21 @@ class Scheduler:
                 await agent.close()
 
         # --- Common post-implementation logic (both paths) ---
+
+        # Update task list statuses
+        try:
+            from pact.task_list import update_task_status
+            task_list = self.project.load_task_list()
+            if task_list:
+                tree = self.project.load_tree()
+                if tree:
+                    for cid, r in results.items():
+                        node = tree.nodes.get(cid)
+                        impl_status = "tested" if r.all_passed else "failed"
+                        update_task_status(task_list, cid, impl_status)
+                    self.project.save_task_list(task_list)
+        except Exception as e:
+            logger.debug("Task list update failed: %s", e)
 
         # Check for systemic failure pattern
         systemic = detect_systemic_failure(results)
@@ -614,6 +645,18 @@ class Scheduler:
                 )
             finally:
                 await agent.close()
+
+        # Update task list statuses for integration results
+        try:
+            from pact.task_list import update_task_status
+            task_list = self.project.load_task_list()
+            if task_list:
+                for cid, r in results.items():
+                    impl_status = "tested" if r.all_passed else "failed"
+                    update_task_status(task_list, cid, impl_status)
+                self.project.save_task_list(task_list)
+        except Exception as e:
+            logger.debug("Task list update failed: %s", e)
 
         failed = [cid for cid, r in results.items() if not r.all_passed]
         if failed:
@@ -741,6 +784,19 @@ class Scheduler:
         )
         node.test_results = test_results
         self.project.save_tree(tree)
+
+        # Update task list statuses
+        try:
+            from pact.task_list import update_task_status
+            task_list = self.project.load_task_list()
+            if task_list:
+                update_task_status(
+                    task_list, component_id,
+                    node.implementation_status,
+                )
+                self.project.save_task_list(task_list)
+        except Exception as e:
+            logger.debug("Task list update failed: %s", e)
 
         self.project.append_audit(
             "build",

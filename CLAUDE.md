@@ -12,6 +12,10 @@ pact status <project-dir>          # Show state
 pact components <project-dir>      # List components
 pact build <project-dir> <id>      # Build specific component
 pact run <project-dir>             # Execute pipeline
+pact tasks <project-dir>           # Generate/display task list
+pact analyze <project-dir>         # Cross-artifact analysis
+pact checklist <project-dir>       # Requirements quality checklist
+pact export-tasks <project-dir>    # Export TASKS.md
 ```
 
 **Entry point**: `pact = "pact.cli:main"` (pyproject.toml)
@@ -80,6 +84,12 @@ src/pact/
   interface_stub.py    # Interface stub generation + log key preamble
   cli.py               # CLI entry points
 
+  # Spec-kit capabilities (task list, analysis, checklist)
+  schemas_tasks.py     # Task list, analysis, checklist Pydantic models
+  task_list.py         # Task list generation + rendering (mechanical, no LLM)
+  analyzer.py          # Cross-artifact consistency analysis (mechanical)
+  checklist_gen.py     # Requirements quality checklist generation (mechanical)
+
   # Monitoring subsystem
   schemas_monitoring.py # Monitoring models (Signal, Incident, MonitoringBudget, etc.)
   signals.py           # Signal ingestion (LogTailer, ProcessWatcher, WebhookReceiver)
@@ -124,6 +134,9 @@ src/pact/
     decomposition/     # Tree + decisions
     contracts/         # Per-component contracts + tests
     implementations/   # Per-component code + attempts/
+    tasks.json         # Phased task list (auto-generated after decomposition)
+    analysis.json      # Cross-artifact analysis report
+    checklist.json     # Requirements quality checklist
     compositions/      # Integration glue
     learnings/         # Accumulated learnings
     monitoring/        # Incidents, budget state, diagnostic reports
@@ -145,6 +158,27 @@ src/pact/
 | `Incident` | Tracked production error with lifecycle (detected→triaging→remediating→resolved/escalated) |
 | `MonitoringBudget` | Multi-window spend caps (per-incident, hourly, daily, weekly, monthly) |
 | `Signal` | Raw error signal from log file, process, webhook, or manual report |
+| `TaskList` | Phased task list with dependency-aware ready_tasks() |
+| `AnalysisReport` | Cross-artifact consistency findings (errors, warnings, info) |
+| `RequirementsChecklist` | Quality validation questions with tri-state answers |
+
+## Task List & Analysis Commands
+
+```bash
+pact tasks <project-dir>                   # Generate/display phased task list
+pact tasks <project-dir> --regenerate      # Force regeneration
+pact tasks <project-dir> --phase setup     # Filter by phase
+pact tasks <project-dir> --component auth  # Filter by component
+pact tasks <project-dir> --complete T001   # Mark task as completed
+pact tasks <project-dir> --json            # Output as JSON
+pact analyze <project-dir>                 # Run cross-artifact analysis
+pact analyze <project-dir> --json          # Output as JSON
+pact checklist <project-dir>               # Generate requirements checklist
+pact checklist <project-dir> --json        # Output as JSON
+pact export-tasks <project-dir>            # Export TASKS.md
+```
+
+The task list is auto-generated after decomposition and auto-updated after each implementation/integration phase.
 
 ## Monitoring Commands
 

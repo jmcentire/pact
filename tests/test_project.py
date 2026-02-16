@@ -282,3 +282,111 @@ class TestDesignDoc:
 
     def test_load_missing(self, tmp_project: ProjectManager):
         assert tmp_project.load_design_doc() is None
+
+
+class TestTaskListPersistence:
+    def test_save_and_load_roundtrip(self, tmp_project: ProjectManager):
+        from pact.schemas_tasks import TaskItem, TaskList, TaskPhase, TaskStatus
+
+        tl = TaskList(
+            project_id="test",
+            tasks=[
+                TaskItem(id="T001", phase=TaskPhase.setup, description="Init"),
+                TaskItem(id="T002", phase=TaskPhase.component, description="Build",
+                         component_id="auth", status=TaskStatus.completed),
+            ],
+        )
+        tmp_project.save_task_list(tl)
+        loaded = tmp_project.load_task_list()
+        assert loaded is not None
+        assert loaded.project_id == "test"
+        assert loaded.total == 2
+        assert loaded.completed == 1
+
+    def test_saves_json_file(self, tmp_project: ProjectManager):
+        from pact.schemas_tasks import TaskList
+
+        tl = TaskList(project_id="test")
+        tmp_project.save_task_list(tl)
+        assert tmp_project.tasks_json_path.exists()
+
+    def test_saves_markdown_file(self, tmp_project: ProjectManager):
+        from pact.schemas_tasks import TaskList
+
+        tl = TaskList(project_id="test")
+        tmp_project.save_task_list(tl)
+        assert tmp_project.tasks_md_path.exists()
+        md = tmp_project.tasks_md_path.read_text()
+        assert "# TASKS" in md
+
+    def test_load_missing(self, tmp_project: ProjectManager):
+        assert tmp_project.load_task_list() is None
+
+    def test_paths(self, tmp_project: ProjectManager):
+        assert tmp_project.tasks_json_path.name == "tasks.json"
+        assert tmp_project.tasks_md_path.name == "TASKS.md"
+
+
+class TestAnalysisPersistence:
+    def test_save_and_load_roundtrip(self, tmp_project: ProjectManager):
+        from pact.schemas_tasks import (
+            AnalysisFinding, AnalysisReport, FindingCategory, FindingSeverity,
+        )
+
+        report = AnalysisReport(
+            project_id="test",
+            findings=[
+                AnalysisFinding(
+                    id="F001", severity=FindingSeverity.error,
+                    category=FindingCategory.coverage_gap,
+                    description="Missing contract",
+                ),
+            ],
+            summary="1 error",
+        )
+        tmp_project.save_analysis(report)
+        loaded = tmp_project.load_analysis()
+        assert loaded is not None
+        assert loaded.project_id == "test"
+        assert len(loaded.findings) == 1
+        assert loaded.summary == "1 error"
+
+    def test_load_missing(self, tmp_project: ProjectManager):
+        assert tmp_project.load_analysis() is None
+
+    def test_path(self, tmp_project: ProjectManager):
+        assert tmp_project.analysis_path.name == "analysis.json"
+
+
+class TestChecklistPersistence:
+    def test_save_and_load_roundtrip(self, tmp_project: ProjectManager):
+        from pact.schemas_tasks import (
+            ChecklistCategory, ChecklistItem, RequirementsChecklist,
+        )
+
+        cl = RequirementsChecklist(
+            project_id="test",
+            items=[
+                ChecklistItem(
+                    id="C001", category=ChecklistCategory.requirements,
+                    question="Is req clear?", satisfied=True,
+                ),
+                ChecklistItem(
+                    id="C002", category=ChecklistCategory.edge_cases,
+                    question="Edge case?",
+                ),
+            ],
+        )
+        tmp_project.save_checklist(cl)
+        loaded = tmp_project.load_checklist()
+        assert loaded is not None
+        assert loaded.project_id == "test"
+        assert len(loaded.items) == 2
+        assert loaded.satisfied_count == 1
+        assert loaded.unanswered == 1
+
+    def test_load_missing(self, tmp_project: ProjectManager):
+        assert tmp_project.load_checklist() is None
+
+    def test_path(self, tmp_project: ProjectManager):
+        assert tmp_project.checklist_path.name == "checklist.json"
