@@ -115,25 +115,34 @@ def validate_and_fix_exports(
     if not required:
         return []
 
-    # Collect all defined names across implementation files
+    # Collect all defined names across ALL implementation files
     py_files = list(src_dir.rglob("*.py"))
     if not py_files:
         return required  # No files at all
 
-    # Find the main module file (component_id.py or first .py file)
+    # Scan all files for defined names (the component may use packages)
+    all_defined: set[str] = set()
+    for f in py_files:
+        all_defined |= _find_defined_names(f.read_text())
+
+    # Find the main module file for alias injection
     main_file = None
     component_module = contract.component_id.replace("-", "_")
-    for f in py_files:
-        if f.name == f"{component_module}.py":
-            main_file = f
-            break
+
+    # Priority: component_name/__init__.py > component_name.py > first non-init > first
+    pkg_init = src_dir / component_module / "__init__.py"
+    if pkg_init.exists():
+        main_file = pkg_init
     if not main_file:
-        # Try any non-__init__ file, then __init__
+        for f in py_files:
+            if f.name == f"{component_module}.py":
+                main_file = f
+                break
+    if not main_file:
         non_init = [f for f in py_files if f.name != "__init__.py"]
         main_file = non_init[0] if non_init else py_files[0]
 
-    source = main_file.read_text()
-    defined = _find_defined_names(source)
+    defined = all_defined
 
     # Check what's missing
     missing = [name for name in required if name not in defined]
@@ -155,14 +164,15 @@ def validate_and_fix_exports(
             still_missing.append(name)
 
     if aliases:
-        # Inject aliases at the end of the file
+        # Inject aliases at the end of the main module file
+        main_source = main_file.read_text()
         alias_block = (
             "\n\n# ── Auto-injected export aliases (Pact export gate) ──\n"
             + "\n".join(aliases)
             + "\n"
         )
-        source += alias_block
-        main_file.write_text(source)
+        main_source += alias_block
+        main_file.write_text(main_source)
         logger.info(
             "Injected %d export aliases into %s", len(aliases), main_file.name,
         )
