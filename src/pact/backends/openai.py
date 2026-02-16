@@ -135,13 +135,20 @@ class OpenAIBackend:
 def _prepare_strict_schema(schema: dict) -> None:
     """Recursively prepare a JSON schema for OpenAI strict mode.
 
-    Strict mode requires additionalProperties: false on all objects
-    and all properties must be listed in 'required'.
+    Strict mode requires:
+    - additionalProperties: false on all objects
+    - ALL properties listed in 'required' (not just non-default ones)
+    - Optional fields use anyOf with null type instead of being absent from required
     """
     if schema.get("type") == "object" and "properties" in schema:
         schema["additionalProperties"] = False
-        if "required" not in schema:
-            schema["required"] = list(schema["properties"].keys())
+        # Strict mode: ALL properties must be in required
+        schema["required"] = list(schema["properties"].keys())
+
+        # Convert optional fields (those with defaults) to accept null
+        for prop_name, prop_schema in schema["properties"].items():
+            if isinstance(prop_schema, dict) and "default" in prop_schema:
+                _make_nullable(prop_schema)
 
     # Handle $defs
     for defn in schema.get("$defs", {}).values():
@@ -154,3 +161,30 @@ def _prepare_strict_schema(schema: dict) -> None:
             # Handle array items
             if "items" in prop and isinstance(prop["items"], dict):
                 _prepare_strict_schema(prop["items"])
+            # Handle anyOf/oneOf variants
+            for variant_key in ("anyOf", "oneOf"):
+                for variant in prop.get(variant_key, []):
+                    if isinstance(variant, dict):
+                        _prepare_strict_schema(variant)
+
+
+def _make_nullable(prop: dict) -> None:
+    """Make a property schema accept null values for strict mode compatibility."""
+    if "anyOf" in prop:
+        # Already has anyOf — add null type if not present
+        null_types = [v for v in prop["anyOf"] if v == {"type": "null"}]
+        if not null_types:
+            prop["anyOf"].append({"type": "null"})
+    elif "type" in prop:
+        current_type = prop["type"]
+        if isinstance(current_type, list):
+            if "null" not in current_type:
+                current_type.append("null")
+        elif current_type != "null":
+            # Convert type to anyOf with null
+            prop_copy = {k: v for k, v in prop.items() if k != "default"}
+            prop.clear()
+            prop["anyOf"] = [prop_copy, {"type": "null"}]
+            # Restore default
+            if "default" in prop_copy:
+                prop["default"] = prop_copy.pop("default")
