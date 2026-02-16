@@ -80,12 +80,32 @@ class OpenAIBackend:
         tool_schema = schema.model_json_schema()
         tool_schema.pop("title", None)
 
-        # Try strict mode first; fall back to non-strict if schema is incompatible
-        # (e.g., free-form dicts like dict[str, str] can't use strict mode)
+        # Check if schema is compatible with strict mode
         use_strict = _is_strict_compatible(tool_schema)
         if use_strict:
             _prepare_strict_schema(tool_schema)
 
+        # For non-strict schemas (free-form dicts), use json_object mode
+        # instead of tool_choice since GPT-4o ignores non-strict tool schemas
+        if use_strict:
+            return await self._assess_tool_choice(
+                schema, tool_name, tool_schema, prompt, system, max_tokens,
+            )
+        else:
+            return await self._assess_json_mode(
+                schema, tool_name, tool_schema, prompt, system, max_tokens,
+            )
+
+    async def _assess_tool_choice(
+        self,
+        schema: type[T],
+        tool_name: str,
+        tool_schema: dict,
+        prompt: str,
+        system: str,
+        max_tokens: int,
+    ) -> tuple[T, int, int]:
+        """Structured output via tool_choice with strict mode."""
         for attempt in range(3):
             try:
                 response = await self._client.chat.completions.create(
@@ -101,7 +121,7 @@ class OpenAIBackend:
                             "name": tool_name,
                             "description": schema.__doc__ or f"Extract {tool_name}",
                             "parameters": tool_schema,
-                            **({"strict": True} if use_strict else {}),
+                            "strict": True,
                         },
                     }],
                     tool_choice={
@@ -122,7 +142,6 @@ class OpenAIBackend:
             if not self._budget.record_tokens(in_tok, out_tok):
                 raise BudgetExceeded(f"Budget exceeded after {in_tok}+{out_tok} tokens")
 
-            # Extract tool call
             message = response.choices[0].message
             if not message.tool_calls:
                 if attempt < 2:
@@ -137,6 +156,59 @@ class OpenAIBackend:
             except (json.JSONDecodeError, ValidationError) as e:
                 if attempt < 2:
                     logger.warning("Parse error (attempt %d): %s", attempt + 1, e)
+                    continue
+                raise
+
+        raise RuntimeError(f"Failed to get valid {tool_name} after 3 attempts")
+
+    async def _assess_json_mode(
+        self,
+        schema: type[T],
+        tool_name: str,
+        tool_schema: dict,
+        prompt: str,
+        system: str,
+        max_tokens: int,
+    ) -> tuple[T, int, int]:
+        """Structured output via json_object response format for non-strict schemas."""
+        schema_instruction = (
+            f"\n\nRespond with a JSON object matching this schema:\n"
+            f"```json\n{json.dumps(tool_schema, indent=2)}\n```\n"
+            f"Return ONLY valid JSON, no markdown fences or explanation."
+        )
+
+        for attempt in range(3):
+            try:
+                response = await self._client.chat.completions.create(
+                    model=self._model,
+                    max_tokens=max_tokens,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": prompt + schema_instruction},
+                    ],
+                    response_format={"type": "json_object"},
+                )
+            except Exception as e:
+                if attempt < 2:
+                    logger.warning("OpenAI API error (attempt %d): %s", attempt + 1, e)
+                    continue
+                raise
+
+            usage = response.usage
+            in_tok = usage.prompt_tokens if usage else 0
+            out_tok = usage.completion_tokens if usage else 0
+
+            if not self._budget.record_tokens(in_tok, out_tok):
+                raise BudgetExceeded(f"Budget exceeded after {in_tok}+{out_tok} tokens")
+
+            content = response.choices[0].message.content or ""
+            try:
+                raw = json.loads(content)
+                parsed = schema.model_validate(raw)
+                return parsed, in_tok, out_tok
+            except (json.JSONDecodeError, ValidationError) as e:
+                if attempt < 2:
+                    logger.warning("JSON parse error (attempt %d): %s", attempt + 1, e)
                     continue
                 raise
 
