@@ -10,6 +10,7 @@ from pact.implementer import (
     _fix_pydantic_v1_patterns,
     _fuzzy_match,
     _sanitize_filename,
+    _to_snake_case,
     validate_and_fix_exports,
 )
 from pact.interface_stub import get_required_exports
@@ -364,3 +365,51 @@ class TestFixPydanticV1Patterns:
         assert "Extra.forbid" not in fixed
         assert "regex=" not in fixed
         assert len(changes) >= 3
+
+    def test_fixes_root_validator(self):
+        source = (
+            'from pydantic import BaseModel, root_validator\n'
+            'class Foo(BaseModel):\n'
+            '    @root_validator\n'
+            '    def check(cls, values):\n'
+            '        return values\n'
+        )
+        fixed, changes = _fix_pydantic_v1_patterns(source)
+        assert "@model_validator(mode='after')" in fixed
+        assert "@root_validator" not in fixed
+        assert changes
+
+    def test_adds_missing_configdict_import(self):
+        source = (
+            'from pydantic import BaseModel\n'
+            'class Foo(BaseModel):\n'
+            '    model_config = ConfigDict(frozen=True)\n'
+        )
+        fixed, changes = _fix_pydantic_v1_patterns(source)
+        assert "from pydantic import ConfigDict" in fixed
+        assert changes
+
+    def test_adds_missing_deepcopy_import(self):
+        source = 'x = deepcopy(y)\n'
+        fixed, changes = _fix_pydantic_v1_patterns(source)
+        assert "from copy import deepcopy" in fixed
+        assert changes
+
+
+class TestSnakeCaseMatch:
+    """Test PascalCase ↔ snake_case fuzzy matching."""
+
+    def test_to_snake_case(self):
+        assert _to_snake_case("ReportGenerator") == "report_generator"
+        assert _to_snake_case("RequestRouter") == "request_router"
+        assert _to_snake_case("FineTuneBackend") == "fine_tune_backend"
+        assert _to_snake_case("already_snake") == "already_snake"
+
+    def test_fuzzy_match_pascal_to_snake(self):
+        assert _fuzzy_match("ReportGenerator", {"report_generator"}) == "report_generator"
+
+    def test_fuzzy_match_snake_to_pascal(self):
+        assert _fuzzy_match("request_router", {"RequestRouter"}) == "RequestRouter"
+
+    def test_fuzzy_match_underscore_stripped(self):
+        assert _fuzzy_match("FineTuneBackend", {"fine_tune_backend"}) == "fine_tune_backend"

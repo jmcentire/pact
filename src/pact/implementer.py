@@ -99,13 +99,61 @@ def _fix_pydantic_v1_patterns(source: str) -> tuple[str, list[str]]:
             source = "from enum import Enum\n" + source
         changes.append("replaced BaseModelMetaclass with Enum")
 
-    # 6. Replace condecimal/constr/conint with Annotated equivalents
-    #    (These may still work in v2 but can cause issues)
-    for v1_type in ("condecimal", "constr", "conint", "confloat"):
-        if v1_type in source and f"from pydantic import" in source:
-            # Just remove from import — usage will cause clear errors
-            # that the code author can fix on retry
-            pass  # Leave for retry with better error messages
+    # 6. Fix @root_validator usage (crashes in v2 without parens/mode)
+    if "@root_validator" in source:
+        # Replace @root_validator(pre=True) with @model_validator(mode='before')
+        source = _re.sub(
+            r"@root_validator\s*\(\s*pre\s*=\s*True\s*\)",
+            "@model_validator(mode='before')",
+            source,
+        )
+        # Replace bare @root_validator or @root_validator() with @model_validator(mode='after')
+        source = _re.sub(
+            r"@root_validator\s*(?:\(\s*\))?(?=\s*\n)",
+            "@model_validator(mode='after')",
+            source,
+        )
+        # Fix imports: replace root_validator with model_validator
+        source = _re.sub(
+            r"\broot_validator\b(?=\s*[,\)])",
+            "model_validator",
+            source,
+            count=1,  # Only fix the import line
+        )
+        changes.append("replaced @root_validator with @model_validator")
+
+    # 7. Auto-add missing imports for commonly used names
+    _common_imports = {
+        "ConfigDict": ("pydantic", "ConfigDict"),
+        "field_validator": ("pydantic", "field_validator"),
+        "model_validator": ("pydantic", "model_validator"),
+        "deepcopy": ("copy", "deepcopy"),
+    }
+    for name, (module, symbol) in _common_imports.items():
+        if name in source:
+            # Check if it's actually imported
+            import_patterns = [
+                f"from {module} import",
+                f"import {module}",
+            ]
+            if not any(p in source for p in import_patterns if name in source.split(p)[-1].split("\n")[0] if p in source):
+                # More robust check: is the name used but not in any import line?
+                lines = source.split("\n")
+                imported = False
+                for line in lines:
+                    if ("import" in line and name in line and
+                            not line.strip().startswith("#")):
+                        imported = True
+                        break
+                if not imported:
+                    # Add the import at the top (after any __future__ imports)
+                    future_end = 0
+                    for i, line in enumerate(lines):
+                        if "from __future__" in line:
+                            future_end = i + 1
+                    lines.insert(future_end, f"from {module} import {symbol}")
+                    source = "\n".join(lines)
+                    changes.append(f"added missing import: from {module} import {symbol}")
 
     return source, changes
 
@@ -147,10 +195,19 @@ def _find_defined_names(source: str) -> set[str]:
     return names
 
 
+def _to_snake_case(name: str) -> str:
+    """Convert PascalCase/camelCase to snake_case for comparison."""
+    import re as _re
+    # Insert underscore before uppercase letters that follow lowercase
+    s = _re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
+    return s.lower()
+
+
 def _fuzzy_match(missing_name: str, available: set[str]) -> str | None:
     """Find a likely match for a missing export name.
 
-    Checks: exact case-insensitive match, then word-boundary substring match.
+    Checks: exact case-insensitive match, PascalCase↔snake_case match,
+    then word-boundary substring match.
     Returns the best matching defined name, or None.
 
     Requires the shorter name to be at least 4 characters and cover at least
@@ -161,6 +218,18 @@ def _fuzzy_match(missing_name: str, available: set[str]) -> str | None:
     # Exact case-insensitive match
     for name in available:
         if name.lower() == missing_lower:
+            return name
+
+    # PascalCase ↔ snake_case match
+    missing_snake = _to_snake_case(missing_name)
+    for name in available:
+        if _to_snake_case(name) == missing_snake:
+            return name
+
+    # Underscore-stripped match (PascalCase vs snake_case without underscores)
+    missing_no_underscore = missing_lower.replace("_", "")
+    for name in available:
+        if name.lower().replace("_", "") == missing_no_underscore:
             return name
 
     # Substring matching with quality threshold
