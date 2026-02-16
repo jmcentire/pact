@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from pact.budget import BudgetTracker
-from pact.config import GlobalConfig, ProjectConfig
+from pact.config import GlobalConfig, ProjectConfig, resolve_backend
 from pact.project import ProjectManager
 from pact.scheduler import Scheduler
 from pact.schemas import RunState
@@ -73,3 +73,44 @@ class TestSchedulerRunState:
         import asyncio
         result = asyncio.run(scheduler.run_once())
         assert result.status == "budget_exceeded"
+
+
+class TestSchedulerBackendRouting:
+    """Test that the scheduler routes to iterative vs API-based paths."""
+
+    def test_default_claude_code_backend(self):
+        """Default global config has code_author = claude_code."""
+        gc = GlobalConfig()
+        pc = ProjectConfig()
+        backend = resolve_backend("code_author", pc, gc)
+        assert backend == "claude_code"
+
+    def test_project_override_to_anthropic(self):
+        """Project config can override code_author backend."""
+        gc = GlobalConfig()
+        pc = ProjectConfig(role_backends={"code_author": "anthropic"})
+        backend = resolve_backend("code_author", pc, gc)
+        assert backend == "anthropic"
+
+    def test_project_override_to_openai(self):
+        """Project config can override code_author to openai."""
+        gc = GlobalConfig()
+        pc = ProjectConfig(role_backends={"code_author": "openai"})
+        backend = resolve_backend("code_author", pc, gc)
+        assert backend == "openai"
+
+    def test_claude_code_team_detected(self):
+        """claude_code_team backend should also trigger iterative path."""
+        gc = GlobalConfig(role_backends={
+            **GlobalConfig().role_backends,
+            "code_author": "claude_code_team",
+        })
+        pc = ProjectConfig()
+        backend = resolve_backend("code_author", pc, gc)
+        assert backend == "claude_code_team"
+
+    def test_iterative_imports_available(self):
+        """Verify the iterative implementation functions are importable from scheduler."""
+        from pact.scheduler import implement_all_iterative, implement_component_iterative
+        assert callable(implement_all_iterative)
+        assert callable(implement_component_iterative)

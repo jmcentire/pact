@@ -479,6 +479,160 @@ async def implement_component(
     return test_results
 
 
+async def implement_component_iterative(
+    project: ProjectManager,
+    component_id: str,
+    contract: ComponentContract,
+    test_suite: ContractTestSuite,
+    budget: object,  # BudgetTracker
+    model: str = "claude-opus-4-6",
+    dependency_contracts: dict[str, ComponentContract] | None = None,
+    sops: str = "",
+    external_context: str = "",
+    learnings: str = "",
+    max_turns: int = 30,
+    timeout: int = 600,
+) -> TestResults:
+    """Implement a component using iterative Claude Code (write -> test -> fix).
+
+    Instead of the API-based research->plan->code pipeline with blind retries,
+    gives Claude Code full tool access to write code, run tests, read errors,
+    and iterate within a single session. This is how a human developer works.
+
+    Args:
+        project: ProjectManager for file paths.
+        component_id: Component to implement.
+        contract: The ComponentContract.
+        test_suite: Tests to pass.
+        budget: BudgetTracker for spend accounting.
+        model: Model to use for the Claude Code session.
+        dependency_contracts: Contracts of dependencies.
+        sops: Standard operating procedures.
+        external_context: Context from integrations.
+        learnings: Learnings from prior runs.
+        max_turns: Maximum agentic turns for the session.
+        timeout: Maximum wall-clock seconds.
+
+    Returns:
+        TestResults from running contract tests after implementation.
+    """
+    from pact.interface_stub import render_handoff_brief
+    from pact.backends.claude_code import ClaudeCodeBackend
+
+    # Build the handoff brief
+    all_contracts = dict(dependency_contracts or {})
+    all_contracts[contract.component_id] = contract
+
+    handoff = render_handoff_brief(
+        component_id=contract.component_id,
+        contract=contract,
+        contracts=all_contracts,
+        test_suite=test_suite,
+        sops=sops,
+        external_context=external_context,
+        learnings=learnings,
+    )
+
+    # Write test file so the agent can run it
+    test_file = project.test_code_path(component_id)
+    if not test_file.exists() and test_suite.generated_code:
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text(test_suite.generated_code)
+
+    src_dir = project.impl_src_dir(component_id)
+    src_dir.mkdir(parents=True, exist_ok=True)
+
+    module_name = contract.component_id.replace("-", "_")
+
+    prompt = f"""You are implementing a software component. Here is your complete handoff brief:
+
+{handoff}
+
+## Your Task
+
+Implement this component so ALL tests pass. You have full tool access.
+
+1. Read the test file: {test_file}
+2. Write your implementation in: {src_dir}/
+3. The main module should be: {src_dir}/{module_name}.py
+4. Run tests: python3 -m pytest {test_file} -v
+5. If tests fail, read the errors, fix your code, and re-run
+6. Keep iterating until ALL tests pass
+
+Rules:
+- All type names and function signatures must match the contract EXACTLY
+- Use Pydantic v2 API (model_validator, field_validator, ConfigDict, pattern= not regex=)
+- Handle all error cases from the contract
+- Do NOT use __all__ — just define the names at module level
+- The test file imports from src/{module_name} — your module must be importable from there
+"""
+
+    logger.info("Implementing %s iteratively via Claude Code (%s)", component_id, model)
+
+    backend = ClaudeCodeBackend(
+        budget=budget,
+        model=model,
+        repo_path=project.project_dir,
+        timeout=timeout,
+    )
+
+    try:
+        await backend.implement(
+            prompt=prompt,
+            working_dir=project.project_dir,
+            max_turns=max_turns,
+            timeout=timeout,
+        )
+    except Exception as e:
+        logger.error("Iterative implementation failed for %s: %s", component_id, e)
+
+    # Belt-and-suspenders: apply Pydantic v1→v2 post-processing
+    for py_file in src_dir.rglob("*.py"):
+        try:
+            original = py_file.read_text()
+            fixed, fixes = _fix_pydantic_v1_patterns(original)
+            if fixes:
+                py_file.write_text(fixed)
+                logger.info(
+                    "Post-fixed Pydantic patterns in %s: %s",
+                    py_file.name, "; ".join(fixes),
+                )
+        except Exception:
+            pass
+
+    # Export validation gate
+    validate_and_fix_exports(src_dir, contract)
+
+    # Save metadata
+    project.save_impl_metadata(component_id, {
+        "attempt": 1,
+        "timestamp": datetime.now().isoformat(),
+        "method": "iterative_claude_code",
+        "model": model,
+    })
+
+    project.append_audit(
+        "implementation",
+        f"{component_id} iterative claude_code ({model})",
+    )
+
+    # Run contract tests for official results
+    test_results = await run_contract_tests(test_file, src_dir)
+    project.save_test_results(component_id, test_results)
+
+    project.append_audit(
+        "test_run",
+        f"{component_id}: {test_results.passed}/{test_results.total} passed",
+    )
+
+    logger.info(
+        "Component %s iterative result: %d/%d passed",
+        component_id, test_results.passed, test_results.total,
+    )
+
+    return test_results
+
+
 async def implement_component_interactive(
     team_backend: object,  # ClaudeCodeTeamBackend
     project: ProjectManager,
@@ -739,6 +893,114 @@ async def implement_component_competitive(
     project.promote_attempt(component_id, winner.attempt_id)
 
     return winner.test_results
+
+
+async def implement_all_iterative(
+    project: ProjectManager,
+    tree: DecompositionTree,
+    budget: object,  # BudgetTracker
+    model: str = "claude-opus-4-6",
+    sops: str = "",
+    parallel: bool = False,
+    max_concurrent: int = 4,
+    target_components: set[str] | None = None,
+    external_context: str = "",
+    learnings: str = "",
+    max_turns: int = 30,
+    timeout: int = 600,
+) -> dict[str, TestResults]:
+    """Implement all leaf components using iterative Claude Code sessions.
+
+    Each component gets its own Claude Code session with full tool access
+    that can write code, run tests, read errors, and fix — iteratively.
+
+    Args:
+        project: ProjectManager.
+        tree: Decomposition tree.
+        budget: BudgetTracker for spend accounting.
+        model: Model for Claude Code sessions.
+        sops: Standard operating procedures text.
+        parallel: If True, implement independent leaves concurrently.
+        max_concurrent: Maximum concurrent Claude Code sessions.
+        target_components: If set, only implement these component IDs.
+        external_context: Context from integrations.
+        learnings: Learnings from prior runs.
+        max_turns: Max agentic turns per component session.
+        timeout: Max wall-clock seconds per component.
+
+    Returns:
+        Dict of component_id -> TestResults.
+    """
+    contracts = project.load_all_contracts()
+    test_suites = project.load_all_test_suites()
+    results: dict[str, TestResults] = {}
+
+    # Determine which leaves to implement
+    leaf_ids = [n.component_id for n in tree.leaves()]
+    if target_components:
+        leaf_ids = [cid for cid in leaf_ids if cid in target_components]
+
+    implementable: list[str] = []
+    for cid in leaf_ids:
+        if cid not in contracts:
+            logger.warning("No contract for %s, skipping", cid)
+            continue
+        if cid not in test_suites:
+            logger.warning("No test suite for %s, skipping", cid)
+            continue
+        implementable.append(cid)
+
+    async def _impl_one(component_id: str) -> tuple[str, TestResults]:
+        contract = contracts[component_id]
+        dep_contracts = {
+            dep_id: contracts[dep_id]
+            for dep_id in contract.dependencies
+            if dep_id in contracts
+        }
+        test_results = await implement_component_iterative(
+            project=project,
+            component_id=component_id,
+            contract=contract,
+            test_suite=test_suites[component_id],
+            budget=budget,
+            model=model,
+            dependency_contracts=dep_contracts or None,
+            sops=sops,
+            external_context=external_context,
+            learnings=learnings,
+            max_turns=max_turns,
+            timeout=timeout,
+        )
+        return component_id, test_results
+
+    if parallel and len(implementable) > 1:
+        sem = asyncio.Semaphore(max_concurrent)
+
+        async def _guarded(cid: str) -> tuple[str, TestResults]:
+            async with sem:
+                return await _impl_one(cid)
+
+        gather_results = await asyncio.gather(
+            *[_guarded(cid) for cid in implementable]
+        )
+        for component_id, test_results in gather_results:
+            results[component_id] = test_results
+    else:
+        for component_id in implementable:
+            _, test_results = await _impl_one(component_id)
+            results[component_id] = test_results
+
+    # Update tree node statuses
+    for component_id, test_results in results.items():
+        node = tree.nodes.get(component_id)
+        if node:
+            node.implementation_status = (
+                "tested" if test_results.all_passed else "failed"
+            )
+            node.test_results = test_results
+
+    project.save_tree(tree)
+    return results
 
 
 async def implement_all(
