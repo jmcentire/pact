@@ -195,7 +195,7 @@ def _render_type(t: TypeSpec) -> list[str]:
         if t.description:
             lines.append(f'    """{t.description}"""')
         for variant in t.variants:
-            lines.append(f'    {variant.upper()} = "{variant}"')
+            lines.append(f'    {variant} = "{variant}"')
         if not t.variants:
             lines.append("    pass")
         return lines
