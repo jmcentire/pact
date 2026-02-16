@@ -185,6 +185,28 @@ monitoring_error_patterns:
 
 Project config overrides global. Both are optional.
 
+### Multi-Provider Configuration
+
+Route different roles to different providers for cost optimization:
+
+```yaml
+budget: 50.00
+
+role_models:
+  decomposer: claude-opus-4-6        # Strong reasoning for architecture
+  contract_author: claude-opus-4-6    # Precision for interfaces
+  test_author: claude-sonnet-4-5-20250929  # Fast test generation
+  code_author: gpt-4o                # Cost-effective implementation
+
+role_backends:
+  decomposer: anthropic
+  contract_author: anthropic
+  test_author: anthropic
+  code_author: openai                # Mix providers per role
+```
+
+Available backends: `anthropic`, `openai`, `gemini`, `claude_code`, `claude_code_team`.
+
 ## Project Structure
 
 Each project is a self-contained directory:
@@ -210,7 +232,7 @@ my-project/
 
 ```bash
 make dev          # Install with LLM backend support
-make test         # Run full test suite (901 tests)
+make test         # Run full test suite (950 tests)
 make test-quick   # Stop on first failure
 make clean        # Remove venv and caches
 ```
