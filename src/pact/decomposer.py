@@ -68,15 +68,30 @@ different engineers to implement incompatible solutions."""
 
 # ── Decomposition ────────────────────────────────────────────────────
 
-DECOMPOSE_SYSTEM = """You are a software architect decomposing a task into components.
-Each component is a black box with clear inputs, outputs, and responsibilities.
+DECOMPOSE_SYSTEM = """You are a software architect deciding how to build a task.
 
-Key principles:
-- 2-7 components per decomposition level
-- Each component has a single, clear responsibility
+First, decide: should this task be implemented directly as a single module,
+or does it genuinely require multiple independent components?
+
+PREFER DIRECT IMPLEMENTATION (is_trivial=true) when:
+- The task can be handled by one well-structured module (<500 LOC)
+- All functionality shares the same data model and state
+- There are no truly independent subsystems
+- A single engineer could implement it in one session
+
+DECOMPOSE ONLY when:
+- The task has genuinely independent subsystems (e.g., auth + billing + notifications)
+- Components need different expertise or could be developed in parallel
+- The interfaces between subsystems are clean and natural
+
+If you decompose:
+- Each component is a black box with clear inputs, outputs, and responsibilities
 - Dependencies between components are explicit
 - Leaf components are small enough for one agent to implement
-- Trivial tasks (depth=0) have the task AS the component"""
+- Keep it shallow — prefer wider over deeper
+
+If the task should be implemented directly, set is_trivial=true and provide
+a single component with the full task description."""
 
 
 class DecompositionResult:
@@ -97,14 +112,29 @@ async def run_decomposition(
     interview: InterviewResult | None = None,
     sops: str = "",
     pitch_context: str = "",
+    build_mode: str = "auto",
 ) -> DecompositionResult:
     """Decompose a task into a component tree.
 
     Args:
         pitch_context: Optional shaping pitch context (from Shape Up phase).
             Injected into the decomposition prompt to guide component boundaries.
+        build_mode: "unary" skips LLM and returns single component,
+            "hierarchy" always decomposes, "auto" lets LLM decide.
     """
     from pydantic import BaseModel
+
+    # Unary mode: skip LLM, return single component with full task
+    if build_mode == "unary":
+        root_id = "root"
+        node = DecompositionNode(
+            component_id=root_id,
+            name="Main",
+            description=task,
+            depth=0,
+        )
+        tree = DecompositionTree(root_id=root_id, nodes={root_id: node})
+        return DecompositionResult(tree=tree, decisions=[])
 
     class DecomposeResponse(BaseModel):
         """Decomposition output."""
@@ -148,8 +178,11 @@ For each component provide:
 
 Also provide engineering decisions for any ambiguities resolved.
 
-If the task is trivial (single function, no decomposition needed),
-set is_trivial=true and provide a single component."""
+If the task can be implemented as a single well-structured module
+(even if it has multiple functions and types), set is_trivial=true
+and provide a single component with the full description.
+
+Complexity hint: task is ~{len(task.split())} words.{' This appears to be a single-concern task.' if len(task.split()) < 200 else ''}"""
 
     response, _, _ = await agent.assess(DecomposeResponse, prompt, DECOMPOSE_SYSTEM)
 
@@ -272,6 +305,7 @@ async def decompose_and_contract(
     project: ProjectManager,
     sops: str = "",
     max_plan_revisions: int = 2,
+    build_mode: str = "auto",
 ) -> GateResult:
     """Run the full decomposition -> contract -> test -> validate pipeline.
 
@@ -304,7 +338,7 @@ async def decompose_and_contract(
                 pass
 
         # Run fresh decomposition
-        decomp = await run_decomposition(agent, task, interview, sops, pitch_context=pitch_ctx)
+        decomp = await run_decomposition(agent, task, interview, sops, pitch_context=pitch_ctx, build_mode=build_mode)
         decomp_tree = decomp.tree
         decisions = decomp.decisions
         project.save_tree(decomp_tree)

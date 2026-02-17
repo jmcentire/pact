@@ -16,6 +16,7 @@ pact tasks <project-dir>           # Generate/display task list
 pact analyze <project-dir>         # Cross-artifact analysis
 pact checklist <project-dir>       # Requirements quality checklist
 pact export-tasks <project-dir>    # Export TASKS.md
+pact directive <project-dir> <json> # Send structured directive to daemon
 ```
 
 **Entry point**: `pact = "pact.cli:main"` (pyproject.toml)
@@ -47,6 +48,34 @@ Two independent levers:
 - `competitive_implementations: true` -- N agents implement same component, best wins
 - `plan_only: true` -- Stop after contracts, use `pact build` to target specific nodes
 - `max_concurrent_agents: 4` -- Concurrency limit for parallel modes
+
+### Build Modes
+
+Three build modes control decomposition behavior:
+
+```yaml
+# pact.yaml
+build_mode: auto    # unary | auto | hierarchy
+```
+
+- **unary**: Single agent session. Skips LLM decomposition, creates one component with the full task. Still produces contract+tests for verification.
+- **auto** (default): LLM decides whether to decompose or implement directly. Improved prompts genuinely encourage `is_trivial=true` for straightforward tasks.
+- **hierarchy**: Always decompose into multiple components (previous default behavior).
+
+Project config overrides global config. Set at runtime via directive:
+```bash
+pact directive ./my-proj '{"type": "set_mode", "mode": "unary"}'
+```
+
+### Global Standards
+
+After decomposition, pact automatically collects shared conventions from contracts:
+- Shared types (appearing in 2+ contracts)
+- Common validator patterns
+- Package requirements
+- Coding conventions from SOPs
+
+Standards are injected into every agent's handoff brief and persisted at `.pact/standards.json`.
 
 ### Production Monitoring & Auto-Remediation
 
@@ -82,6 +111,7 @@ src/pact/
   lifecycle.py         # Run state machine
   daemon.py            # Event-driven FIFO-based coordinator
   interface_stub.py    # Interface stub generation + log key preamble
+  standards.py         # Global standards collection + rendering
   cli.py               # CLI entry points
 
   # Spec-kit capabilities (task list, analysis, checklist)
@@ -134,6 +164,7 @@ src/pact/
     decomposition/     # Tree + decisions
     contracts/         # Per-component contracts + tests
     implementations/   # Per-component code + attempts/
+    standards.json     # Global standards (auto-generated after decomposition)
     tasks.json         # Phased task list (auto-generated after decomposition)
     analysis.json      # Cross-artifact analysis report
     checklist.json     # Requirements quality checklist
@@ -158,6 +189,9 @@ src/pact/
 | `Incident` | Tracked production error with lifecycle (detected→triaging→remediating→resolved/escalated) |
 | `MonitoringBudget` | Multi-window spend caps (per-incident, hourly, daily, weekly, monthly) |
 | `Signal` | Raw error signal from log file, process, webhook, or manual report |
+| `GlobalStandards` | Shared packages, types, conventions distributed to all agents |
+| `BuildMode` | StrEnum: unary, auto, hierarchy |
+| `Directive` | Structured FIFO command with type + payload |
 | `TaskList` | Phased task list with dependency-aware ready_tasks() |
 | `AnalysisReport` | Cross-artifact consistency findings (errors, warnings, info) |
 | `RequirementsChecklist` | Quality validation questions with tri-state answers |
@@ -180,6 +214,15 @@ pact export-tasks <project-dir>            # Export TASKS.md
 
 The task list is auto-generated after decomposition and auto-updated after each implementation/integration phase.
 
+## Directive Commands
+
+```bash
+pact directive <project-dir> resume                                        # Backward-compatible simple string
+pact directive <project-dir> '{"type": "set_mode", "mode": "unary"}'       # Change build mode at runtime
+pact directive <project-dir> '{"type": "set_config", "key": "value"}'      # Update config keys
+pact directive <project-dir> '{"type": "inject_context", "context": "..."}'# Inject context for next agent
+```
+
 ## Monitoring Commands
 
 ```bash
@@ -192,6 +235,6 @@ pact incident <project-dir> <id>      # Show incident details + diagnostic repor
 ## Testing
 
 ```bash
-make test          # 1000 tests, ~5s
+make test          # 1260 tests, ~5s
 make test-quick    # Stop on first failure
 ```

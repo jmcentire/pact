@@ -206,6 +206,11 @@ def main() -> None:
     p_checklist.add_argument("project_dir", help="Project directory path")
     p_checklist.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
 
+    # directive
+    p_directive = subparsers.add_parser("directive", help="Send structured directive to daemon")
+    p_directive.add_argument("project_dir", help="Project directory path")
+    p_directive.add_argument("json_or_command", help="JSON directive or simple command string")
+
     # export-tasks
     p_export = subparsers.add_parser("export-tasks", help="Export TASKS.md")
     p_export.add_argument("project_dir", help="Project directory path")
@@ -277,6 +282,8 @@ def main() -> None:
         cmd_analyze(args)
     elif args.command == "checklist":
         cmd_checklist(args)
+    elif args.command == "directive":
+        cmd_directive(args)
     elif args.command == "export-tasks":
         cmd_export_tasks(args)
 
@@ -1826,6 +1833,36 @@ def cmd_checklist(args: argparse.Namespace) -> None:
         return
 
     print(render_checklist_markdown(checklist))
+
+
+def cmd_directive(args: argparse.Namespace) -> None:
+    """Send a structured directive to the running daemon."""
+    from pact.daemon import check_daemon_health, send_signal
+
+    health = check_daemon_health(args.project_dir)
+    if not health["alive"]:
+        print("No daemon running. Start with: pact daemon <project-dir>")
+        return
+
+    raw = args.json_or_command.strip()
+    if raw.startswith("{"):
+        try:
+            directive = json.loads(raw)
+            if "type" not in directive:
+                print("Error: JSON directive must include a 'type' field.")
+                return
+            sent = send_signal(args.project_dir, directive=directive)
+        except json.JSONDecodeError as e:
+            print(f"Invalid JSON: {e}")
+            return
+    else:
+        # Simple string command (backward compatible)
+        sent = send_signal(args.project_dir, message=raw)
+
+    if sent:
+        print(f"Directive sent: {raw}")
+    else:
+        print("Failed to send directive (FIFO not found or daemon not listening)")
 
 
 def cmd_export_tasks(args: argparse.Namespace) -> None:

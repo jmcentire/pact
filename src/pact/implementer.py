@@ -449,17 +449,15 @@ async def implement_component(
         # Collect failure descriptions for next attempt (fresh agent gets these)
         for failure in test_results.failure_details:
             detail = f"Test '{failure.test_id}': {failure.error_message}"
-            # Include actual error from stderr when message is generic
-            # (e.g., import crashes that show "Failed to collect tests")
-            if failure.stderr and failure.error_message in (
-                "Failed to collect tests", "ERROR", "FAILED",
-            ):
+            # Include actual error from stderr unconditionally when available
+            if failure.stderr:
                 # Extract the most relevant error lines from stderr
                 error_lines = [
                     line for line in failure.stderr.splitlines()
                     if any(kw in line for kw in (
                         "Error", "error", "Import", "Module", "cannot",
                         "No module", "Traceback", "raise", "invalid",
+                        "assert", "Assert", "expected", "got",
                     ))
                 ]
                 if error_lines:
@@ -492,6 +490,8 @@ async def implement_component_iterative(
     learnings: str = "",
     max_turns: int = 30,
     timeout: int = 600,
+    standards_brief: str = "",
+    prior_test_results: TestResults | None = None,
 ) -> TestResults:
     """Implement a component using iterative Claude Code (write -> test -> fix).
 
@@ -531,6 +531,8 @@ async def implement_component_iterative(
         sops=sops,
         external_context=external_context,
         learnings=learnings,
+        standards_brief=standards_brief,
+        test_results=prior_test_results,
     )
 
     # Write test file so the agent can run it
@@ -543,6 +545,18 @@ async def implement_component_iterative(
     src_dir.mkdir(parents=True, exist_ok=True)
 
     module_name = contract.component_id.replace("-", "_")
+
+    # Build prior test context for retries
+    prior_context = ""
+    if prior_test_results and not prior_test_results.all_passed:
+        prior_context = f"""
+## PRIOR ATTEMPT RESULTS
+The previous attempt scored {prior_test_results.passed}/{prior_test_results.total} tests.
+"""
+        if prior_test_results.failure_details:
+            prior_context += "Failures:\n"
+            for fd in prior_test_results.failure_details[:10]:
+                prior_context += f"  - {fd.test_id}: {fd.error_message}\n"
 
     prompt = f"""You are implementing a software component. Here is your complete handoff brief:
 
@@ -565,7 +579,7 @@ Rules:
 - Handle all error cases from the contract
 - Do NOT use __all__ — just define the names at module level
 - The test file imports from src/{module_name} — your module must be importable from there
-"""
+{prior_context}"""
 
     logger.info("Implementing %s iteratively via Claude Code (%s)", component_id, model)
 

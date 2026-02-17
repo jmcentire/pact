@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import json
 import logging
 import os
 import select
 import signal
 import stat
 import time
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -33,6 +35,34 @@ from pact.scheduler import Scheduler
 from pact.schemas import RunState
 
 logger = logging.getLogger(__name__)
+
+
+# ── Structured Directives ───────────────────────────────────────────
+
+
+@dataclass
+class Directive:
+    """Structured command from FIFO."""
+    type: str  # "resume", "shutdown", "approved", "set_mode", "set_config", "inject_context"
+    payload: dict = field(default_factory=dict)
+
+
+def parse_directive(raw: str) -> Directive:
+    """Parse a FIFO message into a Directive.
+
+    JSON strings are parsed as structured directives.
+    Plain strings are backward-compatible simple commands.
+    """
+    raw = raw.strip()
+    if raw.startswith("{"):
+        try:
+            data = json.loads(raw)
+            directive_type = data.get("type", raw)
+            payload = {k: v for k, v in data.items() if k != "type"}
+            return Directive(type=directive_type, payload=payload)
+        except (json.JSONDecodeError, AttributeError):
+            return Directive(type=raw)
+    return Directive(type=raw)
 
 
 class ActivityTracker:
@@ -164,18 +194,37 @@ class Daemon:
                 logger.info("Received signal: %s", signal_msg.strip())
                 self.activity.record_activity("fifo_signal")
 
-                if signal_msg.strip() == "shutdown":
+                directive = parse_directive(signal_msg)
+
+                if directive.type == "shutdown":
                     logger.info("Shutdown signal received — exiting cleanly")
                     state.pause_reason = "Shutdown requested"
                     self.project.save_state(state)
                     self.project.append_audit("daemon_shutdown", "Clean shutdown via FIFO signal")
                     return state
 
+                if directive.type == "set_mode":
+                    mode = directive.payload.get("mode", "auto")
+                    logger.info("Build mode changed to: %s", mode)
+                    self.project.append_audit("set_mode", f"build_mode={mode}")
+                    # Store for scheduler to pick up
+                    self._injected_build_mode = mode
+
+                if directive.type == "set_config":
+                    for key, value in directive.payload.items():
+                        logger.info("Config override: %s=%s", key, value)
+                    self.project.append_audit("set_config", json.dumps(directive.payload))
+
+                if directive.type == "inject_context":
+                    ctx = directive.payload.get("context", "")
+                    logger.info("Context injected: %s chars", len(ctx))
+                    self.project.append_audit("inject_context", f"{len(ctx)} chars")
+
                 # Unpause
                 state.status = "active"
                 state.pause_reason = ""
                 self.project.save_state(state)
-                self.project.append_audit("daemon_resume", f"Signal: {signal_msg.strip()}")
+                self.project.append_audit("daemon_resume", f"Signal: {directive.type}")
                 continue
 
             # Fire next phase immediately — no sleep
@@ -347,8 +396,18 @@ class Daemon:
 # ── Signal Sender ───────────────────────────────────────────────────
 
 
-def send_signal(project_dir: str | Path, message: str = "resume") -> bool:
+def send_signal(
+    project_dir: str | Path,
+    message: str = "resume",
+    directive: dict | None = None,
+) -> bool:
     """Write a message to the project's FIFO to resume the daemon.
+
+    Args:
+        project_dir: Path to the project directory.
+        message: Simple string message (backward compatible).
+        directive: Optional structured directive dict. When provided,
+            the message is JSON-serialized. Must include a "type" key.
 
     Returns True if the signal was sent, False if no FIFO exists.
     """
@@ -360,12 +419,18 @@ def send_signal(project_dir: str | Path, message: str = "resume") -> bool:
     if not stat.S_ISFIFO(os.stat(str(fifo_path)).st_mode):
         return False
 
+    # Build the wire message
+    if directive is not None:
+        wire_message = json.dumps(directive)
+    else:
+        wire_message = message
+
     # Open FIFO for writing (blocks until daemon has it open for reading)
     # Use a timeout to avoid hanging if daemon is dead
     try:
         fd = os.open(str(fifo_path), os.O_WRONLY | os.O_NONBLOCK)
         try:
-            os.write(fd, (message + "\n").encode())
+            os.write(fd, (wire_message + "\n").encode())
             return True
         finally:
             os.close(fd)
