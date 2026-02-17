@@ -42,6 +42,7 @@ class TestIsGitRepo:
 
 
 class TestEventBus:
+    @patch.dict("os.environ", {}, clear=True)
     @patch("pact.events._is_git_repo", return_value=False)
     def test_init_no_integrations(self, mock_git, tmp_path: Path):
         gc = GlobalConfig()

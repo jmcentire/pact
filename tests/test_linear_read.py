@@ -11,6 +11,7 @@ from pact.human.linear import LinearClient
 
 class TestGetIssue:
     @pytest.mark.asyncio
+    @patch.dict("os.environ", {}, clear=True)
     async def test_get_issue_unconfigured(self):
         client = LinearClient(api_key="")
         result = await client.get_issue("issue_123")
@@ -59,6 +60,7 @@ class TestGetIssue:
 
 class TestGetIssueComments:
     @pytest.mark.asyncio
+    @patch.dict("os.environ", {}, clear=True)
     async def test_get_issue_comments_unconfigured(self):
         client = LinearClient(api_key="")
         result = await client.get_issue_comments("issue_123")
@@ -151,6 +153,7 @@ class TestGetIssueComments:
 
 class TestAddComment:
     @pytest.mark.asyncio
+    @patch.dict("os.environ", {}, clear=True)
     async def test_add_comment_unconfigured(self):
         client = LinearClient(api_key="")
         result = await client.add_comment("issue_123", "Hello")
@@ -186,6 +189,7 @@ class TestAddComment:
 
 class TestSearchIssues:
     @pytest.mark.asyncio
+    @patch.dict("os.environ", {}, clear=True)
     async def test_search_issues_unconfigured(self):
         client = LinearClient(api_key="")
         result = await client.search_issues("test")

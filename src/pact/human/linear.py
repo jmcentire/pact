@@ -129,7 +129,8 @@ class LinearClient:
             logger.debug("Failed to get Linear issue %s", issue_id)
             return {}
 
-        issue = data.get("data", {}).get("issue")
+        issue = (data or {}).get("data") or {}
+        issue = issue.get("issue")
         if not issue:
             return {}
 
@@ -193,11 +194,9 @@ class LinearClient:
             return []
 
         nodes = (
-            data.get("data", {})
-            .get("issue", {})
-            .get("comments", {})
-            .get("nodes", [])
-        )
+            ((data or {}).get("data") or {})
+            .get("issue") or {}
+        ).get("comments", {}).get("nodes", [])
 
         comments = [
             {
