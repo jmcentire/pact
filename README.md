@@ -243,6 +243,13 @@ Requires Python 3.12+. Core has two dependencies: `pydantic` and `pyyaml`. LLM b
 
 See [CLAUDE.md](CLAUDE.md) for the full technical reference.
 
+## Background
+
+Pact is one of three systems (alongside Emergence and Apprentice) built to test
+the ideas in [Beyond Code: Context, Constraints, and the New Craft of Software](https://www.amazon.com/dp/B0GNLTXVC7).
+The book covers the coordination, verification, and specification problems that
+motivated Pact's design.
+
 ## License
 
 MIT
