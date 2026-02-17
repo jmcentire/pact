@@ -22,9 +22,11 @@ from datetime import datetime
 from pact.agents.base import AgentBase
 from pact.budget import BudgetExceeded, BudgetTracker
 from pact.config import (
+    BuildMode,
     GlobalConfig,
     ProjectConfig,
     resolve_backend,
+    resolve_build_mode,
     resolve_model,
     resolve_parallel_config,
 )
@@ -159,6 +161,12 @@ class Scheduler:
             project_config.check_interval
             or global_config.check_interval
         )
+        self._standards_brief: str = ""
+
+    @property
+    def build_mode(self) -> BuildMode:
+        """Resolve the effective build mode."""
+        return resolve_build_mode(self.project_config, self.global_config)
 
     def _make_agent(self, role: str) -> AgentBase:
         """Create an agent configured for a specific role."""
@@ -409,6 +417,7 @@ class Scheduler:
             gate = await decompose_and_contract(
                 agent, self.project, sops=sops,
                 max_plan_revisions=self.global_config.max_plan_revisions,
+                build_mode=self.build_mode.value,
             )
 
             if gate.passed:
@@ -435,6 +444,21 @@ class Scheduler:
                         )
                     except Exception as e:
                         logger.debug("Task list generation failed: %s", e)
+
+                    # Collect and persist global standards
+                    try:
+                        from pact.standards import collect_standards, render_standards_brief
+                        standards = collect_standards(
+                            contracts, sops,
+                            config_env=self.project_config.environment or self.global_config.environment,
+                        )
+                        self._standards_brief = render_standards_brief(standards)
+                        # Persist for inspection
+                        import json as _json
+                        standards_path = self.project._pact_dir / "standards.json"
+                        standards_path.write_text(_json.dumps(standards.to_dict(), indent=2))
+                    except Exception as e:
+                        logger.debug("Standards collection failed: %s", e)
 
                 pcfg = resolve_parallel_config(self.project_config, self.global_config)
                 if pcfg.plan_only:
@@ -471,6 +495,10 @@ class Scheduler:
         if not tree:
             state.fail("No decomposition tree found")
             return state
+
+        # Inject standards into external context
+        if self._standards_brief:
+            external_context = self._standards_brief + "\n\n" + external_context if external_context else self._standards_brief
 
         max_attempts = (
             self.project_config.max_implementation_attempts
@@ -602,6 +630,10 @@ class Scheduler:
         if not tree:
             state.fail("No decomposition tree found")
             return state
+
+        # Inject standards into external context
+        if self._standards_brief:
+            external_context = self._standards_brief + "\n\n" + external_context if external_context else self._standards_brief
 
         # Check if there are any non-leaf components
         non_leaves = [n for n in tree.nodes.values() if n.children]

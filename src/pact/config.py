@@ -14,6 +14,13 @@ from pathlib import Path
 import yaml
 
 
+class BuildMode(StrEnum):
+    """How pact decomposes and implements tasks."""
+    UNARY = "unary"          # Single agent, still produces contract+tests
+    AUTO = "auto"            # LLM decides at decomposition time (default)
+    HIERARCHY = "hierarchy"  # Always decompose (current behavior)
+
+
 @dataclass
 class ModelTierConfig:
     """Model selection by phase tier.
@@ -95,6 +102,9 @@ class GlobalConfig:
     # Model tiers
     model_tiers: ModelTierConfig = field(default_factory=ModelTierConfig)
 
+    # Build mode
+    build_mode: str = "auto"  # unary | auto | hierarchy
+
     # Monitoring
     monitoring_enabled: bool = False
     monitoring_auto_remediate: bool = True
@@ -149,6 +159,9 @@ class ProjectConfig:
 
     # Model tiers
     model_tiers: ModelTierConfig | None = None
+
+    # Build mode
+    build_mode: str | None = None  # None = use global default
 
     # Monitoring (per-project overrides)
     monitoring_log_files: list[str] = field(default_factory=list)
@@ -207,6 +220,7 @@ def load_global_config(config_path: str | Path | None = None) -> GlobalConfig:
         environment=raw.get("environment", {}),
         impatience=raw.get("impatience", "normal"),
         role_timeouts=raw.get("role_timeouts", {}),
+        build_mode=raw.get("build_mode", "auto"),
         monitoring_enabled=raw.get("monitoring_enabled", False),
         monitoring_auto_remediate=raw.get("monitoring_auto_remediate", True),
         monitoring_budget=raw.get("monitoring_budget", {}),
@@ -278,6 +292,7 @@ def load_project_config(project_dir: str | Path) -> ProjectConfig:
         environment=raw.get("environment"),
         impatience=raw.get("impatience"),
         role_timeouts=raw.get("role_timeouts"),
+        build_mode=raw.get("build_mode"),
         monitoring_log_files=raw.get("monitoring_log_files", []),
         monitoring_process_patterns=raw.get("monitoring_process_patterns", []),
         monitoring_webhook_port=raw.get("monitoring_webhook_port", 0),
@@ -322,6 +337,15 @@ def resolve_model_tiers(global_cfg: GlobalConfig, project_cfg: ProjectConfig | N
     if project_cfg and project_cfg.model_tiers:
         return project_cfg.model_tiers
     return global_cfg.model_tiers
+
+
+def resolve_build_mode(project: ProjectConfig, global_cfg: GlobalConfig) -> BuildMode:
+    """Resolve build mode: project override > global default > auto."""
+    mode_str = project.build_mode or global_cfg.build_mode
+    try:
+        return BuildMode(mode_str)
+    except ValueError:
+        return BuildMode.AUTO
 
 
 @dataclass

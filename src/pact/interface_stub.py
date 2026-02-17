@@ -481,6 +481,7 @@ def render_handoff_brief(
     pitch_context: str = "",
     include_test_code: bool = True,
     log_key_preamble: str = "",
+    standards_brief: str = "",
 ) -> str:
     """Render a complete handoff document for a fresh agent.
 
@@ -517,6 +518,11 @@ def render_handoff_brief(
         lines.append(log_key_preamble)
         lines.append("```")
         lines.append("ALL log statements MUST include the PACT log key for production traceability.")
+        lines.append("")
+
+    # Section 2c: Global standards (shared conventions)
+    if standards_brief:
+        lines.append(standards_brief)
         lines.append("")
 
     # Section 3: Dependencies

@@ -37,8 +37,14 @@ def create_run(project_dir: str) -> RunState:
     )
 
 
-def advance_phase(state: RunState) -> str:
-    """Advance to the next phase. Returns the new phase name."""
+def advance_phase(state: RunState, skip_phases: set[str] | None = None) -> str:
+    """Advance to the next phase. Returns the new phase name.
+
+    Args:
+        state: Current run state.
+        skip_phases: Optional set of phase names to skip over.
+            If the next phase is in this set, keep advancing.
+    """
     phase_order = [
         "interview", "shape", "decompose", "contract",
         "implement", "integrate", "complete",
@@ -51,7 +57,17 @@ def advance_phase(state: RunState) -> str:
         return state.phase
 
     if idx < len(phase_order) - 1:
-        state.phase = phase_order[idx + 1]
+        idx += 1
+        # Skip over phases in the skip set
+        while skip_phases and idx < len(phase_order) - 1 and phase_order[idx] in skip_phases:
+            idx += 1
+        state.phase = phase_order[idx]
+    return state.phase
+
+
+def skip_to_phase(state: RunState, target: str) -> str:
+    """Jump directly to a target phase, skipping intermediates."""
+    state.phase = target
     return state.phase
 
 
