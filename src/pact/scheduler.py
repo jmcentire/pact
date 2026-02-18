@@ -532,6 +532,7 @@ class Scheduler:
                 target_components=target_components,
                 external_context=external_context,
                 learnings=learnings,
+                timeout=self.global_config.autonomous_timeout or 1800,
             )
         else:
             # API-based path: structured extraction with blind retries
