@@ -131,7 +131,7 @@ class ContractTestSuite(BaseModel):
     component_id: str
     contract_version: int
     test_cases: list[TestCase] = []
-    test_language: str = "python"
+    test_language: str = "python"  # Valid values: "python", "typescript"
     generated_code: str = ""
 
 

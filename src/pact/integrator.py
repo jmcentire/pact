@@ -37,6 +37,21 @@ Key principles:
 - All parent functions must be implemented by delegating to children
 - Error propagation must match the parent contract"""
 
+GLUE_SYSTEM_TS = """You are an integration engineer wiring child components together.
+Given a parent contract and its children's contracts, produce TypeScript glue code
+that composes child implementations into the parent's interface.
+
+Key principles:
+- Import children using ESM imports (e.g., `import { fn } from './child_module';`)
+- Export parent interface implementation using named exports
+- Glue code handles data transformation between components
+- Glue code handles routing (which child to call when)
+- Glue code does NOT add business logic
+- All parent functions must be implemented by delegating to children
+- Error propagation must match the parent contract
+- Use TypeScript strict mode; use `unknown` instead of `any`
+- Use TypeScript module composition patterns (re-export, type narrowing)"""
+
 
 async def integrate_component(
     agent: AgentBase,
@@ -54,6 +69,10 @@ async def integrate_component(
         TestResults from running parent-level tests.
     """
     from pydantic import BaseModel
+
+    language = project.language
+    is_ts = language == "typescript"
+    glue_ext = ".ts" if is_ts else ".py"
 
     class GlueResponse(BaseModel):
         """Generated glue code."""
@@ -80,6 +99,16 @@ async def integrate_component(
                 + "\n".join(f"  - {f}" for f in prior_failures)
             )
 
+        if is_ts:
+            lang_label = "TypeScript"
+            import_hint = (
+                "- Import from each child using ESM imports "
+                "(e.g., `import { fn } from './child_module';`)"
+            )
+        else:
+            lang_label = "Python"
+            import_hint = "- Import from each child's module"
+
         prompt = f"""Generate glue code to compose children into the parent interface.
 
 Parent: {parent_contract.name} (id: {parent_id})
@@ -97,24 +126,26 @@ Child contracts:
 {failure_context}
 
 Generate:
-1. glue_code: Python module that imports children and implements parent interface
+1. glue_code: {lang_label} module that imports children and implements parent interface
 2. composition_test: Optional additional integration tests
 
 The glue code should:
-- Import from each child's module
+{import_hint}
 - Implement each parent function by delegating to appropriate children
 - Handle data transformation between child interfaces
 - Propagate errors according to parent contract"""
 
-        response, _, _ = await agent.assess(GlueResponse, prompt, GLUE_SYSTEM)
+        system = GLUE_SYSTEM_TS if is_ts else GLUE_SYSTEM
+        response, _, _ = await agent.assess(GlueResponse, prompt, system)
 
         # Save glue code
         comp_dir = project.composition_dir(parent_id)
-        glue_path = comp_dir / "glue.py"
+        glue_path = comp_dir / f"glue{glue_ext}"
         glue_path.write_text(response.glue_code)
 
         if response.composition_test:
-            test_path = comp_dir / "composition_test.py"
+            test_ext = ".test.ts" if is_ts else ".py"
+            test_path = comp_dir / f"composition_test{test_ext}"
             test_path.write_text(response.composition_test)
 
         project.append_audit(
@@ -135,6 +166,7 @@ The glue code should:
 
         test_results = await run_contract_tests(
             test_file, comp_dir, extra_paths=child_paths,
+            language=language,
         )
 
         # Save results
@@ -281,6 +313,10 @@ async def integrate_component_iterative(
     """
     from pact.backends.claude_code import ClaudeCodeBackend
 
+    language = project.language
+    is_ts = language == "typescript"
+    file_ext = ".ts" if is_ts else ".py"
+
     children_summary = "\n".join(
         f"  - {cid}: {c.name} — {', '.join(f.name for f in c.functions)}"
         for cid, c in child_contracts.items()
@@ -291,7 +327,7 @@ async def integrate_component_iterative(
         for f in parent_contract.functions
     )
 
-    # Gather child implementation paths and build PYTHONPATH for test runs
+    # Gather child implementation paths
     child_src_dirs = {
         cid: project.impl_src_dir(cid) for cid in child_contracts
     }
@@ -310,12 +346,72 @@ async def integrate_component_iterative(
 
     module_name = parent_id.replace("-", "_")
 
-    # Build PYTHONPATH that includes child implementation dirs
-    pythonpath_parts = [str(comp_dir), str(comp_dir.parent)]
-    pythonpath_parts.extend(str(p) for p in child_src_dirs.values())
-    pythonpath_str = ":".join(pythonpath_parts)
+    if is_ts:
+        # Build NODE_PATH for TypeScript module resolution
+        node_path_parts = [str(comp_dir), str(comp_dir.parent)]
+        node_path_parts.extend(str(p) for p in child_src_dirs.values())
+        env_path_str = ":".join(node_path_parts)
 
-    prompt = f"""You are an integration engineer. Wire child components together into the parent interface.
+        prompt = f"""You are an integration engineer. Wire child components together into the parent interface.
+
+## Parent Component: {parent_contract.name} (id: {parent_id})
+
+Parent functions:
+{parent_funcs}
+
+Parent contract (JSON):
+{parent_contract.model_dump_json(indent=2)}
+
+## Children
+
+{children_summary}
+
+Child contracts:
+{chr(10).join(f'{cid}: {c.model_dump_json(indent=2)}' for cid, c in child_contracts.items())}
+
+## Child Implementation Locations
+
+{child_impl_listing}
+
+## CRITICAL: Module Structure Convention
+
+The test file imports from: `./src/{module_name}`
+
+You MUST write your glue module at: {comp_dir}/src/{module_name}.ts
+
+Create the directory if needed: mkdir -p {comp_dir}/src/
+
+Children are importable using ESM imports. For example:
+{chr(10).join(f'  import {{ ... }} from "./{cid.replace("-", "_")}";' for cid in child_contracts)}
+
+## Your Task
+
+1. Read each child implementation to understand their actual APIs:
+{chr(10).join(f'   - {path}/{cid.replace("-", "_")}.ts' for cid, path in child_src_dirs.items())}
+2. Read the parent test file: {test_file}
+3. Write your glue module at: {comp_dir}/src/{module_name}.ts
+   - Import from each child module using ESM imports
+   - Re-export ALL types and functions that the test file imports
+   - Implement each parent function by delegating to appropriate children
+   - Match the exact type names, function signatures, and enum values from the contract
+   - Use named exports only (no default exports)
+   - Do NOT add business logic — only wiring and delegation
+4. Run tests:
+   NODE_PATH="{env_path_str}" npx vitest run {test_file}
+5. If tests fail, read the errors, fix your glue code, and re-run
+6. Keep iterating until ALL tests pass
+
+{f'SOPs: {sops}' if sops else ''}
+{f'Context: {external_context}' if external_context else ''}
+{f'Learnings: {learnings}' if learnings else ''}
+"""
+    else:
+        # Build PYTHONPATH that includes child implementation dirs
+        pythonpath_parts = [str(comp_dir), str(comp_dir.parent)]
+        pythonpath_parts.extend(str(p) for p in child_src_dirs.values())
+        pythonpath_str = ":".join(pythonpath_parts)
+
+        prompt = f"""You are an integration engineer. Wire child components together into the parent interface.
 
 ## Parent Component: {parent_contract.name} (id: {parent_id})
 
@@ -401,6 +497,7 @@ Do NOT use sys.path manipulation. Just import children by their module name.
     ]
     test_results = await run_contract_tests(
         test_file, comp_dir, extra_paths=child_paths,
+        language=language,
     )
 
     # Save results

@@ -55,6 +55,39 @@ Key principles:
   - field_validator does NOT accept `always=True` — remove it
   - Do NOT import `ModelMetaclass`, `flatten_errors`, or other v1 internals"""
 
+CODE_SYSTEM_TS = """You are a code author implementing a component against its contract.
+The contract defines WHAT to build. The tests define HOW to verify.
+Your job is to produce an implementation that passes all contract tests.
+
+Key principles:
+- Implement exactly what the contract specifies, nothing more
+- CRITICAL: All types, functions, and error classes must use the EXACT names
+  from the contract stub. Check the REQUIRED EXPORTS list at the bottom of the
+  stub — every name listed there MUST be a named export from your module. Tests
+  import these names directly and will fail at collection if any are missing
+  or renamed.
+- All functions must match their contract signatures exactly
+- Error/exception classes referenced in error_cases MUST use the exact class
+  names shown (e.g., ConfigFileNotFoundError, not FileNotFoundError).
+  Implement them as typed Error subclasses:
+    export class ConfigFileNotFoundError extends Error { ... }
+- For enum types: use `export type X = "a" | "b"` (union literal) or
+  `export enum X { ... }` — member names must EXACTLY match the variant names
+  from the contract/stub
+- Do not add features beyond the contract
+- If the contract defines standalone functions (not methods on a class), implement
+  them as MODULE-LEVEL named exports. Tests import and call them directly
+  (e.g., `import { compute } from './module';`)
+- Write clean, readable TypeScript in strict mode
+- ALL log statements must include the PACT log key for production traceability
+- Use the provided log key preamble at the top of every module
+- Use TypeScript strict mode (`strict: true` semantics)
+- Use named exports — NO default exports
+- Use `unknown` instead of `any`; narrow types with type guards
+- Use ESM imports with file extensions where needed
+- If Zod is specified in the SOPs, use Zod for runtime validation
+- For error handling, throw typed Error subclasses (not raw Error)"""
+
 
 class ImplementationResult:
     """Result of a code author run."""
@@ -84,6 +117,7 @@ async def author_code(
     learnings: str = "",
     prior_research: ResearchReport | None = None,
     prior_source: dict[str, str] | None = None,
+    language: str = "python",
 ) -> ImplementationResult:
     """Generate implementation code following the Research-First Protocol.
 
@@ -158,11 +192,15 @@ async def author_code(
     )
 
     # Phase 3: Generate code — using the handoff brief as the mental model
-    from pact.interface_stub import render_handoff_brief, render_log_key_preamble, project_id_hash
+    from pact.interface_stub import render_handoff_brief, render_log_key_preamble, render_log_key_preamble_ts, project_id_hash
 
     # Generate log key preamble for production traceability
     pid = project_id_hash(contract.component_id)  # Use component as project proxy
-    log_preamble = render_log_key_preamble(pid, contract.component_id)
+    if language == "typescript":
+        key = f"PACT:{pid}:{contract.component_id}"
+        log_preamble = render_log_key_preamble_ts(key)
+    else:
+        log_preamble = render_log_key_preamble(pid, contract.component_id)
 
     all_contracts = dict(dependency_contracts or {})
     all_contracts[contract.component_id] = contract
@@ -191,6 +229,12 @@ async def author_code(
         and prior_test_results.passed / prior_test_results.total >= 0.8
     )
 
+    is_ts = language == "typescript"
+    file_ext = ".ts" if is_ts else ".py"
+    lang_label = "TypeScript" if is_ts else "Python"
+    code_fence = "typescript" if is_ts else "python"
+    example_file = f"module{file_ext}"
+
     if use_patch_mode:
         # Patch mode: preserve working code, only fix specific failures
         failing_tests = []
@@ -203,7 +247,7 @@ async def author_code(
         if prior_source:
             prior_source_section = "\n\n## PRIOR IMPLEMENTATION (patch this, do NOT rewrite)\n"
             for fname, content in prior_source.items():
-                prior_source_section += f"### {fname}\n```python\n{content}\n```\n"
+                prior_source_section += f"### {fname}\n```{code_fence}\n{content}\n```\n"
             cache_prefix += prior_source_section
 
         prompt = f"""The prior implementation passed {prior_test_results.passed}/{prior_test_results.total} tests.
@@ -228,7 +272,7 @@ Respond with a JSON object containing a "files" dict where keys are filenames
 and values are file contents. Include the COMPLETE file (not just the diff).
 
 Example response format:
-{{"files": {{"module.py": "# complete patched implementation..."}}}}"""
+{{"files": {{"{example_file}": "// complete patched implementation..."}}}}"""
 
         logger.info(
             "Using PATCH mode for %s (%d/%d passed previously)",
@@ -238,7 +282,31 @@ Example response format:
         )
     else:
         # Full implementation mode
-        prompt = f"""Implement the component described in the handoff brief above.
+        if is_ts:
+            prompt = f"""Implement the component described in the handoff brief above.
+
+Research approach: {research.recommended_approach}
+Plan: {plan.plan_summary}
+
+Requirements:
+- Produce a single TypeScript module implementing all types and functions
+- CRITICAL: All type names, function names, and error class names must match
+  the interface stub EXACTLY. See the REQUIRED EXPORTS list at the bottom of
+  the stub — every name there MUST be a named export from your module
+- Handle all error cases using typed Error subclasses with the EXACT class names from the stub
+- Dependencies should be accepted as constructor/function parameters (dependency injection)
+- Code must be clean, well-structured TypeScript with strict typing
+- Use named exports only (no default exports)
+- Use `unknown` instead of `any`; narrow with type guards
+- Must pass ALL tests listed in the brief
+
+Respond with a JSON object containing a "files" dict where keys are filenames
+and values are file contents. At minimum include a main module file.
+
+Example response format:
+{{"files": {{"module.ts": "// implementation code..."}}}}"""
+        else:
+            prompt = f"""Implement the component described in the handoff brief above.
 
 Research approach: {research.recommended_approach}
 Plan: {plan.plan_summary}
@@ -266,8 +334,9 @@ Example response format:
         """Generated implementation files."""
         files: dict[str, str]
 
+    system_prompt = CODE_SYSTEM_TS if is_ts else CODE_SYSTEM
     response, in_tok, out_tok = await agent.assess_cached(
-        CodeResponse, prompt, CODE_SYSTEM, cache_prefix=cache_prefix,
+        CodeResponse, prompt, system_prompt, cache_prefix=cache_prefix,
     )
 
     logger.info(

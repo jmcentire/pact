@@ -163,6 +163,10 @@ class ProjectConfig:
     # Build mode
     build_mode: str | None = None  # None = use global default
 
+    # Language support
+    language: str = "python"        # Valid values: "python", "typescript"
+    test_framework: str = ""        # Auto-detect: "pytest" for python, "vitest" for typescript
+
     # Monitoring (per-project overrides)
     monitoring_log_files: list[str] = field(default_factory=list)
     monitoring_process_patterns: list[str] = field(default_factory=list)
@@ -293,6 +297,8 @@ def load_project_config(project_dir: str | Path) -> ProjectConfig:
         impatience=raw.get("impatience"),
         role_timeouts=raw.get("role_timeouts"),
         build_mode=raw.get("build_mode"),
+        language=raw.get("language", "python"),
+        test_framework=raw.get("test_framework", ""),
         monitoring_log_files=raw.get("monitoring_log_files", []),
         monitoring_process_patterns=raw.get("monitoring_process_patterns", []),
         monitoring_webhook_port=raw.get("monitoring_webhook_port", 0),

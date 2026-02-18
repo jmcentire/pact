@@ -13,11 +13,12 @@ Even for dynamically-typed target languages, the stub gives agents a
 precise conceptual model. We don't need the language to be strongly typed;
 we just need agents to know the valid shapes, constraints, and expectations.
 
-Four output formats:
+Five output formats:
   1. render_stub()           — Python-style interface stub (.pyi-like)
-  2. render_dependency_map() — compact reference for all dependencies
-  3. render_compact_deps()   — function signatures + type shapes (~80% smaller)
-  4. render_handoff_brief()  — complete context for agent handoff
+  2. render_stub_ts()        — TypeScript interface stub (.d.ts-like)
+  3. render_dependency_map() — compact reference for all dependencies
+  4. render_compact_deps()   — function signatures + type shapes (~80% smaller)
+  5. render_handoff_brief()  — complete context for agent handoff
 """
 
 from __future__ import annotations
@@ -321,6 +322,347 @@ def _render_function(func: FunctionContract) -> list[str]:
     lines.append("    ...")
 
     return lines
+
+
+# ── TypeScript Interface Stub Rendering ──────────────────────────────
+
+
+_TS_PRIMITIVE_MAP: dict[str, str] = {
+    "str": "string",
+    "int": "number",
+    "float": "number",
+    "bool": "boolean",
+    "dict": "Record<string, unknown>",
+    "list": "unknown[]",
+    "any": "unknown",
+    "Any": "unknown",
+    "bytes": "Uint8Array",
+    "None": "null",
+    "object": "unknown",
+}
+
+
+def _map_type_ts(type_ref: str) -> str:
+    """Map a Pact type reference to its TypeScript equivalent.
+
+    Handles primitive mappings, Optional[X], list[X], dict[K, V],
+    and passes through unknown type names as-is (assumed to be
+    user-defined types from the contract).
+    """
+    # Direct primitive mapping
+    if type_ref in _TS_PRIMITIVE_MAP:
+        return _TS_PRIMITIVE_MAP[type_ref]
+
+    # Optional[X] -> X | undefined
+    if type_ref.startswith("Optional[") and type_ref.endswith("]"):
+        inner = type_ref[len("Optional["):-1]
+        return f"{_map_type_ts(inner)} | undefined"
+
+    # list[X] -> X[]
+    if type_ref.startswith("list[") and type_ref.endswith("]"):
+        inner = type_ref[len("list["):-1]
+        mapped = _map_type_ts(inner)
+        # Wrap union types in parens for correct precedence: (A | B)[]
+        if " | " in mapped:
+            return f"({mapped})[]"
+        return f"{mapped}[]"
+
+    # dict[K, V] -> Record<K, V>
+    if type_ref.startswith("dict[") and type_ref.endswith("]"):
+        inner = type_ref[len("dict["):-1]
+        # Split on first comma (handles nested types)
+        depth = 0
+        split_idx = -1
+        for i, ch in enumerate(inner):
+            if ch in ("[", "("):
+                depth += 1
+            elif ch in ("]", ")"):
+                depth -= 1
+            elif ch == "," and depth == 0:
+                split_idx = i
+                break
+        if split_idx >= 0:
+            key = inner[:split_idx].strip()
+            val = inner[split_idx + 1:].strip()
+            return f"Record<{_map_type_ts(key)}, {_map_type_ts(val)}>"
+        return "Record<string, unknown>"
+
+    # Union with pipe: X | Y | Z
+    if " | " in type_ref:
+        parts = [_map_type_ts(p.strip()) for p in type_ref.split(" | ")]
+        return " | ".join(parts)
+
+    # Pass through user-defined types unchanged
+    return type_ref
+
+
+def render_stub_ts(contract: ComponentContract) -> str:
+    """Render a contract as a TypeScript interface stub.
+
+    Generates idiomatic TypeScript with exported interfaces, type aliases,
+    and function declarations. Uses JSDoc comments for descriptions,
+    preconditions, postconditions, and error cases.
+
+    Example output:
+        // === Pricing Engine (pricing) v1 ===
+        // Dependencies: inventory, tax_calculator
+
+        export interface PriceResult {
+          /** Final price calculation result. */
+          base_price: number;          // required
+          tax_amount: number;          // required
+          total: number;               // required, postcondition: total == base_price + tax_amount
+          currency?: string;           // optional, default: "USD", validators: regex(^[A-Z]{3}$)
+        }
+
+        export type PricingError = "unit_not_found" | "invalid_dates";
+
+        /**
+         * Calculate the nightly price for a unit stay.
+         *
+         * @precondition check_in < check_out
+         * @precondition unit_id exists in inventory
+         * @postcondition result.total > 0
+         * @postcondition result.currency is valid ISO 4217
+         * @throws UNIT_NOT_FOUND - when unit_id not in inventory
+         * @throws INVALID_DATES - when check_in >= check_out
+         * @sideEffects none
+         * @idempotent yes
+         */
+        export function calculate_price(
+          unit_id: string,
+          check_in: string,
+          check_out: string,
+          guest_count?: number,
+        ): PriceResult;
+    """
+    lines: list[str] = []
+
+    # Header
+    dep_str = f"  Dependencies: {', '.join(contract.dependencies)}" if contract.dependencies else ""
+    lines.append(f"// === {contract.name} ({contract.component_id}) v{contract.version} ===")
+    if dep_str:
+        lines.append(f"//{dep_str}")
+    if contract.description:
+        lines.append(f"// {contract.description}")
+    lines.append("")
+
+    # Invariants (module-level)
+    if contract.invariants:
+        lines.append("// Module invariants:")
+        for inv in contract.invariants:
+            lines.append(f"//   - {inv}")
+        lines.append("")
+
+    # Type definitions
+    for type_spec in contract.types:
+        lines.extend(_render_type_ts(type_spec))
+        lines.append("")
+
+    # Function signatures
+    for func in contract.functions:
+        lines.extend(_render_function_ts(func))
+        lines.append("")
+
+    # Required exports checklist
+    exports = get_required_exports(contract)
+    if exports:
+        lines.append("// -- REQUIRED EXPORTS -----------------------------------------------")
+        lines.append("// Your implementation module MUST export ALL of these names")
+        lines.append("// with EXACTLY these spellings. Tests import them by name.")
+        lines.append(f"// exports: {exports}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _render_type_ts(t: TypeSpec) -> list[str]:
+    """Render a single type definition as TypeScript."""
+    lines: list[str] = []
+
+    if t.kind == "enum":
+        if t.description:
+            lines.append(f"/** {t.description} */")
+        if t.variants:
+            variant_strs = " | ".join(f'"{v}"' for v in t.variants)
+            lines.append(f"export type {t.name} = {variant_strs};")
+        else:
+            lines.append(f"export type {t.name} = never;")
+        return lines
+
+    if t.kind == "struct":
+        if t.description:
+            lines.append(f"/** {t.description} */")
+        lines.append(f"export interface {t.name} {{")
+        for field in t.fields:
+            lines.append(f"  {_render_field_line_ts(field)}")
+        lines.append("}")
+        return lines
+
+    if t.kind == "list":
+        item_ts = _map_type_ts(t.item_type) if t.item_type else "unknown"
+        if t.description:
+            lines.append(f"/** {t.description} */")
+        lines.append(f"export type {t.name} = {item_ts}[];")
+        return lines
+
+    if t.kind == "optional":
+        inner = t.inner_types[0] if t.inner_types else "unknown"
+        inner_ts = _map_type_ts(inner)
+        if t.description:
+            lines.append(f"/** {t.description} */")
+        lines.append(f"export type {t.name} = {inner_ts} | undefined;")
+        return lines
+
+    if t.kind == "union":
+        if t.inner_types:
+            union_parts = [_map_type_ts(it) for it in t.inner_types]
+            union_str = " | ".join(union_parts)
+        else:
+            union_str = "unknown"
+        if t.description:
+            lines.append(f"/** {t.description} */")
+        lines.append(f"export type {t.name} = {union_str};")
+        return lines
+
+    if t.kind == "map":
+        # Map types: key and value from inner_types or fallback
+        if len(t.inner_types) >= 2:
+            key_ts = _map_type_ts(t.inner_types[0])
+            val_ts = _map_type_ts(t.inner_types[1])
+        elif t.item_type:
+            key_ts = "string"
+            val_ts = _map_type_ts(t.item_type)
+        else:
+            key_ts = "string"
+            val_ts = "unknown"
+        if t.description:
+            lines.append(f"/** {t.description} */")
+        lines.append(f"export type {t.name} = Record<{key_ts}, {val_ts}>;")
+        return lines
+
+    if t.kind == "newtype":
+        # Newtype wrapper: branded type alias
+        inner = t.inner_types[0] if t.inner_types else t.item_type or "unknown"
+        inner_ts = _map_type_ts(inner)
+        if t.description:
+            lines.append(f"/** {t.description} */")
+        lines.append(f"export type {t.name} = {inner_ts};")
+        return lines
+
+    # Primitive alias or unknown kind — render as type alias.
+    # If the name itself maps to a TS primitive (e.g. name="str", kind="primitive"),
+    # skip it (it's a builtin, not an export). Otherwise, try to map the item_type
+    # or inner_types for a meaningful underlying type, falling back to unknown.
+    if t.name in _TS_PRIMITIVE_MAP:
+        # Builtin primitive — no need to emit a type alias
+        return lines
+    if t.item_type:
+        underlying = _map_type_ts(t.item_type)
+    elif t.inner_types:
+        underlying = _map_type_ts(t.inner_types[0])
+    else:
+        underlying = "unknown"
+    if t.description:
+        lines.append(f"/** {t.description} */")
+    lines.append(f"export type {t.name} = {underlying};")
+    return lines
+
+
+def _render_field_line_ts(field: FieldSpec) -> str:
+    """Render a single struct field as a TypeScript interface member."""
+    ts_type = _map_type_ts(field.type_ref)
+    optional_mark = "" if field.required else "?"
+
+    annotations: list[str] = []
+    if not field.required:
+        annotations.append("optional")
+        if field.default:
+            annotations.append(f"default: {field.default}")
+    else:
+        annotations.append("required")
+
+    for v in field.validators:
+        annotations.append(f"{v.kind}({v.expression})")
+
+    if field.description:
+        annotations.append(field.description)
+
+    comment = ", ".join(annotations)
+    return f"{field.name}{optional_mark}: {ts_type};  // {comment}"
+
+
+def _render_function_ts(func: FunctionContract) -> list[str]:
+    """Render a function signature as a TypeScript declaration with JSDoc."""
+    lines: list[str] = []
+
+    # Build JSDoc comment
+    jsdoc_lines: list[str] = []
+    if func.description:
+        jsdoc_lines.append(f" * {func.description}")
+        jsdoc_lines.append(" *")
+
+    if func.preconditions:
+        for pre in func.preconditions:
+            jsdoc_lines.append(f" * @precondition {pre}")
+
+    if func.postconditions:
+        for post in func.postconditions:
+            jsdoc_lines.append(f" * @postcondition {post}")
+
+    if func.error_cases:
+        for err in func.error_cases:
+            err_line = f" * @throws {err.name} ({err.error_type}) - {err.condition}"
+            jsdoc_lines.append(err_line)
+            if err.error_data:
+                for k, v in err.error_data.items():
+                    jsdoc_lines.append(f" *   {k}: {v}")
+
+    if func.side_effects:
+        jsdoc_lines.append(f" * @sideEffects {', '.join(func.side_effects)}")
+    else:
+        jsdoc_lines.append(" * @sideEffects none")
+
+    jsdoc_lines.append(f" * @idempotent {'yes' if func.idempotent else 'no'}")
+
+    if jsdoc_lines:
+        lines.append("/**")
+        for jl in jsdoc_lines:
+            lines.append(jl)
+        lines.append(" */")
+
+    # Function signature
+    return_ts = _map_type_ts(func.output_type)
+
+    params: list[str] = []
+    for inp in func.inputs:
+        ts_type = _map_type_ts(inp.type_ref)
+        optional_mark = "" if inp.required else "?"
+        p = f"  {inp.name}{optional_mark}: {ts_type}"
+        # Add inline validator comment
+        if inp.validators:
+            v_str = ", ".join(f"{v.kind}({v.expression})" for v in inp.validators)
+            p += f",  // {v_str}"
+        else:
+            p += ","
+        params.append(p)
+
+    if params:
+        lines.append(f"export function {func.name}(")
+        lines.extend(params)
+        lines.append(f"): {return_ts};")
+    else:
+        lines.append(f"export function {func.name}(): {return_ts};")
+
+    return lines
+
+
+def render_log_key_preamble_ts(key: str) -> str:
+    """Generate a TypeScript logging preamble that embeds the PACT log key.
+
+    Returns TypeScript code that declares the PACT_KEY constant.
+    """
+    return f'const PACT_KEY = "{key}";'
 
 
 # ── Dependency Map ───────────────────────────────────────────────────

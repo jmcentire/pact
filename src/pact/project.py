@@ -16,8 +16,9 @@ The project directory is the unit of work:
       │   └── interview.json
       ├── contracts/<component_id>/
       │   ├── interface.json
+      │   ├── interface.py (or interface.ts for TypeScript)
       │   ├── research.json
-      │   ├── tests/contract_test.py
+      │   ├── tests/contract_test.py (or contract_test.test.ts)
       │   └── history/<timestamp>.json
       ├── implementations/<component_id>/
       │   ├── src/
@@ -72,6 +73,14 @@ class ProjectManager:
         self._impl_dir = self._pact_dir / "implementations"
         self._comp_dir = self._pact_dir / "compositions"
         self._learnings_dir = self._pact_dir / "learnings"
+
+    # ── Language ───────────────────────────────────────────────────
+
+    @property
+    def language(self) -> str:
+        """Project language from pact.yaml config. Defaults to 'python'."""
+        cfg = self.load_config()
+        return cfg.language
 
     # ── Paths ──────────────────────────────────────────────────────
 
@@ -287,7 +296,8 @@ class ProjectManager:
         path.write_text(contract.model_dump_json(indent=2))
         # Save interface stub (the agent's mental model, code-shaped)
         from pact.interface_stub import render_stub
-        stub_path = d / "interface.py"
+        stub_ext = ".ts" if self.language == "typescript" else ".py"
+        stub_path = d / f"interface{stub_ext}"
         stub_path.write_text(render_stub(contract))
         # Save to history
         history = d / "history"
@@ -321,7 +331,9 @@ class ProjectManager:
         json_path = d / "contract_test_suite.json"
         json_path.write_text(suite.model_dump_json(indent=2))
         if suite.generated_code:
-            code_path = d / "contract_test.py"
+            test_ext = ".test.ts" if self.language == "typescript" else ".py"
+            test_filename = f"contract_test{test_ext}"
+            code_path = d / test_filename
             code_path.write_text(suite.generated_code)
         return json_path
 
@@ -343,7 +355,8 @@ class ProjectManager:
         return suites
 
     def test_code_path(self, component_id: str) -> Path:
-        return self._contracts_dir / component_id / "tests" / "contract_test.py"
+        test_ext = ".test.ts" if self.language == "typescript" else ".py"
+        return self._contracts_dir / component_id / "tests" / f"contract_test{test_ext}"
 
     # ── Implementations ────────────────────────────────────────────
 

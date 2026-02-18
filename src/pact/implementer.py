@@ -195,6 +195,43 @@ def _find_defined_names(source: str) -> set[str]:
     return names
 
 
+def _find_defined_names_ts(source: str) -> set[str]:
+    """Extract exported names from TypeScript source code using regex.
+
+    Finds named exports: export (interface|type|enum|class|function|const|let),
+    re-exports: export { Name1, Name2 }, and export default.
+    """
+    import re as _re
+    names: set[str] = set()
+
+    # export (interface|type|enum|class|function|const|let) Name
+    for m in _re.finditer(
+        r"export\s+(?:interface|type|enum|class|function|const|let)\s+(\w+)",
+        source,
+    ):
+        names.add(m.group(1))
+
+    # export { Name1, Name2, ... }  (possibly with 'as' aliases)
+    for m in _re.finditer(r"export\s*\{([^}]+)\}", source):
+        for item in m.group(1).split(","):
+            item = item.strip()
+            if not item:
+                continue
+            # "original as alias" — the exported name is the alias
+            if " as " in item:
+                names.add(item.split(" as ")[-1].strip())
+            else:
+                names.add(item.strip())
+
+    # export default class/function Name
+    for m in _re.finditer(
+        r"export\s+default\s+(?:class|function)\s+(\w+)", source,
+    ):
+        names.add(m.group(1))
+
+    return names
+
+
 def _to_snake_case(name: str) -> str:
     """Convert PascalCase/camelCase to snake_case for comparison."""
     import re as _re
@@ -256,11 +293,13 @@ def _fuzzy_match(missing_name: str, available: set[str]) -> str | None:
 def validate_and_fix_exports(
     src_dir: Path,
     contract: ComponentContract,
+    language: str = "python",
 ) -> list[str]:
     """Check implementation files for missing required exports and auto-fix.
 
     For each missing export, attempts to find a fuzzy match among defined
-    names and injects an alias (e.g., `Phase = TaskPhase`).
+    names and injects an alias (e.g., `Phase = TaskPhase` for Python,
+    `export { match as name };` for TypeScript).
 
     Returns list of exports that could NOT be fixed (truly missing).
     """
@@ -268,32 +307,51 @@ def validate_and_fix_exports(
     if not required:
         return []
 
+    is_ts = language == "typescript"
+    file_glob = "*.ts" if is_ts else "*.py"
+
     # Collect all defined names across ALL implementation files
-    py_files = list(src_dir.rglob("*.py"))
-    if not py_files:
+    impl_files = list(src_dir.rglob(file_glob))
+    if not impl_files:
         return required  # No files at all
 
     # Scan all files for defined names (the component may use packages)
     all_defined: set[str] = set()
-    for f in py_files:
-        all_defined |= _find_defined_names(f.read_text())
+    for f in impl_files:
+        if is_ts:
+            all_defined |= _find_defined_names_ts(f.read_text())
+        else:
+            all_defined |= _find_defined_names(f.read_text())
 
     # Find the main module file for alias injection
     main_file = None
     component_module = contract.component_id.replace("-", "_")
 
-    # Priority: component_name/__init__.py > component_name.py > first non-init > first
-    pkg_init = src_dir / component_module / "__init__.py"
-    if pkg_init.exists():
-        main_file = pkg_init
-    if not main_file:
-        for f in py_files:
-            if f.name == f"{component_module}.py":
-                main_file = f
-                break
-    if not main_file:
-        non_init = [f for f in py_files if f.name != "__init__.py"]
-        main_file = non_init[0] if non_init else py_files[0]
+    if is_ts:
+        # Priority: index.ts > component_name.ts > first file
+        index_ts = src_dir / "index.ts"
+        if index_ts.exists():
+            main_file = index_ts
+        if not main_file:
+            for f in impl_files:
+                if f.name == f"{component_module}.ts":
+                    main_file = f
+                    break
+        if not main_file:
+            main_file = impl_files[0]
+    else:
+        # Priority: component_name/__init__.py > component_name.py > first non-init > first
+        pkg_init = src_dir / component_module / "__init__.py"
+        if pkg_init.exists():
+            main_file = pkg_init
+        if not main_file:
+            for f in impl_files:
+                if f.name == f"{component_module}.py":
+                    main_file = f
+                    break
+        if not main_file:
+            non_init = [f for f in impl_files if f.name != "__init__.py"]
+            main_file = non_init[0] if non_init else impl_files[0]
 
     defined = all_defined
 
@@ -309,7 +367,10 @@ def validate_and_fix_exports(
     for name in missing:
         match = _fuzzy_match(name, defined)
         if match:
-            aliases.append(f"{name} = {match}")
+            if is_ts:
+                aliases.append(f"export {{ {match} as {name} }};")
+            else:
+                aliases.append(f"{name} = {match}")
             logger.info(
                 "Auto-aliased missing export: %s = %s", name, match,
             )
@@ -320,10 +381,11 @@ def validate_and_fix_exports(
         # Inject aliases at the end of the main module file
         main_source = main_file.read_text()
         alias_block = (
+            "\n\n// ── Auto-injected export aliases (Pact export gate) ──\n"
+            if is_ts else
             "\n\n# ── Auto-injected export aliases (Pact export gate) ──\n"
-            + "\n".join(aliases)
-            + "\n"
         )
+        alias_block += "\n".join(aliases) + "\n"
         main_source += alias_block
         main_file.write_text(main_source)
         logger.info(
@@ -357,6 +419,9 @@ async def implement_component(
     Returns:
         TestResults from the final attempt.
     """
+    language = project.language
+    is_ts = language == "typescript"
+
     prior_failures: list[str] = []
     last_test_results: TestResults | None = None
     last_source: dict[str, str] | None = None
@@ -379,6 +444,7 @@ async def implement_component(
             external_context=external_context,
             learnings=learnings,
             prior_source=last_source,
+            language=language,
         )
 
         # Save implementation files
@@ -389,16 +455,17 @@ async def implement_component(
             filepath.parent.mkdir(parents=True, exist_ok=True)
             filepath.write_text(content)
 
-        # Pydantic v1→v2 mechanical fixes (before running tests)
-        for py_file in src_dir.rglob("*.py"):
-            original = py_file.read_text()
-            fixed, fixes = _fix_pydantic_v1_patterns(original)
-            if fixes:
-                py_file.write_text(fixed)
-                logger.info(
-                    "Auto-fixed Pydantic v1 patterns in %s: %s",
-                    py_file.name, "; ".join(fixes),
-                )
+        # Pydantic v1→v2 mechanical fixes (Python only, before running tests)
+        if not is_ts:
+            for py_file in src_dir.rglob("*.py"):
+                original = py_file.read_text()
+                fixed, fixes = _fix_pydantic_v1_patterns(original)
+                if fixes:
+                    py_file.write_text(fixed)
+                    logger.info(
+                        "Auto-fixed Pydantic v1 patterns in %s: %s",
+                        py_file.name, "; ".join(fixes),
+                    )
 
         # Save metadata
         project.save_impl_metadata(component_id, {
@@ -415,13 +482,14 @@ async def implement_component(
         )
 
         # Export validation gate — check and fix before running tests
-        unfixable = validate_and_fix_exports(src_dir, contract)
+        unfixable = validate_and_fix_exports(src_dir, contract, language=language)
         if unfixable:
             # Add specific missing-export feedback for the next attempt
             for name in unfixable:
                 prior_failures.append(
                     f"MISSING EXPORT: Your module does not define '{name}'. "
-                    f"The contract requires this exact name to be importable."
+                    f"The contract requires this exact name to be "
+                    f"{'a named export' if is_ts else 'importable'}."
                 )
 
         # Run contract tests
@@ -430,7 +498,9 @@ async def implement_component(
             test_file.parent.mkdir(parents=True, exist_ok=True)
             test_file.write_text(test_suite.generated_code)
 
-        test_results = await run_contract_tests(test_file, src_dir)
+        test_results = await run_contract_tests(
+            test_file, src_dir, language=language,
+        )
         last_test_results = test_results
         project.save_test_results(component_id, test_results)
 
@@ -519,6 +589,9 @@ async def implement_component_iterative(
     from pact.interface_stub import render_handoff_brief
     from pact.backends.claude_code import ClaudeCodeBackend
 
+    language = project.language
+    is_ts = language == "typescript"
+
     # Build the handoff brief
     all_contracts = dict(dependency_contracts or {})
     all_contracts[contract.component_id] = contract
@@ -545,6 +618,7 @@ async def implement_component_iterative(
     src_dir.mkdir(parents=True, exist_ok=True)
 
     module_name = contract.component_id.replace("-", "_")
+    file_ext = ".ts" if is_ts else ".py"
 
     # Build prior test context for retries
     prior_context = ""
@@ -558,7 +632,32 @@ The previous attempt scored {prior_test_results.passed}/{prior_test_results.tota
             for fd in prior_test_results.failure_details[:10]:
                 prior_context += f"  - {fd.test_id}: {fd.error_message}\n"
 
-    prompt = f"""You are implementing a software component. Here is your complete handoff brief:
+    if is_ts:
+        prompt = f"""You are implementing a software component. Here is your complete handoff brief:
+
+{handoff}
+
+## Your Task
+
+Implement this component so ALL tests pass. You have full tool access.
+
+1. Read the test file: {test_file}
+2. Write your implementation in: {src_dir}/
+3. The main module should be: {src_dir}/{module_name}.ts
+4. Run tests: npx vitest run {test_file}
+5. If tests fail, read the errors, fix your code, and re-run
+6. Keep iterating until ALL tests pass
+
+Rules:
+- All type names and function signatures must match the contract EXACTLY
+- Use TypeScript strict mode
+- Use named exports only (no default exports)
+- Use `unknown` instead of `any`; narrow types with type guards
+- Handle all error cases from the contract using typed Error subclasses
+- The test file imports from './src/{module_name}' — your module must be importable from there
+{prior_context}"""
+    else:
+        prompt = f"""You are implementing a software component. Here is your complete handoff brief:
 
 {handoff}
 
@@ -600,22 +699,23 @@ Rules:
     except Exception as e:
         logger.error("Iterative implementation failed for %s: %s", component_id, e)
 
-    # Belt-and-suspenders: apply Pydantic v1→v2 post-processing
-    for py_file in src_dir.rglob("*.py"):
-        try:
-            original = py_file.read_text()
-            fixed, fixes = _fix_pydantic_v1_patterns(original)
-            if fixes:
-                py_file.write_text(fixed)
-                logger.info(
-                    "Post-fixed Pydantic patterns in %s: %s",
-                    py_file.name, "; ".join(fixes),
-                )
-        except Exception:
-            pass
+    # Belt-and-suspenders: apply Pydantic v1→v2 post-processing (Python only)
+    if not is_ts:
+        for py_file in src_dir.rglob("*.py"):
+            try:
+                original = py_file.read_text()
+                fixed, fixes = _fix_pydantic_v1_patterns(original)
+                if fixes:
+                    py_file.write_text(fixed)
+                    logger.info(
+                        "Post-fixed Pydantic patterns in %s: %s",
+                        py_file.name, "; ".join(fixes),
+                    )
+            except Exception:
+                pass
 
     # Export validation gate
-    validate_and_fix_exports(src_dir, contract)
+    validate_and_fix_exports(src_dir, contract, language=language)
 
     # Save metadata
     project.save_impl_metadata(component_id, {
@@ -631,7 +731,9 @@ Rules:
     )
 
     # Run contract tests for official results
-    test_results = await run_contract_tests(test_file, src_dir)
+    test_results = await run_contract_tests(
+        test_file, src_dir, language=language,
+    )
     project.save_test_results(component_id, test_results)
 
     project.append_audit(
@@ -681,6 +783,9 @@ async def implement_component_interactive(
     from pact.interface_stub import render_handoff_brief
     from pact.backends.claude_code_team import AgentTask
 
+    language = project.language
+    is_ts = language == "typescript"
+
     all_contracts = dict(dependency_contracts or {})
     all_contracts[contract.component_id] = contract
 
@@ -703,7 +808,30 @@ async def implement_component_interactive(
     src_dir = project.impl_src_dir(component_id)
     src_dir.mkdir(parents=True, exist_ok=True)
 
-    prompt = f"""You are implementing a software component. Here is your handoff brief:
+    if is_ts:
+        prompt = f"""You are implementing a software component. Here is your handoff brief:
+
+{handoff}
+
+## Instructions
+
+1. Read the test file at: {test_file}
+2. Implement the component in: {src_dir}/
+3. Create a TypeScript module that implements all types and functions from the contract
+4. Run the tests with: npx vitest run {test_file}
+5. If tests fail, read the errors, fix your implementation, and re-run
+6. Iterate until ALL tests pass
+7. When done, write a file at {src_dir}/DONE.txt containing "PASSED" if all tests passed
+
+Important:
+- All type names and function signatures must match the interface stub EXACTLY
+- Use named exports only (no default exports)
+- Use TypeScript strict mode; use `unknown` instead of `any`
+- Handle all error cases as specified using typed Error subclasses
+- Dependencies should be accepted as constructor/function parameters (dependency injection)
+"""
+    else:
+        prompt = f"""You are implementing a software component. Here is your handoff brief:
 
 {handoff}
 
@@ -751,7 +879,9 @@ Important:
     )
 
     # Run contract tests to get results
-    test_results = await run_contract_tests(test_file, src_dir)
+    test_results = await run_contract_tests(
+        test_file, src_dir, language=language,
+    )
     project.save_test_results(component_id, test_results)
 
     project.append_audit(
@@ -777,6 +907,7 @@ async def _run_one_competitor(
     learnings: str = "",
 ) -> ScoredAttempt:
     """Run a single competitive attempt, writing to its own attempt directory."""
+    language = project.language
     prior_failures: list[str] = []
     last_test_results: TestResults | None = None
     start_time = time.monotonic()
@@ -797,6 +928,7 @@ async def _run_one_competitor(
             max_plan_revisions=max_plan_revisions,
             external_context=external_context,
             learnings=learnings,
+            language=language,
         )
 
         # Save to attempt directory (not main src)
@@ -814,7 +946,7 @@ async def _run_one_competitor(
         })
 
         # Export validation gate
-        validate_and_fix_exports(src_dir, contract)
+        validate_and_fix_exports(src_dir, contract, language=language)
 
         # Run contract tests against this attempt's src
         test_file = project.test_code_path(component_id)
@@ -822,7 +954,9 @@ async def _run_one_competitor(
             test_file.parent.mkdir(parents=True, exist_ok=True)
             test_file.write_text(test_suite.generated_code)
 
-        test_results = await run_contract_tests(test_file, src_dir)
+        test_results = await run_contract_tests(
+            test_file, src_dir, language=language,
+        )
         last_test_results = test_results
         project.save_attempt_test_results(component_id, attempt_id, test_results)
 
