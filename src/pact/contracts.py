@@ -117,13 +117,15 @@ def validate_test_suite(suite: ContractTestSuite) -> list[str]:
     if not suite.test_cases:
         errors.append(f"Test suite for '{suite.component_id}' has no test cases")
     if suite.generated_code:
-        try:
-            ast.parse(suite.generated_code)
-        except SyntaxError as e:
-            errors.append(
-                f"Test suite for '{suite.component_id}' has syntax error "
-                f"in generated code: {e}"
-            )
+        # Only validate Python syntax; TypeScript is validated by the TS compiler
+        if getattr(suite, "test_language", "python") == "python":
+            try:
+                ast.parse(suite.generated_code)
+            except SyntaxError as e:
+                errors.append(
+                    f"Test suite for '{suite.component_id}' has syntax error "
+                    f"in generated code: {e}"
+                )
     return errors
 
 
