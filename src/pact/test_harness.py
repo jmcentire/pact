@@ -24,6 +24,7 @@ async def run_contract_tests(
     environment: "EnvironmentSpec | None" = None,
     extra_paths: list[Path] | None = None,
     language: str = "python",
+    project_dir: Path | None = None,
 ) -> TestResults:
     """Run tests on a contract test file against an implementation.
 
@@ -34,6 +35,9 @@ async def run_contract_tests(
         extra_paths: Additional directories to add to the module path
             (PYTHONPATH for Python, NODE_PATH for TypeScript).
         language: Test language — "python" (default) or "typescript".
+        project_dir: Project root directory (where package.json / vitest.config.ts
+            live). Used as cwd for TypeScript tests. If None, discovered by
+            walking up from impl_dir looking for pact.yaml.
 
     Returns:
         TestResults with pass/fail counts and failure details.
@@ -41,6 +45,7 @@ async def run_contract_tests(
     if language == "typescript":
         return await run_typescript_tests(
             test_file, impl_dir, extra_paths=extra_paths, timeout=timeout,
+            project_dir=project_dir,
         )
 
     if not test_file.exists():
@@ -184,6 +189,7 @@ async def run_typescript_tests(
     src_dir: Path,
     extra_paths: list[Path] | None = None,
     timeout: int = 120,
+    project_dir: Path | None = None,
 ) -> TestResults:
     """Run vitest (or fall back to jest) on a TypeScript contract test file.
 
@@ -192,6 +198,9 @@ async def run_typescript_tests(
         src_dir: Path to the implementation source directory (added to NODE_PATH).
         extra_paths: Additional directories to add to NODE_PATH.
         timeout: Max seconds to wait for tests.
+        project_dir: Project root directory (where package.json / vitest.config.ts
+            live). Used as cwd for vitest. If None, discovered by walking up
+            from src_dir looking for pact.yaml.
 
     Returns:
         TestResults with pass/fail counts and failure details.
@@ -205,6 +214,18 @@ async def run_typescript_tests(
             )],
         )
 
+    # Resolve project root: walk up from src_dir looking for pact.yaml
+    if project_dir is None:
+        candidate = src_dir
+        while candidate != candidate.parent:
+            if (candidate / "pact.yaml").exists():
+                project_dir = candidate
+                break
+            candidate = candidate.parent
+        if project_dir is None:
+            # Fallback: use src_dir.parent (legacy behaviour)
+            project_dir = src_dir.parent
+
     # Build NODE_PATH
     node_parts = [str(src_dir), str(src_dir.parent)]
     if extra_paths:
@@ -213,6 +234,7 @@ async def run_typescript_tests(
 
     env = {
         "NODE_PATH": node_path,
+        "NODE_NO_WARNINGS": "1",
         "PATH": os.environ.get("PATH", "/usr/bin:/usr/local/bin"),
         # Inherit HOME so npx can locate global caches
         "HOME": os.environ.get("HOME", ""),
@@ -221,7 +243,7 @@ async def run_typescript_tests(
     # Prefer vitest; fall back to jest if vitest is unavailable
     cmd = [
         "npx", "vitest", "run", str(test_file),
-        "--reporter=verbose",
+        "--reporter=verbose", "--no-color",
     ]
 
     try:
@@ -230,7 +252,7 @@ async def run_typescript_tests(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
-            cwd=str(src_dir.parent),
+            cwd=str(project_dir),
         )
         stdout, stderr = await asyncio.wait_for(
             proc.communicate(), timeout=timeout,
@@ -265,7 +287,7 @@ async def run_typescript_tests(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
-                cwd=str(src_dir.parent),
+                cwd=str(project_dir),
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout,
