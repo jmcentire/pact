@@ -167,6 +167,7 @@ The glue code should:
         test_results = await run_contract_tests(
             test_file, comp_dir, extra_paths=child_paths,
             language=language,
+            project_dir=project.project_dir,
         )
 
         # Save results
@@ -498,6 +499,7 @@ Do NOT use sys.path manipulation. Just import children by their module name.
     test_results = await run_contract_tests(
         test_file, comp_dir, extra_paths=child_paths,
         language=language,
+        project_dir=project.project_dir,
     )
 
     # Save results

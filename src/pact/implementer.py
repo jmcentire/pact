@@ -500,6 +500,7 @@ async def implement_component(
 
         test_results = await run_contract_tests(
             test_file, src_dir, language=language,
+            project_dir=project.project_dir,
         )
         last_test_results = test_results
         project.save_test_results(component_id, test_results)
@@ -733,6 +734,7 @@ Rules:
     # Run contract tests for official results
     test_results = await run_contract_tests(
         test_file, src_dir, language=language,
+        project_dir=project.project_dir,
     )
     project.save_test_results(component_id, test_results)
 
@@ -881,6 +883,7 @@ Important:
     # Run contract tests to get results
     test_results = await run_contract_tests(
         test_file, src_dir, language=language,
+        project_dir=project.project_dir,
     )
     project.save_test_results(component_id, test_results)
 
@@ -956,6 +959,7 @@ async def _run_one_competitor(
 
         test_results = await run_contract_tests(
             test_file, src_dir, language=language,
+            project_dir=project.project_dir,
         )
         last_test_results = test_results
         project.save_attempt_test_results(component_id, attempt_id, test_results)

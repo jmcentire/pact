@@ -410,6 +410,7 @@ async def decompose_and_contract(
                 dependency_contracts=dep_contracts,
                 sops=sops,
                 max_plan_revisions=max_plan_revisions,
+                language=project.language,
             )
             test_suites[component_id] = suite
             project.save_test_suite(suite)
