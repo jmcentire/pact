@@ -20,4 +20,4 @@ role_backends:
 
 max_implementation_attempts: 3
 max_plan_revisions: 2
-autonomous_timeout: 600  # seconds before proceeding with assumptions
+autonomous_timeout: 3600  # 60min — 8-component Opus contracting needs full hour

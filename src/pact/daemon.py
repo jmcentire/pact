@@ -99,6 +99,7 @@ class Daemon:
         scheduler: Scheduler,
         health_check_interval: int = 30,
         max_idle: int = 600,
+        phase_timeout: int = 1800,
         event_bus: EventBus | None = None,
         poll_integrations: bool = False,
         poll_interval: int = 60,
@@ -109,7 +110,8 @@ class Daemon:
         self.fifo_path = project._pact_dir / "dispatch"
         self.pid_path = project._pact_dir / "daemon.pid"
         self.health_check_interval = health_check_interval  # t: PID check interval
-        self.max_idle = max_idle  # t': max wait before alert+exit
+        self.max_idle = max_idle  # t': max wait for human input before alert+exit
+        self.phase_timeout = phase_timeout  # max time for a single phase to complete
         self._shutdown_requested = False
         self.event_bus = event_bus
         self.poll_integrations = poll_integrations
@@ -234,14 +236,14 @@ class Daemon:
             try:
                 state = await asyncio.wait_for(
                     self.scheduler.run_once(),
-                    timeout=self.max_idle,
+                    timeout=self.phase_timeout,
                 )
                 self.activity.record_activity("phase_complete")
             except asyncio.TimeoutError:
                 logger.error(
-                    "Phase %s timed out after %ds", state.phase, self.max_idle,
+                    "Phase %s timed out after %ds", state.phase, self.phase_timeout,
                 )
-                state.fail(f"Phase {state.phase} timed out after {self.max_idle}s")
+                state.fail(f"Phase {state.phase} timed out after {self.phase_timeout}s")
                 self.project.save_state(state)
                 return state
 

@@ -509,10 +509,15 @@ async def cmd_daemon(args: argparse.Namespace) -> None:
         else global_config.max_poll_attempts
     )
 
+    # Phase timeout: global config autonomous_timeout (default 1800s)
+    # Separate from max_idle which is for FIFO human-input waiting
+    phase_timeout = global_config.autonomous_timeout or 1800
+
     daemon = Daemon(
         project, scheduler,
         health_check_interval=args.health_interval,
         max_idle=args.max_idle,
+        phase_timeout=phase_timeout,
         event_bus=scheduler.event_bus,
         poll_integrations=poll_integrations,
         poll_interval=poll_interval,
@@ -523,6 +528,7 @@ async def cmd_daemon(args: argparse.Namespace) -> None:
     print(f"  FIFO: {daemon.fifo_path}")
     print(f"  Health check: every {args.health_interval}s")
     print(f"  Max idle: {args.max_idle}s")
+    print(f"  Phase timeout: {phase_timeout}s")
     if poll_integrations:
         print(f"  Integration polling: every {poll_interval}s (max {max_poll_attempts} attempts)")
     print(f"  Resume with: pact signal {args.project_dir}")
