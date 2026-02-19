@@ -416,8 +416,10 @@
       in parallel, even competitively &mdash; with no way to ship code that doesn't
       honor its contract.
     </p>
+    <pre style="display: inline-block; text-align: left; margin-bottom: 32px; padding: 16px 32px;"><code><span class="code-cmd">pip install</span> pact-agents</code></pre>
     <div class="cta-group">
       <a href="https://github.com/jmcentire/pact" class="btn btn-primary">Get Started</a>
+      <a href="https://pypi.org/project/pact-agents/" class="btn btn-outline">PyPI</a>
       <a href="#how-it-works" class="btn btn-outline">See How It Works</a>
     </div>
   </div>
@@ -563,7 +565,7 @@
       <div>
         <h2>Up and running in 60 seconds</h2>
         <p>
-          Python 3.12+, two dependencies. Clone, make, go.
+          Python 3.12+, two dependencies. <code>pip install pact-agents</code> and go.
         </p>
         <p>
           Describe your task in <code>task.md</code>, set your standards in <code>sops.md</code>,
@@ -574,11 +576,11 @@
         </p>
       </div>
       <div>
-        <pre><code><span class="code-comment"># Install</span>
-<span class="code-cmd">git clone</span> https://github.com/jmcentire/pact.git
-<span class="code-cmd">cd</span> pact
-<span class="code-cmd">make</span>
-<span class="code-cmd">source</span> .venv/bin/activate
+        <pre><code><span class="code-comment"># Install from PyPI</span>
+<span class="code-cmd">pip install</span> pact-agents
+
+<span class="code-comment"># Or with all LLM backends</span>
+<span class="code-cmd">pip install</span> pact-agents<span class="code-flag">[all-backends]</span>
 
 <span class="code-comment"># Create a project</span>
 <span class="code-cmd">pact init</span> my-project
@@ -614,7 +616,7 @@
 
 <footer>
   <div class="container">
-    <p>MIT License &middot; <a href="https://github.com/jmcentire/pact">GitHub</a> &middot; Built by <a href="https://github.com/jmcentire">Jeremy McEntire</a></p>
+    <p>MIT License &middot; <a href="https://pypi.org/project/pact-agents/">PyPI</a> &middot; <a href="https://github.com/jmcentire/pact">GitHub</a> &middot; Built by <a href="https://github.com/jmcentire">Jeremy McEntire</a></p>
   </div>
 </footer>
 
