@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pact - Contracts Before Code</title>
+  <meta name="description" content="Multi-agent software engineering framework. Contracts before code. Tests as law. Agents that can't cheat.">
+  <meta property="og:title" content="Pact - Contracts Before Code">
+  <meta property="og:description" content="Multi-agent software engineering where architecture is decided before a single line of implementation is written.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://jmcentire.github.io/pact/">
+  <style>
+    :root {
+      --bg: #0d1117;
+      --bg-card: #161b22;
+      --bg-code: #1c2128;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --accent: #58a6ff;
+      --accent-hover: #79c0ff;
+      --green: #3fb950;
+      --orange: #d29922;
+      --red: #f85149;
+      --purple: #bc8cff;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent-hover); text-decoration: underline; }
+
+    .container { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+    /* Nav */
+    nav {
+      position: fixed;
+      top: 0;
+      width: 100%;
+      background: rgba(13, 17, 23, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      z-index: 100;
+      padding: 16px 0;
+    }
+    nav .container {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    nav .logo {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+    nav .logo span { color: var(--accent); }
+    nav .links { display: flex; gap: 24px; align-items: center; }
+    nav .links a { color: var(--text-muted); font-size: 0.9rem; }
+    nav .links a:hover { color: var(--text); text-decoration: none; }
+    .btn {
+      display: inline-block;
+      padding: 8px 20px;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      transition: all 0.15s ease;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: var(--bg) !important;
+    }
+    .btn-primary:hover {
+      background: var(--accent-hover);
+      text-decoration: none;
+    }
+    .btn-outline {
+      border: 1px solid var(--border);
+      color: var(--text) !important;
+    }
+    .btn-outline:hover {
+      border-color: var(--text-muted);
+      text-decoration: none;
+    }
+
+    /* Hero */
+    .hero {
+      padding: 160px 0 100px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: 3.5rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      margin-bottom: 24px;
+    }
+    .hero h1 .accent { color: var(--accent); }
+    .hero .subtitle {
+      font-size: 1.35rem;
+      color: var(--text-muted);
+      max-width: 640px;
+      margin: 0 auto 40px;
+      line-height: 1.5;
+    }
+    .hero .cta-group {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .hero .btn { padding: 12px 28px; font-size: 1rem; }
+
+    /* Problem */
+    .problem {
+      padding: 80px 0;
+      border-top: 1px solid var(--border);
+    }
+    .problem-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 48px;
+      align-items: center;
+    }
+    .problem h2 {
+      font-size: 2rem;
+      font-weight: 700;
+      margin-bottom: 20px;
+      letter-spacing: -0.02em;
+    }
+    .problem p {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+      margin-bottom: 16px;
+    }
+    .problem .highlight {
+      color: var(--text);
+      font-weight: 600;
+    }
+    .insight-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 32px;
+    }
+    .insight-box .quote {
+      font-size: 1.2rem;
+      font-style: italic;
+      color: var(--text);
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+    .insight-box .attribution {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    /* How it works */
+    .how-it-works {
+      padding: 80px 0;
+      border-top: 1px solid var(--border);
+    }
+    .section-header {
+      text-align: center;
+      margin-bottom: 56px;
+    }
+    .section-header h2 {
+      font-size: 2.25rem;
+      font-weight: 700;
+      margin-bottom: 12px;
+      letter-spacing: -0.02em;
+    }
+    .section-header p {
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      max-width: 560px;
+      margin: 0 auto;
+    }
+
+    .pipeline {
+      display: flex;
+      justify-content: space-between;
+      position: relative;
+      padding: 0 8px;
+    }
+    .pipeline::before {
+      content: '';
+      position: absolute;
+      top: 28px;
+      left: 40px;
+      right: 40px;
+      height: 2px;
+      background: var(--border);
+    }
+    .phase {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      position: relative;
+      flex: 1;
+    }
+    .phase-dot {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 0.85rem;
+      margin-bottom: 12px;
+      position: relative;
+      z-index: 1;
+    }
+    .phase:nth-child(1) .phase-dot { background: #1f3a5f; color: var(--accent); border: 2px solid var(--accent); }
+    .phase:nth-child(2) .phase-dot { background: #1f3a5f; color: var(--accent); border: 2px solid var(--accent); }
+    .phase:nth-child(3) .phase-dot { background: #1a3a2a; color: var(--green); border: 2px solid var(--green); }
+    .phase:nth-child(4) .phase-dot { background: #1a3a2a; color: var(--green); border: 2px solid var(--green); }
+    .phase:nth-child(5) .phase-dot { background: #2d2a1a; color: var(--orange); border: 2px solid var(--orange); }
+    .phase-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-align: center;
+      color: var(--text-muted);
+    }
+
+    /* Features */
+    .features {
+      padding: 80px 0;
+      border-top: 1px solid var(--border);
+    }
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+    }
+    .feature-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+      transition: border-color 0.15s ease;
+    }
+    .feature-card:hover { border-color: var(--text-muted); }
+    .feature-icon {
+      font-size: 1.5rem;
+      margin-bottom: 16px;
+      display: block;
+    }
+    .feature-card h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .feature-card p {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      line-height: 1.55;
+    }
+
+    /* Sentinel */
+    .sentinel {
+      padding: 80px 0;
+      border-top: 1px solid var(--border);
+    }
+    .sentinel-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 48px;
+      align-items: center;
+    }
+    .sentinel h2 {
+      font-size: 2rem;
+      font-weight: 700;
+      margin-bottom: 20px;
+      letter-spacing: -0.02em;
+    }
+    .sentinel p {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+      margin-bottom: 16px;
+    }
+    .sentinel-flow {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+      font-family: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
+      font-size: 0.85rem;
+      line-height: 1.8;
+      color: var(--text-muted);
+    }
+    .sentinel-flow .step {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 4px;
+    }
+    .sentinel-flow .arrow { color: var(--accent); min-width: 16px; }
+    .sentinel-flow .label { color: var(--green); }
+    .sentinel-flow .dim { color: #484f58; }
+
+    /* Quick start */
+    .quickstart {
+      padding: 80px 0;
+      border-top: 1px solid var(--border);
+    }
+    .quickstart-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 48px;
+      align-items: start;
+    }
+    .quickstart h2 {
+      font-size: 2rem;
+      font-weight: 700;
+      margin-bottom: 20px;
+    }
+    .quickstart p {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+      margin-bottom: 16px;
+    }
+    pre {
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      overflow-x: auto;
+      font-family: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
+      font-size: 0.85rem;
+      line-height: 1.7;
+    }
+    code { font-family: inherit; }
+    .code-comment { color: #484f58; }
+    .code-cmd { color: var(--green); }
+    .code-flag { color: var(--purple); }
+    .code-string { color: #a5d6ff; }
+
+    /* Book */
+    .book {
+      padding: 80px 0;
+      border-top: 1px solid var(--border);
+    }
+    .book-inner {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 48px;
+      text-align: center;
+    }
+    .book-inner h2 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      margin-bottom: 16px;
+    }
+    .book-inner p {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+      max-width: 600px;
+      margin: 0 auto 24px;
+    }
+
+    /* Footer */
+    footer {
+      padding: 40px 0;
+      border-top: 1px solid var(--border);
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+    footer a { color: var(--text-muted); }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .hero h1 { font-size: 2.25rem; }
+      .hero .subtitle { font-size: 1.1rem; }
+      .problem-grid,
+      .sentinel-grid,
+      .quickstart-grid { grid-template-columns: 1fr; }
+      .feature-grid { grid-template-columns: 1fr; }
+      .pipeline { flex-wrap: wrap; gap: 16px; justify-content: center; }
+      .pipeline::before { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <div class="container">
+    <a href="#" class="logo"><span>pact</span></a>
+    <div class="links">
+      <a href="#how-it-works">How It Works</a>
+      <a href="#features">Features</a>
+      <a href="#sentinel">Sentinel</a>
+      <a href="#quickstart">Quick Start</a>
+      <a href="https://github.com/jmcentire/pact" class="btn btn-outline">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="container">
+    <h1>Contracts before code.<br><span class="accent">Tests as law.</span></h1>
+    <p class="subtitle">
+      A multi-agent software engineering framework where architecture is decided before
+      a single line of implementation is written. Agents implement independently,
+      in parallel, even competitively &mdash; with no way to ship code that doesn't
+      honor its contract.
+    </p>
+    <div class="cta-group">
+      <a href="https://github.com/jmcentire/pact" class="btn btn-primary">Get Started</a>
+      <a href="#how-it-works" class="btn btn-outline">See How It Works</a>
+    </div>
+  </div>
+</section>
+
+<section class="problem">
+  <div class="container">
+    <div class="problem-grid">
+      <div>
+        <h2>LLMs are unreliable reviewers.<br>Tests are perfectly reliable judges.</h2>
+        <p>
+          Every multi-agent coding framework has the same problem: how do you know the code is right?
+          Advisory coordination doesn't work. "Looks good to me" doesn't scale.
+        </p>
+        <p>
+          Pact's answer: <span class="highlight">make the tests first, make them mechanical, and let agents
+          iterate until they pass.</span> No negotiation. No review boards. Pass or fail.
+        </p>
+        <p>
+          Code is cheap &mdash; agents generate it in minutes. Contracts are expensive &mdash; they encode
+          hard-won understanding of what the system actually needs to do. Pact makes that inversion explicit.
+        </p>
+      </div>
+      <div class="insight-box">
+        <p class="quote">
+          "When a module fails in production, the response isn't 'debug the implementation.'
+          It's: add a test that reproduces the failure, flush the implementation, and let
+          an agent rebuild it. The contract got stricter. The next implementation can't
+          have that bug."
+        </p>
+        <p class="attribution">Contracts accumulate the scar tissue of every production incident. They become the real engineering artifact.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="how-it-works" id="how-it-works">
+  <div class="container">
+    <div class="section-header">
+      <h2>Nine phases. All mechanical gates.</h2>
+      <p>No human judgment in the loop at verification time. The pipeline either passes or it doesn't.</p>
+    </div>
+    <div class="pipeline">
+      <div class="phase">
+        <div class="phase-dot">1-2</div>
+        <span class="phase-label">Interview<br>&amp; Shape</span>
+      </div>
+      <div class="phase">
+        <div class="phase-dot">3</div>
+        <span class="phase-label">Decompose</span>
+      </div>
+      <div class="phase">
+        <div class="phase-dot">4-6</div>
+        <span class="phase-label">Contract<br>Test &amp; Validate</span>
+      </div>
+      <div class="phase">
+        <div class="phase-dot">7-8</div>
+        <span class="phase-label">Implement<br>&amp; Integrate</span>
+      </div>
+      <div class="phase">
+        <div class="phase-dot">9</div>
+        <span class="phase-label">Diagnose</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="features" id="features">
+  <div class="container">
+    <div class="section-header">
+      <h2>Built for the age of AI-generated code</h2>
+      <p>When agents write the code, the contracts, tests, and verification become the real product.</p>
+    </div>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <span class="feature-icon">&#x1f3d7;&#xfe0f;</span>
+        <h3>Contract-First Decomposition</h3>
+        <p>Tasks decompose into 2-7 components. Each gets a typed interface contract and executable tests before any implementation begins.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x26a1;</span>
+        <h3>Parallel Implementation</h3>
+        <p>Independent components implement concurrently. No agent waits on another. Semaphore-limited concurrency keeps costs predictable.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x1f3c1;</span>
+        <h3>Competitive Agents</h3>
+        <p>N agents race on the same component. Best implementation wins &mdash; scored by test pass rate and execution time. The contract is the judge.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x1f50c;</span>
+        <h3>Multi-Provider</h3>
+        <p>Route different roles to different LLMs. Opus for architecture, Sonnet for tests, GPT-4o for implementation. Anthropic, OpenAI, and Gemini supported.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x1f4b0;</span>
+        <h3>Budget-Aware</h3>
+        <p>Per-project spend tracking with content-aware token estimation. Set a budget, let agents work. Multi-window caps prevent runaway costs.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x1f4cb;</span>
+        <h3>Plan-Only Mode</h3>
+        <p>Stop after contracts and tests. Review the architecture. Then target specific components with <code>pact build</code>. Full control over what gets built and when.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sentinel" id="sentinel">
+  <div class="container">
+    <div class="sentinel-grid">
+      <div>
+        <h2>If AI writes the code, who debugs it at 3am?</h2>
+        <p>
+          Agents do. The <strong>Sentinel</strong> watches production logs, detects errors, and
+          attributes them to the right component via embedded PACT log keys.
+        </p>
+        <p>
+          It spawns a knowledge-flashed fixer agent loaded with the full contract and test context,
+          adds a reproducer test, rebuilds the module, and verifies all tests pass.
+          The contract ensures no regressions.
+        </p>
+        <p>
+          You review the <em>contract change</em> in the morning. Not the code.
+        </p>
+      </div>
+      <div class="sentinel-flow">
+        <div class="step"><span class="arrow">&#9656;</span> <span>Error detected in production logs</span></div>
+        <div class="step"><span class="arrow">&#9656;</span> <span><span class="label">PACT:a3f2:auth_module</span> <span class="dim">// attributed</span></span></div>
+        <div class="step"><span class="arrow">&#9656;</span> <span>Fixer agent spawned with contract context</span></div>
+        <div class="step"><span class="arrow">&#9656;</span> <span>Reproducer test added to contract</span></div>
+        <div class="step"><span class="arrow">&#9656;</span> <span>Implementation rebuilt from scratch</span></div>
+        <div class="step"><span class="arrow">&#9656;</span> <span><span class="label">1,260 tests pass</span> <span class="dim">// verified</span></span></div>
+        <div class="step"><span class="arrow">&#9656;</span> <span>Contract got stricter. Bug can't recur.</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="quickstart" id="quickstart">
+  <div class="container">
+    <div class="quickstart-grid">
+      <div>
+        <h2>Up and running in 60 seconds</h2>
+        <p>
+          Python 3.12+, two dependencies. Clone, make, go.
+        </p>
+        <p>
+          Describe your task in <code>task.md</code>, set your standards in <code>sops.md</code>,
+          and let Pact decompose, contract, and build.
+        </p>
+        <p style="margin-top: 24px;">
+          <a href="https://github.com/jmcentire/pact" class="btn btn-primary">View on GitHub</a>
+        </p>
+      </div>
+      <div>
+        <pre><code><span class="code-comment"># Install</span>
+<span class="code-cmd">git clone</span> https://github.com/jmcentire/pact.git
+<span class="code-cmd">cd</span> pact
+<span class="code-cmd">make</span>
+<span class="code-cmd">source</span> .venv/bin/activate
+
+<span class="code-comment"># Create a project</span>
+<span class="code-cmd">pact init</span> my-project
+<span class="code-comment"># Edit my-project/task.md with your task</span>
+<span class="code-comment"># Edit my-project/sops.md with your standards</span>
+
+<span class="code-comment"># Run the pipeline</span>
+<span class="code-cmd">pact run</span> my-project
+
+<span class="code-comment"># Or go step by step</span>
+<span class="code-cmd">pact run</span> my-project <span class="code-flag">--plan-only</span>
+<span class="code-cmd">pact components</span> my-project
+<span class="code-cmd">pact build</span> my-project auth_module</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="book">
+  <div class="container">
+    <div class="book-inner">
+      <h2>Built on the ideas in <em>Beyond Code</em></h2>
+      <p>
+        Pact is one of three systems built to test the ideas in
+        <strong>Beyond Code: Context, Constraints, and the New Craft of Software</strong>.
+        The book covers the coordination, verification, and specification problems
+        that motivated Pact's design.
+      </p>
+      <a href="https://www.amazon.com/dp/B0GNLTXVC7" class="btn btn-outline">Read the Book</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p>MIT License &middot; <a href="https://github.com/jmcentire/pact">GitHub</a> &middot; Built by <a href="https://github.com/jmcentire">Jeremy McEntire</a></p>
+  </div>
+</footer>
+
+</body>
+</html>
