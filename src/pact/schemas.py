@@ -532,7 +532,7 @@ class LearningEntry(BaseModel):
 
 class ArtifactMetadata(BaseModel):
     """Provenance metadata for a generated artifact."""
-    pact_version: str = "0.1.0"
+    pact_version: str = "0.2.0"
     model: str = Field(default="", description="Model ID that generated this artifact")
     component_id: str = ""
     artifact_type: Literal["contract", "test_suite", "implementation", "composition"] = "contract"
