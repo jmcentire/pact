@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from pact.contracts import (
+    extract_base_types,
     validate_all_contracts,
     validate_contract_completeness,
     validate_dependency_graph,
@@ -352,3 +353,129 @@ class TestValidateAllContracts:
         }
         gate = validate_all_contracts(tree, contracts, suites)
         assert gate.passed
+
+
+class TestExtractBaseTypes:
+    def test_simple_type(self):
+        assert extract_base_types("str") == ["str"]
+
+    def test_list_parameterized(self):
+        assert extract_base_types("list[str]") == ["list", "str"]
+
+    def test_dict_parameterized(self):
+        assert extract_base_types("dict[str, int]") == ["dict", "str", "int"]
+
+    def test_optional(self):
+        assert extract_base_types("Optional[Foo]") == ["Optional", "Foo"]
+
+    def test_nested(self):
+        result = extract_base_types("list[dict[str, Bar]]")
+        assert "list" in result
+        assert "dict" in result
+        assert "str" in result
+        assert "Bar" in result
+
+    def test_pipe_union(self):
+        result = extract_base_types("str | None")
+        assert "str" in result
+        assert "None" in result
+
+    def test_empty_string(self):
+        assert extract_base_types("") == []
+
+    def test_whitespace(self):
+        assert extract_base_types("  str  ") == ["str"]
+
+    def test_complex_nested(self):
+        result = extract_base_types("dict[str, list[Optional[Foo]]]")
+        assert "dict" in result
+        assert "str" in result
+        assert "list" in result
+        assert "Optional" in result
+        assert "Foo" in result
+
+
+class TestParameterizedTypeValidation:
+    """Validate that parameterized types like list[str] pass validation."""
+
+    def test_list_of_primitive(self):
+        c = _make_contract(
+            functions=[
+                FunctionContract(
+                    name="f", description="d",
+                    inputs=[FieldSpec(name="x", type_ref="list[str]")],
+                    output_type="str",
+                ),
+            ],
+        )
+        errors = validate_type_references(c)
+        assert errors == []
+
+    def test_dict_of_primitives(self):
+        c = _make_contract(
+            functions=[
+                FunctionContract(
+                    name="f", description="d",
+                    inputs=[FieldSpec(name="x", type_ref="dict[str, int]")],
+                    output_type="str",
+                ),
+            ],
+        )
+        errors = validate_type_references(c)
+        assert errors == []
+
+    def test_optional_custom_type(self):
+        c = _make_contract(
+            types=[TypeSpec(name="Foo", kind="struct", fields=[FieldSpec(name="x", type_ref="str")])],
+            functions=[
+                FunctionContract(
+                    name="f", description="d",
+                    inputs=[],
+                    output_type="Optional[Foo]",
+                ),
+            ],
+        )
+        errors = validate_type_references(c)
+        assert errors == []
+
+    def test_list_of_unknown_type_fails(self):
+        c = _make_contract(
+            functions=[
+                FunctionContract(
+                    name="f", description="d",
+                    inputs=[FieldSpec(name="x", type_ref="list[UnknownType]")],
+                    output_type="str",
+                ),
+            ],
+        )
+        errors = validate_type_references(c)
+        assert len(errors) == 1
+        assert "UnknownType" in errors[0]
+
+    def test_pipe_union_resolves(self):
+        c = _make_contract(
+            functions=[
+                FunctionContract(
+                    name="f", description="d",
+                    inputs=[FieldSpec(name="x", type_ref="str | None")],
+                    output_type="str",
+                ),
+            ],
+        )
+        errors = validate_type_references(c)
+        assert errors == []
+
+    def test_struct_field_parameterized(self):
+        c = _make_contract(
+            types=[TypeSpec(name="Foo", kind="struct", fields=[
+                FieldSpec(name="items", type_ref="list[str]"),
+            ])],
+            functions=[
+                FunctionContract(
+                    name="f", description="d",
+                    inputs=[], output_type="Foo",
+                ),
+            ],
+        )
+        errors = validate_type_references(c)
+        assert errors == []

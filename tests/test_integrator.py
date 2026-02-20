@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from pact.integrator import (
     integrate_all_iterative,
+    integrate_component,
     integrate_component_iterative,
 )
 from pact.schemas import (
@@ -371,3 +372,106 @@ class TestIntegrateAllIterative:
 
         assert "root" in results
         assert results["root"].all_passed
+
+
+class TestIntegrateComponentPrompt:
+    """Tests that integrate_component sends full child contracts, not placeholders."""
+
+    def test_prompt_contains_full_child_contracts(self, tmp_path):
+        """The prompt should contain actual child contract JSON, not <contract> placeholders."""
+        parent = _make_contract("root", "Root", [
+            FunctionContract(name="process", description="d", inputs=[], output_type="str"),
+        ])
+        child_a = _make_contract("a", "ChildA", [
+            FunctionContract(name="do_a", description="d", inputs=[], output_type="str"),
+        ])
+        test_suite = _make_test_suite("root", "def test_root(): pass")
+
+        project = MagicMock()
+        project.language = "python"
+        project.composition_dir.return_value = tmp_path / "comp" / "root"
+        project.test_code_path.return_value = tmp_path / "tests" / "test.py"
+        project.impl_src_dir.side_effect = lambda cid: tmp_path / "impl" / cid / "src"
+        (tmp_path / "comp" / "root").mkdir(parents=True)
+        (tmp_path / "tests").mkdir(parents=True)
+
+        captured_prompt = {}
+
+        async def mock_assess(model, prompt, system):
+            captured_prompt["text"] = prompt
+            from pydantic import BaseModel
+            class R(BaseModel):
+                glue_code: str = "# stub"
+                composition_test: str = ""
+            return R(), 0, 0
+
+        agent = MagicMock()
+        agent.assess = AsyncMock(side_effect=mock_assess)
+
+        with patch("pact.integrator.run_contract_tests", new_callable=AsyncMock) as mock_tests:
+            mock_tests.return_value = TestResults(total=1, passed=1, failed=0, errors=0)
+            asyncio.run(integrate_component(
+                agent=agent,
+                project=project,
+                parent_id="root",
+                parent_contract=parent,
+                parent_test_suite=test_suite,
+                child_contracts={"a": child_a},
+            ))
+
+        prompt_text = captured_prompt["text"]
+        # Should contain actual contract JSON, not <contract> placeholder
+        assert "<contract>" not in prompt_text
+        assert "ChildA" in prompt_text
+        assert "do_a" in prompt_text
+        # Should contain the component_id from the JSON
+        assert '"component_id"' in prompt_text or "component_id" in prompt_text
+
+    def test_prompt_includes_child_implementations(self, tmp_path):
+        """If child implementations exist on disk, they should appear in the prompt."""
+        parent = _make_contract("root", "Root")
+        child_a = _make_contract("a", "ChildA")
+        test_suite = _make_test_suite("root", "def test_root(): pass")
+
+        # Create a mock child implementation file
+        impl_src = tmp_path / "impl" / "a" / "src"
+        impl_src.mkdir(parents=True)
+        (impl_src / "a.py").write_text("def do_a():\n    return 'hello'\n")
+
+        project = MagicMock()
+        project.language = "python"
+        project.composition_dir.return_value = tmp_path / "comp" / "root"
+        project.test_code_path.return_value = tmp_path / "tests" / "test.py"
+        project.impl_src_dir.side_effect = lambda cid: tmp_path / "impl" / cid / "src"
+        (tmp_path / "comp" / "root").mkdir(parents=True)
+        (tmp_path / "tests").mkdir(parents=True)
+
+        captured_prompt = {}
+
+        async def mock_assess(model, prompt, system):
+            captured_prompt["text"] = prompt
+            from pydantic import BaseModel
+            class R(BaseModel):
+                glue_code: str = "# stub"
+                composition_test: str = ""
+            return R(), 0, 0
+
+        agent = MagicMock()
+        agent.assess = AsyncMock(side_effect=mock_assess)
+
+        with patch("pact.integrator.run_contract_tests", new_callable=AsyncMock) as mock_tests:
+            mock_tests.return_value = TestResults(total=1, passed=1, failed=0, errors=0)
+            asyncio.run(integrate_component(
+                agent=agent,
+                project=project,
+                parent_id="root",
+                parent_contract=parent,
+                parent_test_suite=test_suite,
+                child_contracts={"a": child_a},
+            ))
+
+        prompt_text = captured_prompt["text"]
+        # Should contain child implementation source code
+        assert "def do_a():" in prompt_text
+        assert "return 'hello'" in prompt_text
+        assert "=== a implementation" in prompt_text

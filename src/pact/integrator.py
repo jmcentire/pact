@@ -52,6 +52,21 @@ Key principles:
 - Use TypeScript strict mode; use `unknown` instead of `any`
 - Use TypeScript module composition patterns (re-export, type narrowing)"""
 
+GLUE_SYSTEM_JS = """You are an integration engineer wiring child components together.
+Given a parent contract and its children's contracts, produce JavaScript glue code
+that composes child implementations into the parent's interface.
+
+Key principles:
+- Import children using ESM imports with .js extensions (e.g., `import { fn } from './child_module.js';`)
+- Export parent interface implementation using named exports
+- Glue code handles data transformation between components
+- Glue code handles routing (which child to call when)
+- Glue code does NOT add business logic
+- All parent functions must be implemented by delegating to children
+- Error propagation must match the parent contract
+- Do NOT use TypeScript syntax — plain JavaScript ES6+ modules only
+- Use JSDoc comments for documentation"""
+
 
 async def integrate_component(
     agent: AgentBase,
@@ -72,7 +87,8 @@ async def integrate_component(
 
     language = project.language
     is_ts = language == "typescript"
-    glue_ext = ".ts" if is_ts else ".py"
+    is_js = language == "javascript"
+    glue_ext = ".js" if is_js else (".ts" if is_ts else ".py")
 
     class GlueResponse(BaseModel):
         """Generated glue code."""
@@ -105,9 +121,30 @@ async def integrate_component(
                 "- Import from each child using ESM imports "
                 "(e.g., `import { fn } from './child_module';`)"
             )
+        elif is_js:
+            lang_label = "JavaScript"
+            import_hint = (
+                "- Import from each child using ESM imports with .js extensions "
+                "(e.g., `import { fn } from './child_module.js';`)"
+            )
         else:
             lang_label = "Python"
             import_hint = "- Import from each child's module"
+
+        # Build full child contract JSON
+        child_contracts_json = "\n\n".join(
+            f'"{cid}":\n{c.model_dump_json(indent=2)}'
+            for cid, c in child_contracts.items()
+        )
+
+        # Load child implementation source code
+        child_impls = ""
+        for cid in child_contracts:
+            impl_src = project.impl_src_dir(cid)
+            if impl_src.exists():
+                for src_file in impl_src.rglob("*"):
+                    if src_file.is_file() and src_file.suffix in (".py", ".ts", ".js"):
+                        child_impls += f"\n\n=== {cid} implementation ({src_file.name}) ===\n{src_file.read_text()}"
 
         prompt = f"""Generate glue code to compose children into the parent interface.
 
@@ -121,8 +158,9 @@ Children:
 Parent contract (JSON):
 {parent_contract.model_dump_json(indent=2)}
 
-Child contracts:
-{{{', '.join(f'"{cid}": <contract>' for cid in child_contracts)}}}
+Child contracts (full JSON):
+{child_contracts_json}
+{f'{chr(10)}Child implementations:{child_impls}' if child_impls else ''}
 {failure_context}
 
 Generate:
@@ -135,7 +173,7 @@ The glue code should:
 - Handle data transformation between child interfaces
 - Propagate errors according to parent contract"""
 
-        system = GLUE_SYSTEM_TS if is_ts else GLUE_SYSTEM
+        system = GLUE_SYSTEM_TS if is_ts else (GLUE_SYSTEM_JS if is_js else GLUE_SYSTEM)
         response, _, _ = await agent.assess(GlueResponse, prompt, system)
 
         # Save glue code
@@ -316,7 +354,8 @@ async def integrate_component_iterative(
 
     language = project.language
     is_ts = language == "typescript"
-    file_ext = ".ts" if is_ts else ".py"
+    is_js = language == "javascript"
+    file_ext = ".js" if is_js else (".ts" if is_ts else ".py")
 
     children_summary = "\n".join(
         f"  - {cid}: {c.name} — {', '.join(f.name for f in c.functions)}"
@@ -347,11 +386,21 @@ async def integrate_component_iterative(
 
     module_name = parent_id.replace("-", "_")
 
-    if is_ts:
-        # Build NODE_PATH for TypeScript module resolution
+    if is_ts or is_js:
+        # Build NODE_PATH for TypeScript/JavaScript module resolution
         node_path_parts = [str(comp_dir), str(comp_dir.parent)]
         node_path_parts.extend(str(p) for p in child_src_dirs.values())
         env_path_str = ":".join(node_path_parts)
+
+        ts_specific = ""
+        if is_ts:
+            ts_specific = "   - Use named exports only (no default exports)\n"
+        js_specific = ""
+        if is_js:
+            js_specific = (
+                "   - Use ESM imports with .js file extensions\n"
+                "   - Do NOT use TypeScript syntax — plain JavaScript only\n"
+            )
 
         prompt = f"""You are an integration engineer. Wire child components together into the parent interface.
 
@@ -378,7 +427,7 @@ Child contracts:
 
 The test file imports from: `./src/{module_name}`
 
-You MUST write your glue module at: {comp_dir}/src/{module_name}.ts
+You MUST write your glue module at: {comp_dir}/src/{module_name}{file_ext}
 
 Create the directory if needed: mkdir -p {comp_dir}/src/
 
@@ -388,14 +437,14 @@ Children are importable using ESM imports. For example:
 ## Your Task
 
 1. Read each child implementation to understand their actual APIs:
-{chr(10).join(f'   - {path}/{cid.replace("-", "_")}.ts' for cid, path in child_src_dirs.items())}
+{chr(10).join(f'   - {path}/{cid.replace("-", "_")}{file_ext}' for cid, path in child_src_dirs.items())}
 2. Read the parent test file: {test_file}
-3. Write your glue module at: {comp_dir}/src/{module_name}.ts
+3. Write your glue module at: {comp_dir}/src/{module_name}{file_ext}
    - Import from each child module using ESM imports
    - Re-export ALL types and functions that the test file imports
    - Implement each parent function by delegating to appropriate children
    - Match the exact type names, function signatures, and enum values from the contract
-   - Use named exports only (no default exports)
+{ts_specific}{js_specific}   - Use named exports only (no default exports)
    - Do NOT add business logic — only wiring and delegation
 4. Run tests:
    NODE_PATH="{env_path_str}" npx vitest run {test_file}

@@ -542,3 +542,24 @@ class ArtifactMetadata(BaseModel):
     cost_usd: float = 0.0
     timestamp: str = Field(default="", description="ISO 8601 generation timestamp")
     run_id: str = Field(default="", description="Unique run identifier")
+
+
+# ── Spec-Compliance Audit ─────────────────────────────────────────
+
+
+class RequirementCoverage(BaseModel):
+    """Coverage assessment for a single spec requirement."""
+    requirement: str = Field(description="The requirement extracted from the spec")
+    status: Literal["covered", "partial", "gap"] = Field(description="Coverage status")
+    evidence: str = Field(default="", description="Which component/code covers this requirement")
+    notes: str = Field(default="", description="Explanation of partial coverage or gap")
+
+
+class SpecAuditResult(BaseModel):
+    """Result of comparing spec requirements against implementations."""
+    requirements: list[RequirementCoverage] = Field(default_factory=list)
+    covered_count: int = 0
+    partial_count: int = 0
+    gap_count: int = 0
+    total_count: int = 0
+    summary: str = Field(default="", description="Human-readable summary")

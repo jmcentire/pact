@@ -88,6 +88,37 @@ Key principles:
 - If Zod is specified in the SOPs, use Zod for runtime validation
 - For error handling, throw typed Error subclasses (not raw Error)"""
 
+CODE_SYSTEM_JS = """You are a code author implementing a component against its contract.
+The contract defines WHAT to build. The tests define HOW to verify.
+Your job is to produce an implementation that passes all contract tests.
+
+Key principles:
+- Implement exactly what the contract specifies, nothing more
+- CRITICAL: All types, functions, and error classes must use the EXACT names
+  from the contract stub. Check the REQUIRED EXPORTS list at the bottom of the
+  stub — every name listed there MUST be a named export from your module. Tests
+  import these names directly and will fail at collection if any are missing
+  or renamed.
+- All functions must match their contract signatures exactly
+- Error/exception classes referenced in error_cases MUST use the exact class
+  names shown (e.g., ConfigFileNotFoundError, not FileNotFoundError).
+  Implement them as Error subclasses:
+    export class ConfigFileNotFoundError extends Error { ... }
+- For enum types: use a plain object with string values or string constants
+  — names must EXACTLY match the variant names from the contract/stub
+- Do not add features beyond the contract
+- If the contract defines standalone functions (not methods on a class), implement
+  them as MODULE-LEVEL named exports. Tests import and call them directly
+  (e.g., `import { compute } from './module.js';`)
+- Write clean, readable JavaScript (ES6+ modules)
+- ALL log statements must include the PACT log key for production traceability
+- Use the provided log key preamble at the top of every module
+- Use named exports — NO default exports
+- Use ESM imports with .js file extensions
+- Use JSDoc comments for documentation (not TypeScript annotations)
+- Do NOT use TypeScript syntax — no type annotations, no interfaces, no generics
+- For error handling, throw Error subclasses (not raw Error)"""
+
 
 class ImplementationResult:
     """Result of a code author run."""
@@ -230,9 +261,10 @@ async def author_code(
     )
 
     is_ts = language == "typescript"
-    file_ext = ".ts" if is_ts else ".py"
-    lang_label = "TypeScript" if is_ts else "Python"
-    code_fence = "typescript" if is_ts else "python"
+    is_js = language == "javascript"
+    file_ext = ".ts" if is_ts else (".js" if is_js else ".py")
+    lang_label = "TypeScript" if is_ts else ("JavaScript" if is_js else "Python")
+    code_fence = "typescript" if is_ts else ("javascript" if is_js else "python")
     example_file = f"module{file_ext}"
 
     if use_patch_mode:
@@ -305,6 +337,31 @@ and values are file contents. At minimum include a main module file.
 
 Example response format:
 {{"files": {{"module.ts": "// implementation code..."}}}}"""
+        elif is_js:
+            prompt = f"""Implement the component described in the handoff brief above.
+
+Research approach: {research.recommended_approach}
+Plan: {plan.plan_summary}
+
+Requirements:
+- Produce a single JavaScript ES module implementing all functions
+- CRITICAL: All function names and error class names must match
+  the interface stub EXACTLY. See the REQUIRED EXPORTS list at the bottom of
+  the stub — every name there MUST be a named export from your module
+- Handle all error cases using Error subclasses with the EXACT class names from the stub
+- Dependencies should be accepted as constructor/function parameters (dependency injection)
+- Code must be clean, readable JavaScript (ES6+ modules)
+- Use named exports only (no default exports)
+- Use ESM imports with .js file extensions
+- Use JSDoc comments for documentation
+- Do NOT use TypeScript syntax
+- Must pass ALL tests listed in the brief
+
+Respond with a JSON object containing a "files" dict where keys are filenames
+and values are file contents. At minimum include a main module file.
+
+Example response format:
+{{"files": {{"module.js": "// implementation code..."}}}}"""
         else:
             prompt = f"""Implement the component described in the handoff brief above.
 
@@ -334,7 +391,7 @@ Example response format:
         """Generated implementation files."""
         files: dict[str, str]
 
-    system_prompt = CODE_SYSTEM_TS if is_ts else CODE_SYSTEM
+    system_prompt = CODE_SYSTEM_TS if is_ts else (CODE_SYSTEM_JS if is_js else CODE_SYSTEM)
     response, in_tok, out_tok = await agent.assess_cached(
         CodeResponse, prompt, system_prompt, cache_prefix=cache_prefix,
     )

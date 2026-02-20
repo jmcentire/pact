@@ -164,8 +164,8 @@ class ProjectConfig:
     build_mode: str | None = None  # None = use global default
 
     # Language support
-    language: str = "python"        # Valid values: "python", "typescript"
-    test_framework: str = ""        # Auto-detect: "pytest" for python, "vitest" for typescript
+    language: str = "python"        # Valid values: "python", "typescript", "javascript"
+    test_framework: str = ""        # Auto-detect: "pytest" for python, "vitest" for typescript/javascript
 
     # Monitoring (per-project overrides)
     monitoring_log_files: list[str] = field(default_factory=list)

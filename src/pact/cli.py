@@ -113,6 +113,7 @@ def main() -> None:
     # approve (answer + signal)
     p_approve = subparsers.add_parser("approve", help="Approve interview with defaults + signal daemon")
     p_approve.add_argument("project_dir", help="Project directory path")
+    p_approve.add_argument("-i", "--interactive", action="store_true", help="Prompt for each question before auto-filling")
 
     # validate
     p_validate = subparsers.add_parser("validate", help="Re-run contract validation")
@@ -215,6 +216,10 @@ def main() -> None:
     p_export = subparsers.add_parser("export-tasks", help="Export TASKS.md")
     p_export.add_argument("project_dir", help="Project directory path")
 
+    p_audit = subparsers.add_parser("audit", help="Spec-compliance audit")
+    p_audit.add_argument("project_dir", help="Project directory path")
+    p_audit.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
+
     args = parser.parse_args()
 
     if args.verbose:
@@ -286,6 +291,8 @@ def main() -> None:
         cmd_directive(args)
     elif args.command == "export-tasks":
         cmd_export_tasks(args)
+    elif args.command == "audit":
+        asyncio.run(cmd_audit(args))
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -324,6 +331,23 @@ def cmd_status(args: argparse.Namespace) -> None:
 
     state = project.load_state()
     print(format_run_summary(state))
+
+    # Show interview summary if available
+    interview = project.load_interview()
+    if interview:
+        total_q = len(interview.questions)
+        answered = len(interview.user_answers)
+        pending = total_q - answered
+        approved_str = "approved" if interview.approved else "not approved"
+        print(f"\nInterview: {total_q} questions, {answered} answered ({pending} pending) — {approved_str}")
+        for q in interview.questions:
+            truncated_q = q[:60] + "..." if len(q) > 60 else q
+            if q in interview.user_answers:
+                truncated_a = interview.user_answers[q]
+                truncated_a = truncated_a[:50] + "..." if len(truncated_a) > 50 else truncated_a
+                print(f'  [answered] "{truncated_q}" -> "{truncated_a}"')
+            else:
+                print(f'  [pending]  "{truncated_q}"')
 
     # Show tree status if available
     tree = project.load_tree()
@@ -819,16 +843,47 @@ def cmd_approve(args: argparse.Namespace) -> None:
     if interview.approved:
         print("Already approved.")
     else:
-        # Accept all assumptions as answers
+        interactive = getattr(args, "interactive", False)
+        answer_sources: list[tuple[str, str, str, float]] = []  # (question, answer, source, confidence)
+
         for i, q in enumerate(interview.questions):
-            if q not in interview.user_answers:
+            if q in interview.user_answers:
+                # Already answered by user (via pact answer)
+                answer_sources.append((q, interview.user_answers[q], "user", 1.0))
+                continue
+
+            if interactive:
+                auto_answer, confidence = match_answer_to_question(
+                    q, interview.assumptions, question_index=i,
+                )
+                user_input = input(
+                    f"\nQ: {q}\n  [auto: {auto_answer} (confidence: {confidence:.1f})]\n  A: "
+                ).strip()
+                if user_input:
+                    interview.user_answers[q] = user_input
+                    answer_sources.append((q, user_input, "user", 1.0))
+                else:
+                    interview.user_answers[q] = auto_answer
+                    answer_sources.append((q, auto_answer, "auto", confidence))
+            else:
                 answer, confidence = match_answer_to_question(
                     q, interview.assumptions, question_index=i,
                 )
                 interview.user_answers[q] = answer
+                answer_sources.append((q, answer, "auto", confidence))
+
         interview.approved = True
         project.save_interview(interview)
-        print("Interview approved with default assumptions.")
+
+        # Print answer summary
+        print("Interview approved. Answer summary:")
+        for q, answer, source, confidence in answer_sources:
+            truncated_q = q[:60] + "..." if len(q) > 60 else q
+            truncated_a = answer[:50] + "..." if len(answer) > 50 else answer
+            if source == "user":
+                print(f'  Q: "{truncated_q}" -> [user] "{truncated_a}"')
+            else:
+                print(f'  Q: "{truncated_q}" -> [auto, {confidence:.1f}] "{truncated_a}"')
 
     # Signal daemon if running
     sent = send_signal(args.project_dir, "approved")
@@ -1884,6 +1939,39 @@ def cmd_export_tasks(args: argparse.Namespace) -> None:
     md = render_task_list_markdown(task_list)
     project.tasks_md_path.write_text(md)
     print(f"Exported: {project.tasks_md_path}")
+
+
+async def cmd_audit(args: argparse.Namespace) -> None:
+    """Run spec-compliance audit comparing task.md against implementations."""
+    from pact.agents.base import AgentBase
+    from pact.auditor import audit_spec_compliance, render_audit_markdown
+    from pact.budget import BudgetTracker
+
+    project = ProjectManager(args.project_dir)
+
+    if not project.task_path.exists():
+        print("No task.md found. Nothing to audit.")
+        return
+
+    tree = project.load_tree()
+    if not tree:
+        print("No decomposition tree found. Run decomposition first.")
+        return
+
+    config = project.load_config()
+    budget = BudgetTracker(max_usd=config.budget)
+    agent = AgentBase(budget)
+
+    try:
+        result = await audit_spec_compliance(agent, project)
+    finally:
+        await agent.close()
+
+    if getattr(args, "json_output", False):
+        print(result.model_dump_json(indent=2))
+        return
+
+    print(render_audit_markdown(result))
 
 
 if __name__ == "__main__":
