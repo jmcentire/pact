@@ -2,7 +2,7 @@
 
 **Contracts before code. Tests as law. Agents that can't cheat.**
 
-Pact is a multi-agent software engineering framework where the architecture is decided before a single line of implementation is written. Tasks are decomposed into components, each component gets a typed interface contract, and each contract gets executable tests. Only then do agents implement -- independently, in parallel, even competitively -- with no way to ship code that doesn't honor its contract.
+Pact is a multi-agent software engineering framework where the architecture is decided before a single line of implementation is written. Tasks are decomposed into components, each component gets a typed interface contract, and each contract gets executable tests. Only then do agents implement -- independently, in parallel, even competitively -- with no way to ship code that doesn't honor its contract. Generates Python, TypeScript, or JavaScript.
 
 The insight: LLMs are unreliable reviewers but tests are perfectly reliable judges. So make the tests first, make them mechanical, and let agents iterate until they pass. No advisory coordination. No "looks good to me." Pass or fail.
 
@@ -125,6 +125,7 @@ pact build my-project sync_tracker --competitive --agents 3
 | `pact report <project> <error>` | Manually report a production error |
 | `pact incidents <project>` | List active/recent incidents |
 | `pact incident <project> <id>` | Show incident details + diagnostic report |
+| `pact audit <project>` | Spec-compliance audit (compare task.md vs implementations) |
 
 ## Configuration
 

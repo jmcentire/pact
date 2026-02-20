@@ -510,6 +510,11 @@
         <p>N agents race on the same component. Best implementation wins &mdash; scored by test pass rate and execution time. The contract is the judge.</p>
       </div>
       <div class="feature-card">
+        <span class="feature-icon">&#x1f30d;</span>
+        <h3>Python, TypeScript &amp; JavaScript</h3>
+        <p>Generate contracts, stubs, and implementations in Python, TypeScript, or plain JavaScript ES6 modules with JSDoc. Vitest for TS/JS, pytest for Python.</p>
+      </div>
+      <div class="feature-card">
         <span class="feature-icon">&#x1f50c;</span>
         <h3>Multi-Provider</h3>
         <p>Route different roles to different LLMs. Opus for architecture, Sonnet for tests, GPT-4o for implementation. Anthropic, OpenAI, and Gemini supported.</p>
@@ -523,6 +528,11 @@
         <span class="feature-icon">&#x1f4cb;</span>
         <h3>Plan-Only Mode</h3>
         <p>Stop after contracts and tests. Review the architecture. Then target specific components with <code>pact build</code>. Full control over what gets built and when.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x1f50d;</span>
+        <h3>Spec-Compliance Audit</h3>
+        <p>Run <code>pact audit</code> after implementation to verify every requirement in your spec is covered. Get a gap report showing what's covered, partial, or missing.</p>
       </div>
     </div>
   </div>
@@ -566,6 +576,7 @@
         <h2>Up and running in 60 seconds</h2>
         <p>
           Python 3.12+, two dependencies. <code>pip install pact-agents</code> and go.
+          Generates Python, TypeScript, or JavaScript.
         </p>
         <p>
           Describe your task in <code>task.md</code>, set your standards in <code>sops.md</code>,
