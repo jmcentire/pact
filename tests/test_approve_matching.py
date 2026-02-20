@@ -1,5 +1,10 @@
 """Tests for approve matching logic."""
-from pact.cli import match_answer_to_question, STOPWORDS
+import argparse
+from io import StringIO
+from unittest.mock import MagicMock, patch
+
+from pact.cli import cmd_approve, cmd_status, match_answer_to_question, STOPWORDS
+from pact.schemas import InterviewResult, RunState
 
 
 class TestMatchAnswerToQuestion:
@@ -86,3 +91,126 @@ class TestStopwords:
     def test_significant_words_not_in_stopwords(self):
         for word in ["database", "authentication", "service", "component"]:
             assert word not in STOPWORDS
+
+
+class TestCmdApproveSummary:
+    """Tests that cmd_approve prints answer sources correctly."""
+
+    def test_approve_prints_user_vs_auto(self, capsys):
+        """Approve should print which answers are user vs auto-matched."""
+        interview = InterviewResult(
+            risks=["risk1"],
+            ambiguities=[],
+            questions=["What crypto library?", "Target language?"],
+            assumptions=["TweetNaCl for cryptography library", "TypeScript with strict mode"],
+            user_answers={"What crypto library?": "TweetNaCl.js"},
+            approved=False,
+        )
+
+        project = MagicMock()
+        project.load_interview.return_value = interview
+        project.save_interview = MagicMock()
+
+        args = argparse.Namespace(
+            project_dir="/tmp/test",
+            interactive=False,
+        )
+
+        with patch("pact.cli.ProjectManager", return_value=project):
+            with patch("pact.daemon.send_signal", return_value=False):
+                cmd_approve(args)
+
+        captured = capsys.readouterr()
+        assert "[user]" in captured.out
+        assert "[auto" in captured.out
+        assert "TweetNaCl.js" in captured.out
+
+    def test_approve_preserves_existing_answers(self):
+        """Existing user answers should not be overwritten by auto-matching."""
+        interview = InterviewResult(
+            risks=[],
+            ambiguities=[],
+            questions=["Q1?", "Q2?"],
+            assumptions=["A1", "A2"],
+            user_answers={"Q1?": "My custom answer"},
+            approved=False,
+        )
+
+        project = MagicMock()
+        project.load_interview.return_value = interview
+        project.save_interview = MagicMock()
+
+        args = argparse.Namespace(
+            project_dir="/tmp/test",
+            interactive=False,
+        )
+
+        with patch("pact.cli.ProjectManager", return_value=project):
+            with patch("pact.daemon.send_signal", return_value=False):
+                cmd_approve(args)
+
+        # Check that Q1's answer was preserved
+        saved_interview = project.save_interview.call_args[0][0]
+        assert saved_interview.user_answers["Q1?"] == "My custom answer"
+
+
+class TestCmdStatusInterview:
+    """Tests that cmd_status shows interview answer summary."""
+
+    def test_status_shows_interview_summary(self, capsys):
+        """Status should display interview questions and answers."""
+        interview = InterviewResult(
+            risks=[],
+            ambiguities=[],
+            questions=["What crypto library?", "Target language?"],
+            assumptions=[],
+            user_answers={"What crypto library?": "TweetNaCl.js"},
+            approved=False,
+        )
+        state = RunState(id="test123", project_dir="/tmp/test")
+
+        project = MagicMock()
+        project.has_state.return_value = True
+        project.load_state.return_value = state
+        project.load_interview.return_value = interview
+        project.load_tree.return_value = None
+        project.load_audit.return_value = None
+
+        args = argparse.Namespace(
+            project_dir="/tmp/test",
+            component_id=None,
+        )
+
+        with patch("pact.cli.ProjectManager", return_value=project):
+            with patch("pact.daemon.check_daemon_health", return_value={"alive": False, "fifo_exists": False}):
+                cmd_status(args)
+
+        captured = capsys.readouterr()
+        assert "2 questions, 1 answered (1 pending)" in captured.out
+        assert "[answered]" in captured.out
+        assert "[pending]" in captured.out
+        assert "TweetNaCl.js" in captured.out
+        assert "not approved" in captured.out
+
+    def test_status_no_interview(self, capsys):
+        """Status should not crash when no interview exists."""
+        state = RunState(id="test123", project_dir="/tmp/test")
+
+        project = MagicMock()
+        project.has_state.return_value = True
+        project.load_state.return_value = state
+        project.load_interview.return_value = None
+        project.load_tree.return_value = None
+        project.load_audit.return_value = None
+
+        args = argparse.Namespace(
+            project_dir="/tmp/test",
+            component_id=None,
+        )
+
+        with patch("pact.cli.ProjectManager", return_value=project):
+            with patch("pact.daemon.check_daemon_health", return_value={"alive": False, "fifo_exists": False}):
+                cmd_status(args)
+
+        captured = capsys.readouterr()
+        assert "Interview" not in captured.out

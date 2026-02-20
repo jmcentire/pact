@@ -665,6 +665,201 @@ def render_log_key_preamble_ts(key: str) -> str:
     return f'const PACT_KEY = "{key}";'
 
 
+# ── JavaScript Interface Stub Rendering ─────────────────────────────
+
+
+_JS_PRIMITIVE_MAP: dict[str, str] = {
+    "str": "string",
+    "int": "number",
+    "float": "number",
+    "bool": "boolean",
+    "dict": "Object",
+    "list": "Array",
+    "any": "*",
+    "Any": "*",
+    "bytes": "Uint8Array",
+    "None": "null",
+    "object": "Object",
+}
+
+
+def _map_type_js(type_ref: str) -> str:
+    """Map a Pact type reference to a JSDoc type string.
+
+    Uses JSDoc conventions: {string}, {number}, {Array<X>}, {Object<K,V>}.
+    """
+    if type_ref in _JS_PRIMITIVE_MAP:
+        return _JS_PRIMITIVE_MAP[type_ref]
+
+    if type_ref.startswith("Optional[") and type_ref.endswith("]"):
+        inner = type_ref[len("Optional["):-1]
+        return f"({_map_type_js(inner)}|undefined)"
+
+    if type_ref.startswith("list[") and type_ref.endswith("]"):
+        inner = type_ref[len("list["):-1]
+        return f"Array<{_map_type_js(inner)}>"
+
+    if type_ref.startswith("dict[") and type_ref.endswith("]"):
+        inner = type_ref[len("dict["):-1]
+        depth = 0
+        split_idx = -1
+        for i, ch in enumerate(inner):
+            if ch in ("[", "("):
+                depth += 1
+            elif ch in ("]", ")"):
+                depth -= 1
+            elif ch == "," and depth == 0:
+                split_idx = i
+                break
+        if split_idx >= 0:
+            key = inner[:split_idx].strip()
+            val = inner[split_idx + 1:].strip()
+            return f"Object<{_map_type_js(key)}, {_map_type_js(val)}>"
+        return "Object<string, *>"
+
+    if " | " in type_ref:
+        parts = [_map_type_js(p.strip()) for p in type_ref.split(" | ")]
+        return "(" + "|".join(parts) + ")"
+
+    return type_ref
+
+
+def render_stub_js(contract: ComponentContract) -> str:
+    """Render a contract as a JavaScript JSDoc interface stub.
+
+    Uses JSDoc @typedef, @param, and @returns for type documentation.
+    Functions are declared without type annotations but with full JSDoc.
+    """
+    lines: list[str] = []
+
+    # Header
+    dep_str = f"  Dependencies: {', '.join(contract.dependencies)}" if contract.dependencies else ""
+    lines.append(f"// === {contract.name} ({contract.component_id}) v{contract.version} ===")
+    if dep_str:
+        lines.append(f"//{dep_str}")
+    if contract.description:
+        lines.append(f"// {contract.description}")
+    lines.append("")
+
+    # Invariants
+    if contract.invariants:
+        lines.append("// Module invariants:")
+        for inv in contract.invariants:
+            lines.append(f"//   - {inv}")
+        lines.append("")
+
+    # Type definitions as JSDoc @typedef
+    for type_spec in contract.types:
+        lines.extend(_render_type_js(type_spec))
+        lines.append("")
+
+    # Function signatures with JSDoc
+    for func in contract.functions:
+        lines.extend(_render_function_js(func))
+        lines.append("")
+
+    # Required exports checklist
+    exports = get_required_exports(contract)
+    if exports:
+        lines.append("// -- REQUIRED EXPORTS -----------------------------------------------")
+        lines.append("// Your implementation module MUST export ALL of these names")
+        lines.append("// with EXACTLY these spellings. Tests import them by name.")
+        lines.append(f"// exports: {exports}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _render_type_js(t: TypeSpec) -> list[str]:
+    """Render a single type definition as JSDoc."""
+    lines: list[str] = []
+
+    if t.kind == "enum":
+        if t.description:
+            lines.append(f"/** {t.description} */")
+        if t.variants:
+            variant_strs = " | ".join(f'"{v}"' for v in t.variants)
+            lines.append(f"/** @typedef {{{variant_strs}}} {t.name} */")
+        else:
+            lines.append(f"/** @typedef {{never}} {t.name} */")
+        return lines
+
+    if t.kind == "struct":
+        lines.append("/**")
+        if t.description:
+            lines.append(f" * {t.description}")
+        lines.append(f" * @typedef {{{t.name}}} {t.name}")
+        for field in t.fields:
+            js_type = _map_type_js(field.type_ref)
+            optional = "" if field.required else "["
+            close = "" if field.required else "]"
+            lines.append(f" * @property {{{js_type}}} {optional}{field.name}{close}")
+        lines.append(" */")
+        return lines
+
+    if t.kind == "list":
+        item_js = _map_type_js(t.item_type) if t.item_type else "*"
+        if t.description:
+            lines.append(f"/** {t.description} */")
+        lines.append(f"/** @typedef {{Array<{item_js}>}} {t.name} */")
+        return lines
+
+    # Fallback for other kinds
+    if t.description:
+        lines.append(f"/** {t.description} */")
+    lines.append(f"/** @typedef {{*}} {t.name} */")
+    return lines
+
+
+def _render_function_js(func: FunctionContract) -> list[str]:
+    """Render a function as a JSDoc-documented declaration."""
+    lines: list[str] = []
+
+    # Build JSDoc
+    lines.append("/**")
+    if func.description:
+        lines.append(f" * {func.description}")
+        lines.append(" *")
+
+    for inp in func.inputs:
+        js_type = _map_type_js(inp.type_ref)
+        lines.append(f" * @param {{{js_type}}} {inp.name}")
+
+    return_type = _map_type_js(func.output_type)
+    lines.append(f" * @returns {{{return_type}}}")
+
+    if func.preconditions:
+        for pre in func.preconditions:
+            lines.append(f" * @precondition {pre}")
+
+    if func.postconditions:
+        for post in func.postconditions:
+            lines.append(f" * @postcondition {post}")
+
+    if func.error_cases:
+        for err in func.error_cases:
+            lines.append(f" * @throws {err.name} ({err.error_type}) - {err.condition}")
+
+    if func.side_effects:
+        lines.append(f" * @sideEffects {', '.join(func.side_effects)}")
+    else:
+        lines.append(" * @sideEffects none")
+
+    lines.append(f" * @idempotent {'yes' if func.idempotent else 'no'}")
+    lines.append(" */")
+
+    # Function signature (no type annotations)
+    params = ", ".join(inp.name for inp in func.inputs)
+    lines.append(f"export function {func.name}({params}) {{}}")
+
+    return lines
+
+
+def render_log_key_preamble_js(key: str) -> str:
+    """Generate a JavaScript logging preamble that embeds the PACT log key."""
+    return f'const PACT_KEY = "{key}";'
+
+
 # ── Dependency Map ───────────────────────────────────────────────────
 
 

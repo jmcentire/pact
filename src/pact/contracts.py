@@ -19,24 +19,114 @@ from pact.schemas import (
 
 logger = logging.getLogger(__name__)
 
+# Built-in primitives and wrappers that should never produce validation errors.
+_BUILTIN_TYPES = frozenset({
+    "str", "int", "float", "bool", "None", "bytes", "dict", "list", "any",
+    "Optional", "Union", "tuple", "set", "frozenset", "Callable",
+    "Iterator", "Generator", "Sequence", "Mapping", "Iterable",
+    "Any",
+})
+
+
+def extract_base_types(type_ref: str) -> list[str]:
+    """Extract all base type names from a parameterized type reference.
+
+    Handles bracket syntax (list[str], dict[str, int], Optional[Foo]),
+    pipe unions (str | None), and nested combinations.
+
+    Examples:
+        "str" -> ["str"]
+        "list[str]" -> ["list", "str"]
+        "dict[str, int]" -> ["dict", "str", "int"]
+        "Optional[Foo]" -> ["Optional", "Foo"]
+        "list[dict[str, Bar]]" -> ["list", "dict", "str", "Bar"]
+        "str | None" -> ["str", "None"]
+    """
+    type_ref = type_ref.strip()
+    if not type_ref:
+        return []
+
+    # Handle pipe unions: "X | Y | Z"
+    if "|" in type_ref and "[" not in type_ref:
+        result = []
+        for part in type_ref.split("|"):
+            result.extend(extract_base_types(part.strip()))
+        return result
+
+    # Handle bracket syntax: "X[Y, Z]"
+    bracket_pos = type_ref.find("[")
+    if bracket_pos > 0 and type_ref.endswith("]"):
+        base = type_ref[:bracket_pos].strip()
+        inner = type_ref[bracket_pos + 1:-1]
+
+        result = [base]
+
+        # Split inner on commas at depth 0
+        parts = _split_at_depth_zero(inner)
+        for part in parts:
+            result.extend(extract_base_types(part.strip()))
+        return result
+
+    # Handle pipe unions inside parameterized types: "X[A | B]" is handled
+    # by the bracket case above; standalone "A | B" needs depth-aware splitting
+    if "|" in type_ref:
+        # Pipe inside brackets already handled — this is a top-level pipe
+        result = []
+        parts = _split_at_depth_zero(type_ref, delimiter="|")
+        if len(parts) > 1:
+            for part in parts:
+                result.extend(extract_base_types(part.strip()))
+            return result
+
+    # Simple name — no brackets, no pipes
+    return [type_ref]
+
+
+def _split_at_depth_zero(s: str, delimiter: str = ",") -> list[str]:
+    """Split a string on delimiter only at bracket depth 0."""
+    parts = []
+    depth = 0
+    current: list[str] = []
+    for ch in s:
+        if ch in ("[", "("):
+            depth += 1
+            current.append(ch)
+        elif ch in ("]", ")"):
+            depth -= 1
+            current.append(ch)
+        elif ch == delimiter and depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    if current:
+        parts.append("".join(current))
+    return parts
+
+
+def _check_type_ref(type_ref: str, defined_types: set[str]) -> bool:
+    """Return True if all base types in type_ref resolve to defined_types."""
+    base_types = extract_base_types(type_ref)
+    return all(bt in defined_types for bt in base_types)
+
 
 def validate_type_references(contract: ComponentContract) -> list[str]:
     """Check that all type_ref values in fields resolve to a defined type."""
     defined_types = {t.name for t in contract.types}
-    # Add primitives
-    defined_types |= {"str", "int", "float", "bool", "None", "bytes", "dict", "list", "any"}
+    # Add primitives and built-in wrappers
+    defined_types |= _BUILTIN_TYPES
     errors = []
 
     for func in contract.functions:
         # Check output type
-        if func.output_type and func.output_type not in defined_types:
+        if func.output_type and not _check_type_ref(func.output_type, defined_types):
             errors.append(
                 f"Function '{func.name}' output_type '{func.output_type}' "
                 f"not defined in component '{contract.component_id}'"
             )
         # Check input types
         for field in func.inputs:
-            if field.type_ref not in defined_types:
+            if not _check_type_ref(field.type_ref, defined_types):
                 errors.append(
                     f"Function '{func.name}' input '{field.name}' type_ref "
                     f"'{field.type_ref}' not defined in component '{contract.component_id}'"
@@ -45,14 +135,14 @@ def validate_type_references(contract: ComponentContract) -> list[str]:
     # Check struct field types
     for type_spec in contract.types:
         for field in type_spec.fields:
-            if field.type_ref not in defined_types:
+            if not _check_type_ref(field.type_ref, defined_types):
                 errors.append(
                     f"Type '{type_spec.name}' field '{field.name}' type_ref "
                     f"'{field.type_ref}' not defined in component '{contract.component_id}'"
                 )
         # Check item_type for list types
         if type_spec.kind == "list" and type_spec.item_type:
-            if type_spec.item_type not in defined_types:
+            if not _check_type_ref(type_spec.item_type, defined_types):
                 errors.append(
                     f"Type '{type_spec.name}' item_type '{type_spec.item_type}' "
                     f"not defined in component '{contract.component_id}'"

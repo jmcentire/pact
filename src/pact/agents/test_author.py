@@ -50,6 +50,24 @@ Key principles:
 - Use descriptive test names that explain the scenario
 - Include clear assertions with helpful failure messages"""
 
+TEST_SYSTEM_JS = """You are a test author for contract-driven development.
+Your job is to generate executable Vitest test code in JavaScript that
+verifies implementations against their contracts.
+
+Key principles:
+- Tests verify behavior at boundaries (inputs/outputs), not internals
+- Cover happy paths, edge cases, error cases, and invariants
+- Dependencies must be mocked — tests verify one component in isolation
+- Generated code must be syntactically valid JavaScript (ES6+ modules)
+- Use describe() and it() blocks to organize tests
+- Use expect() assertions with clear matchers (toBe, toEqual, toThrow, etc.)
+- Mock dependencies with vi.mock() and vi.fn()
+- Import from the source module using relative ESM imports with .js extensions
+- Use only vitest — no external dependencies beyond vitest
+- Do NOT use TypeScript annotations — no type annotations, no interfaces
+- Use descriptive test names that explain the scenario
+- Include clear assertions with helpful failure messages"""
+
 
 def _render_focused_contract(contract: ComponentContract) -> str:
     """Render a focused contract summary for test authoring.
@@ -236,6 +254,38 @@ Requirements:
 
 The generated_code field should contain the COMPLETE test file content,
 ready to be saved as contract_test.ts and run with vitest."""
+    elif language == "javascript":
+        system_prompt = TEST_SYSTEM_JS
+        prompt = f"""Generate a complete ContractTestSuite with executable Vitest test code in JavaScript.
+
+Research approach: {research.recommended_approach}
+Plan: {plan.plan_summary}
+
+Requirements:
+- component_id must be "{contract.component_id}"
+- contract_version must be {contract.version}
+- Include test_cases for:
+  * At least one happy_path test per function
+  * Edge cases based on preconditions and field validators
+  * Error case tests for each ErrorCase defined
+  * Invariant tests if contract has invariants
+- generated_code must be valid JavaScript Vitest code (NOT TypeScript)
+- Use describe() and it() blocks to organize tests
+- Use expect() assertions (toBe, toEqual, toThrow, toHaveBeenCalled, etc.)
+- Mock all dependencies using vi.mock() and vi.fn()
+- Import from vitest: import {{ describe, it, expect, vi }} from 'vitest'
+- Import the component module using relative ESM imports with .js extensions, e.g.:
+  import {{ functionName }} from '../src/{contract.component_id}.js'
+- Each test should have clear assertions
+- test_language must be "javascript"
+- ONLY use vitest — do NOT use jest, mocha, or any other test framework
+- Do NOT use TypeScript annotations — plain JavaScript only
+- For enum types, access variants using the EXACT names from the contract
+  (e.g., if the contract says variants: ["active", "paused"], use
+  MyEnum.active, NOT MyEnum.ACTIVE)
+
+The generated_code field should contain the COMPLETE test file content,
+ready to be saved as contract_test.js and run with vitest."""
     else:
         system_prompt = TEST_SYSTEM
         prompt = f"""Generate a complete ContractTestSuite with executable pytest code.

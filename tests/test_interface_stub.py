@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from pact.interface_stub import (
+    _map_type_js,
     render_dependency_map,
     render_handoff_brief,
     render_progress_snapshot,
     render_stub,
+    render_stub_js,
 )
 from pact.schemas import (
     ComponentContract,
@@ -385,3 +387,68 @@ class TestRenderProgressSnapshot:
         snapshot = render_progress_snapshot(state)
         assert "PAUSED" in snapshot
         assert "Waiting for user input" in snapshot
+
+
+class TestRenderStubJs:
+    """Tests for JavaScript JSDoc interface stub generation."""
+
+    def test_basic_rendering(self):
+        contract = _make_pricing_contract()
+        stub = render_stub_js(contract)
+        assert "Pricing Engine" in stub
+        assert "pricing" in stub
+
+    def test_contains_jsdoc_typedef(self):
+        contract = _make_pricing_contract()
+        stub = render_stub_js(contract)
+        assert "@typedef" in stub
+
+    def test_contains_function_export(self):
+        contract = _make_pricing_contract()
+        stub = render_stub_js(contract)
+        assert "export function calculate_price" in stub
+
+    def test_no_typescript_syntax(self):
+        contract = _make_pricing_contract()
+        stub = render_stub_js(contract)
+        assert "interface " not in stub
+        assert ": string" not in stub
+        assert ": number" not in stub
+
+    def test_required_exports_section(self):
+        contract = _make_pricing_contract()
+        stub = render_stub_js(contract)
+        assert "REQUIRED EXPORTS" in stub
+
+    def test_enum_as_jsdoc(self):
+        contract = _make_pricing_contract()
+        stub = render_stub_js(contract)
+        # Enum should render as JSDoc @typedef with union literal
+        assert "PricingError" in stub
+        assert "unit_not_found" in stub
+
+
+class TestMapTypeJs:
+    """Tests for JSDoc type mapping."""
+
+    def test_str_to_string(self):
+        assert _map_type_js("str") == "string"
+
+    def test_int_to_number(self):
+        assert _map_type_js("int") == "number"
+
+    def test_bool_to_boolean(self):
+        assert _map_type_js("bool") == "boolean"
+
+    def test_custom_type_passthrough(self):
+        assert _map_type_js("PriceResult") == "PriceResult"
+
+    def test_list_to_array(self):
+        result = _map_type_js("list[str]")
+        assert "Array" in result
+        assert "string" in result
+
+    def test_optional(self):
+        result = _map_type_js("Optional[str]")
+        assert "string" in result
+        assert "undefined" in result
