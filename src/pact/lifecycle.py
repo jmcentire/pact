@@ -85,6 +85,20 @@ def format_run_summary(state: RunState) -> str:
         lines.append(f"  Components: {completed}/{total} done, {failed} failed")
     if state.pause_reason:
         lines.append(f"  Reason: {state.pause_reason}")
+
+    # Show health status from snapshot if available.
+    # Read pre-computed status to avoid calling check_health()
+    # (which has logging side effects inappropriate for a format function).
+    if state.health_snapshot:
+        try:
+            status = state.health_snapshot.get("_overall_status", "")
+            if status:
+                lines.append(f"  Health: {status.upper()}")
+                for msg in state.health_snapshot.get("_critical_findings", [])[:2]:
+                    lines.append(f"    {msg}")
+        except Exception:
+            pass
+
     return "\n".join(lines)
 
 

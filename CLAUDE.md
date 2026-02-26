@@ -238,3 +238,15 @@ pact incident <project-dir> <id>      # Show incident details + diagnostic repor
 make test          # 1260 tests, ~5s
 make test-quick    # Stop on first failure
 ```
+
+## Kindex Knowledge Graph
+
+A persistent knowledge graph (`kin`) indexes conversations, projects, and intellectual work across all repos. It hooks into Claude Code automatically (SessionStart, PreCompact). Docs: https://jmcentire.github.io/kindex/
+
+```bash
+kin search "pact contracts"      # Hybrid search (FTS + graph)
+kin context contracts             # Pull related context
+kin add "<insight>"               # Capture discoveries
+```
+
+Legacy Conv vault (459 nodes, richer historical data): `~/Personal/Projects/Conv/`

@@ -354,6 +354,32 @@ class TestRunState:
         assert s.total_cost_usd == 0.05
 
 
+class TestHealthSnapshot:
+    def test_default_empty_dict(self):
+        s = RunState(id="test", project_dir="/tmp/t")
+        assert s.health_snapshot == {}
+
+    def test_roundtrip_json(self):
+        s = RunState(
+            id="test", project_dir="/tmp/t",
+            health_snapshot={
+                "planning_tokens": 1000,
+                "generation_tokens": 2000,
+                "cascade_events": 1,
+            },
+        )
+        data = s.model_dump_json()
+        restored = RunState.model_validate_json(data)
+        assert restored.health_snapshot["planning_tokens"] == 1000
+        assert restored.health_snapshot["cascade_events"] == 1
+
+    def test_empty_snapshot_roundtrip(self):
+        s = RunState(id="test", project_dir="/tmp/t", health_snapshot={})
+        data = s.model_dump_json()
+        restored = RunState.model_validate_json(data)
+        assert restored.health_snapshot == {}
+
+
 class TestGateResult:
     def test_passed(self):
         g = GateResult(passed=True, reason="All good")

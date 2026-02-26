@@ -167,6 +167,14 @@ class ProjectConfig:
     language: str = "python"        # Valid values: "python", "typescript", "javascript"
     test_framework: str = ""        # Auto-detect: "pytest" for python, "vitest" for typescript/javascript
 
+    # Health thresholds (per-project overrides — None = use defaults)
+    # Example in pact.yaml:
+    #   health_thresholds:
+    #     output_planning_ratio_warning: 0.3
+    #     output_planning_ratio_critical: 0.15
+    #     rejection_rate_critical: 0.9
+    health_thresholds: dict[str, float] = field(default_factory=dict)
+
     # Monitoring (per-project overrides)
     monitoring_log_files: list[str] = field(default_factory=list)
     monitoring_process_patterns: list[str] = field(default_factory=list)
@@ -307,6 +315,7 @@ def load_project_config(project_dir: str | Path) -> ProjectConfig:
             ["ERROR", "CRITICAL", "Traceback"],
         ),
         monitoring_auto_remediate=raw.get("monitoring_auto_remediate"),
+        health_thresholds=raw.get("health_thresholds", {}),
     )
 
     model_tiers_raw = raw.get("model_tiers", {})

@@ -481,6 +481,7 @@ class RunState(BaseModel):
     completed_at: str = ""
     pause_reason: str = ""
     phase_cycles: int = 0
+    health_snapshot: dict = {}  # Serialized HealthMetrics, accumulates across phases
 
     def record_tokens(self, input_tokens: int, output_tokens: int, cost: float) -> None:
         self.total_tokens += input_tokens + output_tokens

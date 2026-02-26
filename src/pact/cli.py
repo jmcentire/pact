@@ -220,6 +220,32 @@ def main() -> None:
     p_audit.add_argument("project_dir", help="Project directory path")
     p_audit.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
 
+    # test-gen
+    p_testgen = subparsers.add_parser("test-gen", help="Generate tests + security audit for any codebase")
+    p_testgen.add_argument("project_dir", help="Root directory of the codebase to analyze")
+    p_testgen.add_argument("--language", default="python", choices=["python", "typescript"], help="Language (default: python)")
+    p_testgen.add_argument("--budget", type=float, default=10.0, help="Max LLM spend in dollars (default: 10.0)")
+    p_testgen.add_argument("--model", default="claude-sonnet-4-5-20250929", help="LLM model for generation")
+    p_testgen.add_argument("--backend", default="anthropic", help="LLM backend (default: anthropic)")
+    p_testgen.add_argument("--complexity-threshold", type=int, default=5, help="Min complexity for priority (default: 5)")
+    p_testgen.add_argument("--dry-run", action="store_true", help="Run analysis only, no LLM calls")
+    p_testgen.add_argument("--json", action="store_true", dest="json_output", help="Output result as JSON")
+    p_testgen.add_argument("--include-covered", action="store_true", help="Include already-covered functions")
+
+    # adopt
+    p_adopt = subparsers.add_parser("adopt", help="Adopt existing codebase under pact governance")
+    p_adopt.add_argument("project_dir", help="Root directory of the codebase to adopt")
+    p_adopt.add_argument("--language", default="python", choices=["python", "typescript"], help="Language (default: python)")
+    p_adopt.add_argument("--budget", type=float, default=10.0, help="Max LLM spend in dollars (default: 10.0)")
+    p_adopt.add_argument("--model", default="claude-sonnet-4-5-20250929", help="LLM model for generation")
+    p_adopt.add_argument("--backend", default="anthropic", help="LLM backend (default: anthropic)")
+    p_adopt.add_argument("--complexity-threshold", type=int, default=5, help="Min complexity for priority (default: 5)")
+    p_adopt.add_argument("--dry-run", action="store_true", help="Analyze only, no LLM calls or state changes")
+
+    # health
+    p_health = subparsers.add_parser("health", help="Check pipeline health (dysmemic pressure detection)")
+    p_health.add_argument("project_dir", help="Project directory path")
+
     args = parser.parse_args()
 
     if args.verbose:
@@ -293,6 +319,12 @@ def main() -> None:
         cmd_export_tasks(args)
     elif args.command == "audit":
         asyncio.run(cmd_audit(args))
+    elif args.command == "test-gen":
+        asyncio.run(cmd_test_gen(args))
+    elif args.command == "adopt":
+        asyncio.run(cmd_adopt(args))
+    elif args.command == "health":
+        cmd_health(args)
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -1973,6 +2005,143 @@ async def cmd_audit(args: argparse.Namespace) -> None:
 
     print(render_audit_markdown(result))
 
+
+async def cmd_test_gen(args: argparse.Namespace) -> None:
+    """Generate tests + security audit for any codebase."""
+    import sys
+    from pathlib import Path
+
+    project_dir = Path(args.project_dir).resolve()
+    if not project_dir.is_dir():
+        print(f"Error: '{args.project_dir}' is not a directory", file=sys.stderr)
+        sys.exit(1)
+
+    from pact.test_gen import render_summary, run_test_gen
+
+    result = await run_test_gen(
+        project_path=project_dir,
+        language=args.language,
+        budget=args.budget,
+        model=args.model,
+        backend=args.backend,
+        complexity_threshold=args.complexity_threshold,
+        skip_covered=not args.include_covered,
+        dry_run=args.dry_run,
+    )
+
+    if args.json_output:
+        print(result.model_dump_json(indent=2))
+    else:
+        print(render_summary(result))
+
+
+async def cmd_adopt(args: argparse.Namespace) -> None:
+    """Adopt an existing codebase under pact governance."""
+    import sys
+    from pathlib import Path
+
+    project_dir = Path(args.project_dir).resolve()
+    if not project_dir.is_dir():
+        print(f"Error: '{args.project_dir}' is not a directory", file=sys.stderr)
+        sys.exit(1)
+
+    from pact.adopt import adopt_codebase
+
+    result = await adopt_codebase(
+        project_path=project_dir,
+        language=args.language,
+        budget=args.budget,
+        model=args.model,
+        backend=args.backend,
+        complexity_threshold=args.complexity_threshold,
+        dry_run=args.dry_run,
+    )
+
+    print(result.summary())
+
+
+def cmd_health(args: argparse.Namespace) -> None:
+    """Check pipeline health — dysmemic pressure detection."""
+    from pact.health import (
+        HealthMetrics,
+        check_health,
+        render_health_report,
+        suggest_remedies,
+    )
+    from pact.project import ProjectManager
+
+    project = ProjectManager(args.project_dir)
+
+    metrics = HealthMetrics()
+
+    if project.has_state():
+        state = project.load_state()
+
+        # Prefer accumulated health_snapshot when available (accurate)
+        if state.health_snapshot:
+            metrics = HealthMetrics.from_dict(state.health_snapshot)
+        else:
+            # Fall back to component-task reconstruction for old state files
+            metrics.budget_cap = state.total_cost_usd or 10.0
+            metrics.total_spend = state.total_cost_usd
+
+            for ct in state.component_tasks:
+                if ct.status == "failed":
+                    metrics.record_component_failure(ct.component_id)
+                    metrics.record_attempt(success=False)
+                elif ct.status == "completed":
+                    metrics.record_attempt(success=True)
+                    metrics.contracts_produced += 1
+                    metrics.tests_produced += 1
+                    metrics.implementations_produced += 1
+
+            # Parse audit trail for token-level metrics
+            audit = project.load_audit()
+            for entry in audit:
+                action = entry.get("action", "")
+                if "research" in action or "plan" in action or "interview" in action:
+                    metrics.planning_calls += 1
+                elif "contract" in action or "test" in action or "implement" in action or "build" in action:
+                    metrics.generation_calls += 1
+
+    report = check_health(metrics)
+    print(render_health_report(report))
+
+    # Show token breakdown if data is available
+    if metrics.planning_tokens > 0 or metrics.generation_tokens > 0:
+        total = metrics.planning_tokens + metrics.generation_tokens
+        plan_pct = (metrics.planning_tokens / total * 100) if total else 0
+        gen_pct = (metrics.generation_tokens / total * 100) if total else 0
+        print(f"\nToken breakdown:")
+        print(f"  Planning:   {metrics.planning_tokens:>10,} ({plan_pct:.0f}%)")
+        print(f"  Generation: {metrics.generation_tokens:>10,} ({gen_pct:.0f}%)")
+        print(f"  Ratio:      {metrics.output_planning_ratio:.2f}x gen/plan")
+
+    # Show per-phase token table
+    if metrics.phase_tokens:
+        print(f"\nPer-phase tokens:")
+        for phase, pt in sorted(metrics.phase_tokens.items()):
+            print(f"  {phase:12s}  in={pt.input_tokens:>8,}  out={pt.output_tokens:>8,}  calls={pt.calls}")
+
+    # Show cascade event count
+    if metrics.cascade_events > 0:
+        print(f"\nCascade events: {metrics.cascade_events}")
+
+    # Show suggested remedies
+    remedies = suggest_remedies(report, metrics)
+    if remedies:
+        auto = [r for r in remedies if r.auto]
+        proposed = [r for r in remedies if not r.auto]
+        if auto:
+            print(f"\nAuto-applied remedies:")
+            for r in auto:
+                print(f"  [{r.kind}] {r.description}")
+        if proposed:
+            print(f"\nProposed remedies (apply via FIFO):")
+            for r in proposed:
+                print(f"  [{r.kind}] {r.description}")
+                if r.fifo_hint:
+                    print(f"    pact signal {args.project_dir} --directive '{r.fifo_hint}'")
 
 if __name__ == "__main__":
     main()

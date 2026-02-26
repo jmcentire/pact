@@ -163,6 +163,32 @@ class TestMonitoringConfigFields:
         assert pc.monitoring_auto_remediate is False
 
 
+class TestHealthThresholds:
+    def test_default_empty(self):
+        pc = ProjectConfig()
+        assert pc.health_thresholds == {}
+
+    def test_load_from_pact_yaml(self, tmp_path: Path):
+        config_path = tmp_path / "pact.yaml"
+        config_path.write_text(yaml.dump({
+            "health_thresholds": {
+                "output_planning_ratio_warning": 0.3,
+                "output_planning_ratio_critical": 0.15,
+                "rejection_rate_critical": 0.9,
+            },
+        }))
+        pc = load_project_config(tmp_path)
+        assert pc.health_thresholds["output_planning_ratio_warning"] == 0.3
+        assert pc.health_thresholds["output_planning_ratio_critical"] == 0.15
+        assert pc.health_thresholds["rejection_rate_critical"] == 0.9
+
+    def test_missing_health_thresholds_defaults_empty(self, tmp_path: Path):
+        config_path = tmp_path / "pact.yaml"
+        config_path.write_text(yaml.dump({"budget": 25.00}))
+        pc = load_project_config(tmp_path)
+        assert pc.health_thresholds == {}
+
+
 class TestBidirectionalConfigFields:
     def test_global_config_bidirectional_defaults(self):
         gc = GlobalConfig()

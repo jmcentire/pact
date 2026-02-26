@@ -1,6 +1,6 @@
 [project]
 name = "pact-agents"
-version = "0.2.0"
+version = "0.3.0"
 description = "Contract-first multi-agent software engineering. Contracts before code. Tests as law. Agents that can't cheat."
 readme = "README.md"
 license = {text = "MIT"}

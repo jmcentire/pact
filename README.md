@@ -83,6 +83,35 @@ Interview -----> Shape (opt) -----> Decompose -----> Contract -----> Test
 8. **Integrate** -- Parent components composed via glue code
 9. **Diagnose** -- On failure: I/O tracing, root cause, recovery
 
+## Health Monitoring
+
+Pact monitors its own coordination health — detecting the specific failure modes of agentic pipelines before they consume the budget.
+
+| Metric | What It Detects |
+|--------|-----------------|
+| **Output/planning ratio** | Spending $50 on planning and shipping nothing |
+| **Rejection rate** | Agents optimizing for each other's approval, not outcomes |
+| **Budget velocity** | Coordination cost exceeding execution value |
+| **Phase balance** | Any single phase consuming disproportionate budget |
+| **Cascade detection** | One component's failure propagating through the tree |
+
+When critical conditions fire, Pact pauses and proposes remedies via FIFO — the user decides whether to apply them. The system never silently modifies its own configuration.
+
+```bash
+pact health my-project                    # View health metrics
+pact signal my-project --directive \
+  '{"type":"apply_remedy","remedy":"max_plan_revisions","value":1}'
+```
+
+Per-project thresholds in `pact.yaml`:
+
+```yaml
+health_thresholds:
+  output_planning_ratio_warning: 0.3
+  rejection_rate_critical: 0.9
+  cascade_critical: 10
+```
+
 ## Two Execution Levers
 
 | Lever | Config Key | Effect |
@@ -123,6 +152,7 @@ pact build my-project sync_tracker --competitive --agents 3
 | `pact signal <project>` | Resume a paused daemon |
 | `pact watch <project>...` | Start Sentinel production monitor (Ctrl+C to stop) |
 | `pact report <project> <error>` | Manually report a production error |
+| `pact health <project>` | Show health metrics, findings, and proposed remedies |
 | `pact incidents <project>` | List active/recent incidents |
 | `pact incident <project> <id>` | Show incident details + diagnostic report |
 | `pact audit <project>` | Spec-compliance audit (compare task.md vs implementations) |
@@ -182,6 +212,11 @@ monitoring_error_patterns:
   - "ERROR"
   - "CRITICAL"
   - "Traceback"
+
+# Health thresholds (override defaults)
+health_thresholds:
+  output_planning_ratio_warning: 0.3
+  rejection_rate_critical: 0.9
 ```
 
 Project config overrides global. Both are optional.
@@ -233,7 +268,7 @@ my-project/
 
 ```bash
 make dev          # Install with LLM backend support
-make test         # Run full test suite (950 tests)
+make test         # Run full test suite (1458 tests)
 make test-quick   # Stop on first failure
 make clean        # Remove venv and caches
 ```

@@ -121,6 +121,104 @@ class TestSchedulerBackendRouting:
         assert callable(integrate_all_iterative)
 
 
+class TestCascadeDetection:
+    """Test cascade event detection from tree structure."""
+
+    def _make_tree(self):
+        """Create a simple tree: root -> [a, b], a -> [a1, a2]."""
+        from pact.schemas import DecompositionNode, DecompositionTree
+        return DecompositionTree(
+            root_id="root",
+            nodes={
+                "root": DecompositionNode(
+                    component_id="root", name="Root",
+                    description="Root", children=["a", "b"],
+                ),
+                "a": DecompositionNode(
+                    component_id="a", name="A",
+                    description="A", parent_id="root",
+                    children=["a1", "a2"],
+                ),
+                "b": DecompositionNode(
+                    component_id="b", name="B",
+                    description="B", parent_id="root",
+                ),
+                "a1": DecompositionNode(
+                    component_id="a1", name="A1",
+                    description="A1", parent_id="a",
+                ),
+                "a2": DecompositionNode(
+                    component_id="a2", name="A2",
+                    description="A2", parent_id="a",
+                ),
+            },
+        )
+
+    def test_no_cascade_independent_failures(self):
+        """Independent failures (no parent/sibling overlap) = 0 cascades."""
+        from pact.scheduler import detect_cascade
+        tree = self._make_tree()
+        # a1 and b are in different subtrees — no cascade
+        assert detect_cascade(tree, {"a1", "b"}) == 0
+
+    def test_cascade_parent_child(self):
+        """Parent and child both failed = 1 cascade event (the pair)."""
+        from pact.scheduler import detect_cascade
+        tree = self._make_tree()
+        # a and a1 — a1's parent is a, which is also failed
+        # One unique pair: {a, a1}
+        assert detect_cascade(tree, {"a", "a1"}) == 1
+
+    def test_cascade_siblings(self):
+        """Two siblings both failed = 1 lateral spread event."""
+        from pact.scheduler import detect_cascade
+        tree = self._make_tree()
+        # a1 and a2 are siblings under a — one unique pair: {a1, a2}
+        assert detect_cascade(tree, {"a1", "a2"}) == 1
+
+    def test_cascade_full_subtree(self):
+        """Parent + both children failed = 3 unique cascade pairs."""
+        from pact.scheduler import detect_cascade
+        tree = self._make_tree()
+        # Unique pairs: {a, a1}, {a, a2}, {a1, a2}
+        assert detect_cascade(tree, {"a", "a1", "a2"}) == 3
+
+
+class TestApplyRemedy:
+    """Test user-triggered remedy application via scheduler."""
+
+    def test_apply_max_plan_revisions(self, scheduler_setup):
+        pm, scheduler = scheduler_setup
+        assert scheduler.global_config.max_plan_revisions == 2
+        result = scheduler.apply_remedy("max_plan_revisions", 1)
+        assert "2 -> 1" in result
+        assert scheduler.global_config.max_plan_revisions == 1
+
+    def test_apply_max_plan_revisions_no_op_when_same(self, scheduler_setup):
+        pm, scheduler = scheduler_setup
+        scheduler.global_config.max_plan_revisions = 1
+        result = scheduler.apply_remedy("max_plan_revisions", 1)
+        assert result == ""
+
+    def test_apply_shaping_disable(self, scheduler_setup):
+        pm, scheduler = scheduler_setup
+        scheduler.global_config.shaping = True
+        result = scheduler.apply_remedy("shaping")
+        assert "Disabled" in result
+        assert scheduler.global_config.shaping is False
+
+    def test_apply_shaping_no_op_when_already_false(self, scheduler_setup):
+        pm, scheduler = scheduler_setup
+        scheduler.global_config.shaping = False
+        result = scheduler.apply_remedy("shaping")
+        assert result == ""
+
+    def test_apply_unknown_remedy_returns_empty(self, scheduler_setup):
+        pm, scheduler = scheduler_setup
+        result = scheduler.apply_remedy("nonexistent")
+        assert result == ""
+
+
 class TestPhaseCycleDetection:
     """Test that diagnose→implement/integrate loops are bounded."""
 

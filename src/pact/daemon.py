@@ -222,6 +222,16 @@ class Daemon:
                     logger.info("Context injected: %s chars", len(ctx))
                     self.project.append_audit("inject_context", f"{len(ctx)} chars")
 
+                if directive.type == "apply_remedy":
+                    remedy_kind = directive.payload.get("remedy", "")
+                    remedy_value = directive.payload.get("value")
+                    if remedy_kind:
+                        result = self.scheduler.apply_remedy(remedy_kind, remedy_value)
+                        if result:
+                            logger.info("Remedy applied: %s", result)
+                        else:
+                            logger.info("Remedy '%s' — no change needed", remedy_kind)
+
                 # Unpause
                 state.status = "active"
                 state.pause_reason = ""
@@ -252,6 +262,22 @@ class Daemon:
                 state.phase, state.status,
                 f"${state.total_cost_usd:.4f}",
             )
+
+            # Health check between phases — detect dysmemic pressure.
+            # The scheduler now does the real instrumentation, remediation,
+            # and abort decisions. Daemon only logs if already paused by
+            # the scheduler's health check (avoids overwriting the
+            # scheduler's more detailed pause_reason).
+            try:
+                if (
+                    state.status == "paused"
+                    and state.health_snapshot
+                    and "dysmemic pressure" in state.pause_reason
+                ):
+                    logger.error("Health check triggered pause — dysmemic pressure detected")
+                    self.project.append_audit("health_abort", state.pause_reason)
+            except Exception:
+                pass  # Health checks are advisory, never block the pipeline
 
     # ── FIFO Signal Waiting ─────────────────────────────────────────
 

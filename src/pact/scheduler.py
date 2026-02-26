@@ -37,9 +37,46 @@ from pact.implementer import implement_all, implement_all_iterative, implement_c
 from pact.integrator import integrate_all, integrate_all_iterative
 from pact.lifecycle import advance_phase, format_run_summary
 from pact.project import ProjectManager
-from pact.schemas import ComponentTask, RunState, TestResults
+from pact.schemas import ComponentTask, DecompositionTree, RunState, TestResults
 
 logger = logging.getLogger(__name__)
+
+# ── Phase Classification ──────────────────────────────────────────
+
+PLANNING_PHASES = {"interview", "shape", "decompose", "diagnose"}
+GENERATION_PHASES = {"implement", "integrate"}
+
+
+def detect_cascade(tree: "DecompositionTree", failed_set: set[str]) -> int:
+    """Detect cascade events from the tree structure.
+
+    A cascade event is a unique pair where:
+    - A failed component's parent also failed (propagation up)
+    - Two failed siblings share a parent (lateral spread)
+
+    Uses frozenset pairs to avoid double-counting (a->b and b->a
+    are the same cascade event).
+
+    Returns count of unique cascade events detected.
+    """
+    seen_pairs: set[frozenset[str]] = set()
+
+    for cid in failed_set:
+        # Check parent propagation
+        parent = tree.parent_of(cid)
+        if parent and parent.component_id in failed_set:
+            pair = frozenset({cid, parent.component_id})
+            seen_pairs.add(pair)
+
+        # Check sibling spread
+        if parent:
+            siblings = tree.children_of(parent.component_id)
+            for sib in siblings:
+                if sib.component_id != cid and sib.component_id in failed_set:
+                    pair = frozenset({cid, sib.component_id})
+                    seen_pairs.add(pair)
+
+    return len(seen_pairs)
 
 
 @dataclass
@@ -219,6 +256,9 @@ class Scheduler:
         sops = self.project.load_sops()
         phase = state.phase
 
+        # Snapshot token counts before phase dispatch
+        pre_in, pre_out = self.budget.project_tokens
+
         # Resolve context_max_chars from config
         context_max_chars = (
             self.project_config.context_max_chars
@@ -290,6 +330,37 @@ class Scheduler:
                 detail=phase,
                 component_id=str(len(self.project.load_tree().nodes)) if phase == "decompose" and self.project.load_tree() else "",
             ))
+
+        # ── Health instrumentation (never blocks the pipeline) ──
+        try:
+            from pact.health import HealthMetrics
+
+            post_in, post_out = self.budget.project_tokens
+            delta_in = post_in - pre_in
+            delta_out = post_out - pre_out
+
+            metrics = HealthMetrics.from_dict(state.health_snapshot)
+
+            # Record per-phase tokens
+            if delta_in > 0 or delta_out > 0:
+                metrics.record_phase_tokens(phase, delta_in, delta_out)
+
+            # Categorize as planning or generation
+            if phase in PLANNING_PHASES and (delta_in > 0 or delta_out > 0):
+                metrics.record_planning(delta_in, delta_out)
+            elif phase in GENERATION_PHASES and (delta_in > 0 or delta_out > 0):
+                metrics.record_generation(delta_in, delta_out)
+
+            # Sync total spend from budget tracker
+            metrics.total_spend = self.budget.project_spend
+            metrics.budget_cap = self.budget.per_project_cap
+
+            state.health_snapshot = metrics.to_dict()
+
+            # Run health check and apply remedies
+            state = self._check_health_and_remediate(state)
+        except Exception:
+            pass  # Health instrumentation never blocks the pipeline
 
         # Budget warning at 80%
         if self.budget.spend_percentage >= 80.0 and state.status == "active":
@@ -421,6 +492,22 @@ class Scheduler:
             )
 
             if gate.passed:
+                # Record decompose-phase artifact counts for health.
+                # Use delta against previously-counted artifacts to avoid
+                # inflation when diagnose loops back to decompose.
+                try:
+                    from pact.health import HealthMetrics
+                    metrics = HealthMetrics.from_dict(state.health_snapshot)
+                    contracts = self.project.load_all_contracts()
+                    test_suites = self.project.load_all_test_suites()
+                    new_contracts = max(0, len(contracts) - metrics.contracts_produced)
+                    new_tests = max(0, len(test_suites) - metrics.tests_produced)
+                    metrics.contracts_produced += new_contracts
+                    metrics.tests_produced += new_tests
+                    state.health_snapshot = metrics.to_dict()
+                except Exception:
+                    pass  # Health recording never blocks
+
                 # Set up component tasks
                 tree = self.project.load_tree()
                 if tree:
@@ -557,6 +644,40 @@ class Scheduler:
 
         # --- Common post-implementation logic (both paths) ---
 
+        # Record health metrics from implementation results
+        try:
+            from pact.health import HealthMetrics
+            metrics = HealthMetrics.from_dict(state.health_snapshot)
+
+            for cid, r in results.items():
+                if r.all_passed:
+                    metrics.record_attempt(success=True)
+                    metrics.implementations_produced += 1
+                    # tests_produced already counted in _phase_decompose
+                else:
+                    metrics.record_attempt(success=False)
+                    metrics.record_component_failure(cid)
+                if r.passed > 0 or r.failed > 0:
+                    metrics.record_test_run(r.passed, r.failed)
+
+            # Detect cascades — include previously-failed tree nodes
+            # so cross-phase cascades (implement → integrate) are visible.
+            # Use max() not accumulation: detect_cascade returns the total
+            # cascade picture at this point in time. Accumulating would
+            # double-count persistent cascades across bursts.
+            failed_set = {cid for cid, r in results.items() if not r.all_passed}
+            if tree:
+                for nid, node in tree.nodes.items():
+                    if node.implementation_status == "failed":
+                        failed_set.add(nid)
+            if failed_set and tree:
+                cascades = detect_cascade(tree, failed_set)
+                metrics.cascade_events = max(metrics.cascade_events, cascades)
+
+            state.health_snapshot = metrics.to_dict()
+        except Exception:
+            pass  # Health recording never blocks
+
         # Update task list statuses
         try:
             from pact.task_list import update_task_status
@@ -679,6 +800,38 @@ class Scheduler:
             finally:
                 await agent.close()
 
+        # Record health metrics from integration results
+        try:
+            from pact.health import HealthMetrics
+            metrics = HealthMetrics.from_dict(state.health_snapshot)
+
+            for cid, r in results.items():
+                if r.all_passed:
+                    metrics.record_attempt(success=True)
+                    metrics.implementations_produced += 1
+                else:
+                    metrics.record_attempt(success=False)
+                    metrics.record_component_failure(cid)
+                if r.passed > 0 or r.failed > 0:
+                    metrics.record_test_run(r.passed, r.failed)
+
+            # Detect cascades — include previously-failed tree nodes
+            # so implement→integrate cascades are visible.
+            # Use max() not accumulation to avoid double-counting
+            # persistent cascades across bursts.
+            failed_set = {cid for cid, r in results.items() if not r.all_passed}
+            if tree:
+                for nid, node in tree.nodes.items():
+                    if node.implementation_status == "failed":
+                        failed_set.add(nid)
+            if failed_set and tree:
+                cascades = detect_cascade(tree, failed_set)
+                metrics.cascade_events = max(metrics.cascade_events, cascades)
+
+            state.health_snapshot = metrics.to_dict()
+        except Exception:
+            pass  # Health recording never blocks
+
         # Update task list statuses for integration results
         try:
             from pact.task_list import update_task_status
@@ -711,6 +864,9 @@ class Scheduler:
         then implements the component against its contract.
         """
         state = self.project.load_state()
+        # Snapshot tokens before build for delta measurement
+        pre_in, pre_out = self.budget.project_tokens
+
         tree = self.project.load_tree()
         if not tree:
             state.fail("No decomposition tree found")
@@ -837,6 +993,34 @@ class Scheduler:
             + (f" (competitive, {num_agents} agents)" if competitive else ""),
         )
 
+        # Record health metrics for build_component
+        try:
+            from pact.health import HealthMetrics
+            metrics = HealthMetrics.from_dict(state.health_snapshot)
+
+            # Token delta for this build
+            post_in, post_out = self.budget.project_tokens
+            delta_in = post_in - pre_in
+            delta_out = post_out - pre_out
+            if delta_in > 0 or delta_out > 0:
+                metrics.record_phase_tokens("implement", delta_in, delta_out)
+                metrics.record_generation(delta_in, delta_out)
+
+            if test_results.all_passed:
+                metrics.record_attempt(success=True)
+                metrics.implementations_produced += 1
+            else:
+                metrics.record_attempt(success=False)
+                metrics.record_component_failure(component_id)
+            if test_results.passed > 0 or test_results.failed > 0:
+                metrics.record_test_run(test_results.passed, test_results.failed)
+
+            metrics.total_spend = self.budget.project_spend
+            metrics.budget_cap = self.budget.per_project_cap
+            state.health_snapshot = metrics.to_dict()
+        except Exception:
+            pass  # Health recording never blocks
+
         # Sync budget tracker totals to persistent state
         in_tok, out_tok = self.budget.project_tokens
         state.total_tokens = in_tok + out_tok
@@ -845,6 +1029,132 @@ class Scheduler:
         state.last_check_in = datetime.now().isoformat()
         self.project.save_state(state)
         return state
+
+    def _check_health_and_remediate(self, state: RunState) -> RunState:
+        """Check health and apply automated remedies if needed.
+
+        Auto-safe remedies (skip_cascaded, informational) are applied
+        immediately. Config-changing remedies (max_plan_revisions, shaping)
+        are surfaced as proposals in the pause message — the user accepts
+        them via FIFO directive.
+
+        Also persists the overall_status and critical findings into
+        health_snapshot so that format_run_summary can read them
+        without re-running check_health (which has logging side effects).
+        """
+        from pact.health import HealthMetrics, check_health, should_abort, suggest_remedies
+
+        metrics = HealthMetrics.from_dict(state.health_snapshot)
+        thresholds = getattr(self.project_config, "health_thresholds", {}) or {}
+        report = check_health(metrics, thresholds=thresholds)
+
+        # Persist report summary into snapshot for side-effect-free reads
+        snapshot = state.health_snapshot
+        snapshot["_overall_status"] = report.overall_status.value
+        snapshot["_critical_findings"] = [
+            f"[{f.condition}] {f.message[:80]}"
+            for f in report.critical_findings[:3]
+        ]
+        state.health_snapshot = snapshot
+
+        if report.overall_status.value != "healthy":
+            all_remedies = suggest_remedies(report, metrics)
+            auto_applied = self._apply_auto_remedies(
+                [r for r in all_remedies if r.auto], state,
+            )
+            proposed = [r for r in all_remedies if not r.auto]
+
+            if auto_applied:
+                self.project.append_audit(
+                    "health_remedy",
+                    "; ".join(auto_applied),
+                )
+
+            if should_abort(report):
+                parts = []
+                if auto_applied:
+                    parts.append(f"Applied: {'; '.join(auto_applied)}")
+                if proposed:
+                    proposals = "; ".join(r.description for r in proposed)
+                    parts.append(f"Proposed: {proposals}")
+                    # Store proposals in snapshot for CLI display
+                    snapshot["_proposed_remedies"] = [
+                        {"kind": r.kind, "description": r.description, "fifo_hint": r.fifo_hint}
+                        for r in proposed
+                    ]
+                    state.health_snapshot = snapshot
+
+                summary = ". ".join(parts) if parts else "no remedies available"
+                state.pause(
+                    f"Health check: dysmemic pressure detected. {summary}. "
+                    f"Review with 'pact health'."
+                )
+
+        return state
+
+    def _apply_auto_remedies(self, remedies: list, state: RunState) -> list[str]:
+        """Apply auto-safe remedies only. Returns descriptions of what was applied.
+
+        Only informational remedies are auto-safe. Everything that modifies
+        state or config is a proposal for the user — the system does not
+        unilaterally reduce its own degrees of freedom.
+        """
+        applied: list[str] = []
+
+        for remedy in remedies:
+            try:
+                if remedy.kind == "informational":
+                    applied.append(remedy.description)
+
+            except Exception as e:
+                logger.debug("Auto-remedy '%s' failed: %s", remedy.kind, e)
+
+        return applied
+
+    def apply_remedy(self, kind: str, value: str | int | None = None) -> str:
+        """Apply a user-approved remedy by kind. Called from daemon on FIFO directive.
+
+        Returns a description of what was applied, or empty string if nothing changed.
+        """
+        if kind == "max_plan_revisions":
+            target = int(value) if value is not None else 1
+            old_val = self.global_config.max_plan_revisions
+            if old_val != target:
+                self.global_config.max_plan_revisions = max(1, target)
+                msg = f"Reduced max_plan_revisions {old_val} -> {self.global_config.max_plan_revisions}"
+                self.project.append_audit("remedy_applied", msg)
+                return msg
+
+        elif kind == "shaping":
+            if self.global_config.shaping:
+                self.global_config.shaping = False
+                msg = "Disabled shaping"
+                self.project.append_audit("remedy_applied", msg)
+                return msg
+
+        elif kind == "skip_cascaded":
+            tree = self.project.load_tree()
+            if tree:
+                currently_failed = {
+                    nid for nid, n in tree.nodes.items()
+                    if n.implementation_status == "failed"
+                }
+                skipped = []
+                for cid in currently_failed:
+                    for sub_id in tree.subtree(cid):
+                        if sub_id == cid:
+                            continue
+                        node = tree.nodes.get(sub_id)
+                        if node and node.implementation_status == "pending":
+                            node.implementation_status = "failed"
+                            skipped.append(sub_id)
+                if skipped:
+                    self.project.save_tree(tree)
+                    msg = f"Skipped cascaded: {', '.join(skipped)}"
+                    self.project.append_audit("remedy_applied", msg)
+                    return msg
+
+        return ""
 
     async def _phase_diagnose(self, state: RunState, sops: str) -> RunState:
         """Diagnose failures and determine recovery action.
