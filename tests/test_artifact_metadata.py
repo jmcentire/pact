@@ -24,7 +24,7 @@ class TestArtifactMetadata:
 
     def test_metadata_defaults(self):
         meta = ArtifactMetadata()
-        assert meta.pact_version == "0.1.0"
+        assert meta.pact_version == "0.3.0"
         assert meta.model == ""
         assert meta.cost_usd == 0.0
 
