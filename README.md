@@ -268,7 +268,7 @@ my-project/
 
 ```bash
 make dev          # Install with LLM backend support
-make test         # Run full test suite (1458 tests)
+make test         # Run full test suite (1482 tests)
 make test-quick   # Stop on first failure
 make clean        # Remove venv and caches
 ```

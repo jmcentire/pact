@@ -544,6 +544,36 @@
         <h3>User-Controlled Remedies</h3>
         <p>When health degrades, Pact pauses and proposes fixes via FIFO directive. No silent config changes. The system never reduces its own degrees of freedom without asking.</p>
       </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x1f300;</span>
+        <h3>Wavefront Scheduling</h3>
+        <p>Dependency-driven fan-out. Each component advances through its own phase pipeline as soon as deps are satisfied. No phase-locked waiting.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x1f9e0;</span>
+        <h3>Prompt Caching</h3>
+        <p>Static prompt prefixes cached across API calls. 50-70% input token savings. Cache hit rates tracked in budget metrics. Research results persisted and reused across phases.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x1f6e1;&#xfe0f;</span>
+        <h3>Drift Detection</h3>
+        <p>SHA256 baselines for contracts, tests, and implementations. Detects when artifacts change without version bumps. Staleness tracking classifies components as fresh, aging, or stale.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x1f4a1;</span>
+        <h3>Retrospective Learning</h3>
+        <p>Post-run analysis: cost distribution, failure patterns, largest test suites, actionable lessons. Each run gets smarter from the last.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x1f6d1;</span>
+        <h3>Contract Quality Gates</h3>
+        <p>Anti-cliche enforcement flags vague contract language. Typed side-effect declarations. Optional performance budgets with p95 latency and Big-O constraints.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x1f504;</span>
+        <h3>Resume &amp; Error Classification</h3>
+        <p>Transient errors retry with backoff. Systemic failures pause with actionable recommendations. <code>pact resume</code> recovers from any failure without manual state editing.</p>
+      </div>
     </div>
   </div>
 </section>
@@ -572,7 +602,7 @@
         <div class="step"><span class="arrow">&#9656;</span> <span>Fixer agent spawned with contract context</span></div>
         <div class="step"><span class="arrow">&#9656;</span> <span>Reproducer test added to contract</span></div>
         <div class="step"><span class="arrow">&#9656;</span> <span>Implementation rebuilt from scratch</span></div>
-        <div class="step"><span class="arrow">&#9656;</span> <span><span class="label">1,260 tests pass</span> <span class="dim">// verified</span></span></div>
+        <div class="step"><span class="arrow">&#9656;</span> <span><span class="label">1,482 tests pass</span> <span class="dim">// verified</span></span></div>
         <div class="step"><span class="arrow">&#9656;</span> <span>Contract got stricter. Bug can't recur.</span></div>
       </div>
     </div>
