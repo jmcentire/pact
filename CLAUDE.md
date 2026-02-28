@@ -5,7 +5,7 @@ Contract-first multi-agent software engineering. Decomposition produces contract
 ## Quick Reference
 
 ```bash
-cd ~/WanderRepos/pact
+cd ~/Code/pact
 python3 -m pytest tests/ -v        # Run all tests
 pact init <project-dir>            # Initialize project
 pact status <project-dir>          # Show state
@@ -235,7 +235,7 @@ pact incident <project-dir> <id>      # Show incident details + diagnostic repor
 ## Testing
 
 ```bash
-make test          # 1260 tests, ~5s
+make test          # 1482 tests, ~7s
 make test-quick    # Stop on first failure
 ```
 
