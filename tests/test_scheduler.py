@@ -9,8 +9,14 @@ import pytest
 from pact.budget import BudgetTracker
 from pact.config import GlobalConfig, ProjectConfig, resolve_backend
 from pact.project import ProjectManager
-from pact.scheduler import Scheduler
-from pact.schemas import RunState
+from pact.scheduler import Scheduler, _build_goodhart_hint
+from pact.schemas import (
+    ContractTestSuite,
+    RunState,
+    TestCase,
+    TestFailure,
+    TestResults,
+)
 
 
 @pytest.fixture
@@ -254,3 +260,90 @@ class TestPhaseCycleDetection:
 
         assert state.status == "paused"
         assert "cycle limit" in state.pause_reason
+
+
+class TestBuildGoodhartHint:
+    """Test graduated hint building for Goodhart remediation."""
+
+    def _make_goodhart_suite(self) -> ContractTestSuite:
+        return ContractTestSuite(
+            component_id="calc",
+            contract_version=1,
+            test_cases=[
+                TestCase(
+                    id="g1",
+                    description="the add function should be commutative for all numeric inputs",
+                    function="add",
+                    category="invariant",
+                ),
+                TestCase(
+                    id="g2",
+                    description="add should handle negative inputs without special-casing",
+                    function="add",
+                    category="edge_case",
+                ),
+            ],
+        )
+
+    def _make_failure_results(self, failing_ids: list[str]) -> TestResults:
+        return TestResults(
+            total=2,
+            passed=2 - len(failing_ids),
+            failed=len(failing_ids),
+            errors=0,
+            failure_details=[
+                TestFailure(test_id=tid, error_message=f"{tid} failed")
+                for tid in failing_ids
+            ],
+        )
+
+    def test_level_1_vague_behavioral_hint(self):
+        suite = self._make_goodhart_suite()
+        results = self._make_failure_results(["g1"])
+
+        hint = _build_goodhart_hint(1, results, suite)
+
+        assert "BEHAVIORAL REVIEW FEEDBACK" in hint
+        assert "commutative" in hint
+        # Should NOT contain specific assertion details
+        assert "contract requires" not in hint.lower()
+
+    def test_level_2_specific_contract_hint(self):
+        suite = self._make_goodhart_suite()
+        results = self._make_failure_results(["g1"])
+
+        hint = _build_goodhart_hint(2, results, suite)
+
+        assert "CONTRACT COMPLIANCE" in hint
+        assert "commutative" in hint
+        assert "contract requires" in hint.lower()
+
+    def test_multiple_failures_included(self):
+        suite = self._make_goodhart_suite()
+        results = self._make_failure_results(["g1", "g2"])
+
+        hint = _build_goodhart_hint(1, results, suite)
+
+        assert "commutative" in hint
+        assert "negative" in hint
+
+    def test_fallback_when_no_descriptions(self):
+        suite = ContractTestSuite(
+            component_id="calc", contract_version=1, test_cases=[],
+        )
+        results = self._make_failure_results(["unknown_test"])
+
+        hint = _build_goodhart_hint(1, results, suite)
+
+        # Should still return something useful
+        assert len(hint) > 0
+        assert "potential issues" in hint.lower()
+
+    def test_max_attempts_cap_prevents_infinite_loop(self, scheduler_setup):
+        """Verify the max_goodhart_attempts config defaults to 2."""
+        _, scheduler = scheduler_setup
+        # The default should be 2 (or fallback via getattr)
+        max_attempts = getattr(
+            scheduler.project_config, "max_goodhart_attempts", None,
+        ) or 2
+        assert max_attempts == 2

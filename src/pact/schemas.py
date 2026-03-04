@@ -35,6 +35,16 @@ class FieldSpec(BaseModel):
     description: str = ""
     validators: list[ValidatorSpec] = []
 
+    @field_validator("default", mode="before")
+    @classmethod
+    def _coerce_default(cls, v: object) -> str:
+        """LLMs sometimes return non-string defaults ([], {}, null). Coerce."""
+        if isinstance(v, str):
+            return v
+        if v is None:
+            return ""
+        return str(v)
+
 
 class TypeSpec(BaseModel):
     """A type definition within a contract."""
@@ -497,7 +507,7 @@ class RunState(BaseModel):
     status: Literal["active", "paused", "completed", "failed", "budget_exceeded"] = "active"
     phase: Literal[
         "interview", "shape", "decompose", "contract", "implement",
-        "integrate", "diagnose", "complete"
+        "integrate", "polish", "diagnose", "complete"
     ] = "interview"
     component_tasks: list[ComponentTask] = []
     interview_result: InterviewResult | None = None

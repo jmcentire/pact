@@ -475,3 +475,59 @@ class TestIntegrateComponentPrompt:
         assert "def do_a():" in prompt_text
         assert "return 'hello'" in prompt_text
         assert "=== a implementation" in prompt_text
+
+
+class TestIntegrateComponentIterativeRelativePaths:
+    """Test that iterative integration prompts use relative paths."""
+
+    def test_prompt_uses_relative_paths(self, tmp_path):
+        """Prompt text should NOT contain str(tmp_path) outside env var lines."""
+        parent = _make_contract("root", "Root")
+        child_a = _make_contract("a", "ChildA")
+        test_suite = _make_test_suite("root", "def test_root(): pass")
+
+        project = MagicMock()
+        project.project_dir = tmp_path
+        project.language = "python"
+        project.test_code_path.return_value = tmp_path / "tests" / "test.py"
+        project.composition_dir.return_value = tmp_path / "comp" / "root"
+        project.impl_src_dir.side_effect = lambda cid: tmp_path / "impl" / cid / "src"
+        (tmp_path / "comp" / "root").mkdir(parents=True)
+        (tmp_path / "tests").mkdir(parents=True)
+
+        captured_prompt = {}
+
+        async def mock_implement(prompt, working_dir=None, max_turns=30, timeout=600):
+            captured_prompt["text"] = prompt
+            return ("done", 0, 0)
+
+        budget = MagicMock()
+        budget.record_tokens_validated = MagicMock(return_value=True)
+
+        with patch("pact.backends.claude_code.ClaudeCodeBackend") as MockBackend:
+            instance = MockBackend.return_value
+            instance.implement = AsyncMock(side_effect=mock_implement)
+
+            with patch("pact.integrator.run_contract_tests", new_callable=AsyncMock) as mock_tests:
+                mock_tests.return_value = TestResults(
+                    total=5, passed=5, failed=0, errors=0,
+                )
+                asyncio.run(integrate_component_iterative(
+                    project=project,
+                    parent_id="root",
+                    parent_contract=parent,
+                    parent_test_suite=test_suite,
+                    child_contracts={"a": child_a},
+                    budget=budget,
+                ))
+
+        prompt_text = captured_prompt["text"]
+        abs_path = str(tmp_path)
+
+        # Check each line — absolute paths should only appear in env var lines
+        for line in prompt_text.splitlines():
+            if abs_path in line:
+                # Only acceptable in PYTHONPATH or NODE_PATH env var lines
+                assert "PYTHONPATH=" in line or "NODE_PATH=" in line, (
+                    f"Absolute path leaked into prompt: {line.strip()[:100]}"
+                )

@@ -351,3 +351,147 @@ ready to be saved as contract_test.py and run with pytest."""
     )
 
     return suite, research, plan
+
+
+# ── Goodhart (Hidden) Test Author ─────────────────────────────────
+
+GOODHART_SYSTEM = """You are an adversarial test author for contract-driven development.
+Your job is to generate hidden acceptance tests that catch implementations that
+"teach to the test" — passing visible tests through shortcuts rather than truly
+satisfying the contract.
+
+Think like a code reviewer who suspects the implementation was written by an agent
+that could see the exact test inputs and assertions. Ask yourself:
+- What shortcuts could an agent take if it only saw the visible tests?
+- Hardcoded returns that happen to match visible test inputs
+- Missing validation that visible tests don't exercise
+- Invariants that hold only for the specific values in visible tests
+- Boundary conditions adjacent to (but distinct from) visible edge cases
+- Postconditions that should hold generally but visible tests only check with specific values
+
+Key principles:
+- Tests verify behavior at boundaries (inputs/outputs), not internals
+- All test functions MUST be prefixed with test_goodhart_
+- Each test's description field MUST explain the behavioral property being tested,
+  NOT the specific assertion. These descriptions become graduated hints during remediation.
+- Dependencies must be mocked — tests verify one component in isolation
+- Generated code must be syntactically valid
+- Do NOT duplicate coverage already in the visible tests — find gaps"""
+
+GOODHART_SYSTEM_TS = """You are an adversarial test author for contract-driven development.
+Your job is to generate hidden acceptance tests that catch implementations that
+"teach to the test" — passing visible tests through shortcuts rather than truly
+satisfying the contract.
+
+Think like a code reviewer who suspects the implementation was written by an agent
+that could see the exact test inputs and assertions. Ask yourself:
+- What shortcuts could an agent take if it only saw the visible tests?
+- Hardcoded returns that happen to match visible test inputs
+- Missing validation that visible tests don't exercise
+- Invariants that hold only for the specific values in visible tests
+- Boundary conditions adjacent to (but distinct from) visible edge cases
+- Postconditions that should hold generally but visible tests only check with specific values
+
+Key principles:
+- Tests verify behavior at boundaries (inputs/outputs), not internals
+- All test names MUST contain "goodhart" (e.g., "goodhart: should handle...")
+- Each test's description field MUST explain the behavioral property being tested,
+  NOT the specific assertion. These descriptions become graduated hints during remediation.
+- Dependencies must be mocked — tests verify one component in isolation
+- Generated code must be syntactically valid TypeScript for Vitest
+- Do NOT duplicate coverage already in the visible tests — find gaps"""
+
+
+async def author_goodhart_tests(
+    agent: AgentBase,
+    contract: ComponentContract,
+    visible_suite: ContractTestSuite,
+    dependency_contracts: dict[str, ComponentContract] | None = None,
+    language: str = "python",
+) -> ContractTestSuite:
+    """Generate adversarial hidden tests (single LLM call, no research/plan).
+
+    These tests are never shown to the implementation agent. They catch
+    Goodhart's Law violations: implementations that optimize for visible
+    test inputs rather than truly satisfying the contract.
+
+    Args:
+        agent: The LLM agent backend.
+        contract: The component contract.
+        visible_suite: The visible test suite (for gap analysis).
+        dependency_contracts: Contracts for dependencies (mock info).
+        language: Test language — "python", "typescript", or "javascript".
+
+    Returns:
+        ContractTestSuite with adversarial test cases.
+    """
+    contract_summary = _render_focused_contract(contract)
+
+    # Summarize visible tests so the LLM knows what's already covered
+    visible_summary = "\n".join(
+        f"  - {tc.id}: {tc.description} [{tc.category}] (function: {tc.function})"
+        for tc in visible_suite.test_cases
+    )
+
+    dep_mock_info = ""
+    if dependency_contracts:
+        for dep_id, dc in dependency_contracts.items():
+            dep_mock_info += f"\nDependency '{dep_id}' functions to mock:\n"
+            for func in dc.functions:
+                inputs_str = ", ".join(f"{i.name}: {i.type_ref}" for i in func.inputs)
+                dep_mock_info += f"  - {func.name}({inputs_str}) -> {func.output_type}\n"
+
+    # Select language-specific system prompt and instructions
+    if language in ("typescript", "javascript"):
+        system_prompt = GOODHART_SYSTEM_TS
+        import_hint = f"import {{ ... }} from '../src/{contract.component_id}'"
+        framework = "Vitest"
+        test_lang = language
+    else:
+        system_prompt = GOODHART_SYSTEM
+        import_hint = f"from src.{contract.component_id} import *"
+        framework = "pytest"
+        test_lang = "python"
+
+    prompt = f"""Generate adversarial hidden acceptance tests for component '{contract.name}'.
+
+Contract:
+{contract_summary}
+
+Visible tests already covering this contract:
+{visible_summary}
+
+{f"Dependencies to mock:{dep_mock_info}" if dep_mock_info else ""}
+
+Requirements:
+- component_id must be "{contract.component_id}"
+- contract_version must be {contract.version}
+- All test functions prefixed with test_goodhart_ (Python) or described as "goodhart: ..." (TS/JS)
+- Each test_case description must explain the BEHAVIORAL PROPERTY, not the assertion
+  Good: "The add function should be commutative for all numeric inputs"
+  Bad: "Test that add(2,3) equals add(3,2)"
+- Find gaps in visible test coverage — do NOT duplicate existing tests
+- Focus on: hardcoded-return detection, boundary adjacency, invariant generalization,
+  postcondition universality, input-space exploration beyond visible values
+- Import from: {import_hint}
+- Use {framework} conventions
+- test_language must be "{test_lang}"
+- generated_code must contain the COMPLETE test file"""
+
+    cache_prefix = f"Contract:\n{contract_summary}\n\nVisible tests:\n{visible_summary}"
+
+    suite, in_tok, out_tok = await agent.assess_cached(
+        ContractTestSuite, prompt, system_prompt, cache_prefix=cache_prefix,
+    )
+
+    # Ensure required fields
+    suite.component_id = contract.component_id
+    suite.contract_version = contract.version
+    suite.test_language = language
+
+    logger.info(
+        "Goodhart tests authored for %s: %d cases (%d tokens)",
+        contract.component_id, len(suite.test_cases), in_tok + out_tok,
+    )
+
+    return suite

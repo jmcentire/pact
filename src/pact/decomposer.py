@@ -15,7 +15,7 @@ from datetime import datetime
 
 from pact.agents.base import AgentBase
 from pact.agents.contract_author import author_contract
-from pact.agents.test_author import author_tests
+from pact.agents.test_author import author_goodhart_tests, author_tests
 from pact.contracts import validate_all_contracts
 from pact.project import ProjectManager
 from pact.schemas import (
@@ -418,6 +418,19 @@ async def decompose_and_contract(
                 "tests",
                 f"{component_id}: {len(suite.test_cases)} cases",
             )
+
+            # Generate Goodhart (hidden) tests — skip if already exist
+            if not project.load_goodhart_suite(component_id):
+                goodhart_suite = await author_goodhart_tests(
+                    agent, contract, suite,
+                    dependency_contracts=dep_contracts,
+                    language=project.language,
+                )
+                project.save_goodhart_suite(goodhart_suite)
+                project.append_audit(
+                    "goodhart_tests",
+                    f"{component_id}: {len(goodhart_suite.test_cases)} hidden cases",
+                )
         else:
             logger.info("Skipping tests for %s — already exist", component_id)
 

@@ -6,11 +6,15 @@ import textwrap
 from pathlib import Path
 
 from pact.implementer import (
+    _check_absolute_paths,
+    _detect_stubs_python,
+    _detect_stubs_ts,
     _find_defined_names,
     _fix_pydantic_v1_patterns,
     _fuzzy_match,
     _sanitize_filename,
     _to_snake_case,
+    detect_stubs,
     validate_and_fix_exports,
 )
 from pact.interface_stub import get_required_exports
@@ -547,3 +551,121 @@ class TestClaudeCodeBackendImplement:
 
         # Should use stdin (PIPE), not pass prompt as CLI arg
         assert captured_kwargs[0].get("stdin") is not None
+
+
+class TestDetectStubs:
+    """Test stub/placeholder detection."""
+
+    def test_pass_only_function(self):
+        source = "def do_work():\n    pass\n"
+        warnings = _detect_stubs_python(source, "mod.py")
+        assert len(warnings) == 1
+        assert "stub (pass)" in warnings[0]
+
+    def test_ellipsis_function(self):
+        source = "def do_work():\n    ...\n"
+        warnings = _detect_stubs_python(source, "mod.py")
+        assert len(warnings) == 1
+        assert "stub (Ellipsis)" in warnings[0]
+
+    def test_not_implemented_error(self):
+        source = "def do_work():\n    raise NotImplementedError()\n"
+        warnings = _detect_stubs_python(source, "mod.py")
+        assert len(warnings) == 1
+        assert "NotImplementedError" in warnings[0]
+
+    def test_not_implemented_error_no_parens(self):
+        source = "def do_work():\n    raise NotImplementedError\n"
+        warnings = _detect_stubs_python(source, "mod.py")
+        assert len(warnings) == 1
+        assert "NotImplementedError" in warnings[0]
+
+    def test_real_implementation_no_false_positive(self):
+        source = "def do_work():\n    return 42\n"
+        warnings = _detect_stubs_python(source, "mod.py")
+        assert warnings == []
+
+    def test_dunder_methods_ignored(self):
+        source = "class Foo:\n    def __init__(self):\n        pass\n    def __repr__(self):\n        ...\n"
+        warnings = _detect_stubs_python(source, "mod.py")
+        assert warnings == []
+
+    def test_docstring_plus_pass(self):
+        source = 'def do_work():\n    """Does work."""\n    pass\n'
+        warnings = _detect_stubs_python(source, "mod.py")
+        assert len(warnings) == 1
+        assert "stub (pass)" in warnings[0]
+
+    def test_todo_comment(self):
+        from pact.implementer import _detect_comment_markers
+        source = "# TODO: implement this\ndef do_work():\n    return 1\n"
+        warnings = _detect_comment_markers(source, "mod.py")
+        assert len(warnings) == 1
+        assert "TODO" in warnings[0]
+
+    def test_ts_throw_not_implemented(self):
+        source = 'function doWork() { throw new Error("Not implemented"); }'
+        warnings = _detect_stubs_ts(source, "mod.ts")
+        assert len(warnings) == 1
+        assert "stub throw" in warnings[0]
+
+    def test_ts_throw_todo(self):
+        source = 'export function run() { throw new Error("TODO: implement"); }'
+        warnings = _detect_stubs_ts(source, "mod.ts")
+        assert len(warnings) == 1
+
+    def test_detect_stubs_python_integration(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "mod.py").write_text("def stub():\n    pass\n\ndef real():\n    return 1\n")
+        warnings = detect_stubs(src, "python")
+        assert len(warnings) == 1
+        assert "stub" in warnings[0]
+
+    def test_detect_stubs_ts_integration(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "mod.ts").write_text('export function work() { throw new Error("Not implemented"); }\n')
+        warnings = detect_stubs(src, "typescript")
+        assert len(warnings) == 1
+
+    def test_detect_stubs_nonexistent_dir(self, tmp_path):
+        warnings = detect_stubs(tmp_path / "nope", "python")
+        assert warnings == []
+
+
+class TestCheckAbsolutePaths:
+    """Test absolute path detection in generated code."""
+
+    def test_detects_absolute_path(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "mod.py").write_text(f'PATH = "{tmp_path}/data"\n')
+        warnings = _check_absolute_paths(src, str(tmp_path), "python")
+        assert len(warnings) == 1
+        assert "absolute path" in warnings[0]
+
+    def test_no_false_positive(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "mod.py").write_text('PATH = "./data"\n')
+        warnings = _check_absolute_paths(src, str(tmp_path), "python")
+        assert warnings == []
+
+    def test_ts_files_checked(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "mod.ts").write_text(f'const p = "{tmp_path}/foo";\n')
+        warnings = _check_absolute_paths(src, str(tmp_path), "typescript")
+        assert len(warnings) == 1
+
+    def test_nonexistent_dir(self, tmp_path):
+        warnings = _check_absolute_paths(tmp_path / "nope", str(tmp_path), "python")
+        assert warnings == []
+
+    def test_empty_project_dir(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "mod.py").write_text("x = 1\n")
+        warnings = _check_absolute_paths(src, "", "python")
+        assert warnings == []

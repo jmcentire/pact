@@ -19,9 +19,16 @@ logger = logging.getLogger(__name__)
 # Built-in defaults — overridable via config.yaml model_pricing
 # Format: model_id -> (input_cost_per_million, output_cost_per_million)
 DEFAULT_MODEL_PRICING: dict[str, tuple[float, float]] = {
-    # Anthropic
-    "claude-haiku-4-5-20251001": (0.80, 4.00),
+    # Anthropic — https://platform.claude.com/docs/en/about-claude/pricing
+    "claude-haiku-3": (0.25, 1.25),
+    "claude-haiku-3-5": (0.80, 4.00),
+    "claude-haiku-4-5-20251001": (1.00, 5.00),
+    "claude-sonnet-4": (3.00, 15.00),
     "claude-sonnet-4-5-20250929": (3.00, 15.00),
+    "claude-sonnet-4-6": (3.00, 15.00),
+    "claude-opus-4": (15.00, 75.00),
+    "claude-opus-4-1": (15.00, 75.00),
+    "claude-opus-4-5": (5.00, 25.00),
     "claude-opus-4-6": (5.00, 25.00),
     # OpenAI
     "gpt-4o": (2.50, 10.00),

@@ -251,6 +251,12 @@ def main() -> None:
     p_pricing.add_argument("--export", action="store_true", help="Export pricing to ~/.config/pact/model_pricing.json")
     p_pricing.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
 
+    # wizard
+    p_wizard = subparsers.add_parser("wizard", help="Guided project setup wizard")
+    p_wizard.add_argument("project_dir", help="Project directory path")
+    p_wizard.add_argument("--config", default=None, metavar="FILE", help="JSON/YAML config file for non-interactive mode")
+    p_wizard.add_argument("--budget", type=float, default=None, help="Override budget (skips budget question)")
+
     args = parser.parse_args()
 
     if args.verbose:
@@ -332,6 +338,67 @@ def main() -> None:
         cmd_health(args)
     elif args.command == "pricing":
         cmd_pricing(args)
+    elif args.command == "wizard":
+        cmd_wizard(args)
+
+
+def cmd_wizard(args: argparse.Namespace) -> None:
+    """Guided project setup wizard."""
+    from pathlib import Path
+
+    import yaml
+
+    from pact.project import ProjectManager
+    from pact.wizard import (
+        build_wizard_questions,
+        generate_pact_yaml,
+        generate_sops_md,
+        generate_task_md,
+        load_wizard_config_from_file,
+        run_wizard_interactive,
+    )
+
+    project_dir = args.project_dir
+
+    if args.config:
+        config = load_wizard_config_from_file(Path(args.config))
+    else:
+        questions = build_wizard_questions()
+        print("Pact Project Wizard")
+        print("=" * 40)
+        print("Answer each question to configure your project.")
+        print("Press Enter to accept defaults shown in [brackets].\n")
+        config = run_wizard_interactive(questions)
+
+    if args.budget is not None:
+        config.budget = args.budget
+
+    project = ProjectManager(project_dir)
+    project.init(budget=config.budget)
+
+    project.task_path.write_text(generate_task_md(config))
+    project.sops_path.write_text(generate_sops_md(config))
+
+    pact_yaml = generate_pact_yaml(config)
+    with open(project.config_path, "w") as f:
+        yaml.dump(pact_yaml, f, default_flow_style=False, sort_keys=False)
+
+    print(f"\nProject initialized: {project.project_dir}")
+    print(f"  task.md   - Pre-filled from your description")
+    print(f"  sops.md   - Tailored for {config.language}")
+    print(f"  pact.yaml - Configured with your preferences")
+
+    if config.run_interview:
+        print("\nStarting interview phase...")
+        asyncio.run(cmd_interview(argparse.Namespace(
+            project_dir=project_dir, verbose=False,
+        )))
+    else:
+        print(f"\nNext steps:")
+        print(f"  1. Review and refine task.md")
+        print(f"  2. pact interview {project_dir}")
+        print(f"  3. pact approve {project_dir}")
+        print(f"  4. pact run {project_dir}")
 
 
 def cmd_pricing(args: argparse.Namespace) -> None:

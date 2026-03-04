@@ -555,6 +555,11 @@
         <p>Static prompt prefixes cached across API calls. 50-70% input token savings. Cache hit rates tracked in budget metrics. Research results persisted and reused across phases.</p>
       </div>
       <div class="feature-card">
+        <span class="feature-icon">&#x1f3af;</span>
+        <h3>Hidden Acceptance Criteria</h3>
+        <p>Goodhart tests: adversarial hidden tests the agent never sees. Catches hardcoded returns, missing validation, and invariants that hold only for visible inputs. Graduated-disclosure remediation on failure.</p>
+      </div>
+      <div class="feature-card">
         <span class="feature-icon">&#x1f6e1;&#xfe0f;</span>
         <h3>Drift Detection</h3>
         <p>SHA256 baselines for contracts, tests, and implementations. Detects when artifacts change without version bumps. Staleness tracking classifies components as fresh, aging, or stale.</p>
@@ -655,7 +660,7 @@
         <div class="step"><span class="arrow">&#9656;</span> <span>Fixer agent spawned with contract context</span></div>
         <div class="step"><span class="arrow">&#9656;</span> <span>Reproducer test added to contract</span></div>
         <div class="step"><span class="arrow">&#9656;</span> <span>Implementation rebuilt from scratch</span></div>
-        <div class="step"><span class="arrow">&#9656;</span> <span><span class="label">1,501 tests pass</span> <span class="dim">// verified</span></span></div>
+        <div class="step"><span class="arrow">&#9656;</span> <span><span class="label">1,573 tests pass</span> <span class="dim">// verified</span></span></div>
         <div class="step"><span class="arrow">&#9656;</span> <span>Contract got stricter. Bug can't recur.</span></div>
       </div>
     </div>
