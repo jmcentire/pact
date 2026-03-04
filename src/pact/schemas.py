@@ -11,7 +11,9 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+import json as _json
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ── Contract Models ──────────────────────────────────────────────────
@@ -124,6 +126,30 @@ class TestCase(BaseModel):
     expected_output_description: str = ""
     expected_error: str = ""
     assertions: list[str] = []
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_llm_types(cls, data: dict) -> dict:
+        """Coerce non-string values from LLM output to strings/JSON strings."""
+        if not isinstance(data, dict):
+            return data
+        # Coerce string fields that LLMs sometimes return as lists/dicts/ints
+        str_fields = {
+            "id", "description", "function", "setup_description",
+            "input_description", "expected_output_description",
+            "expected_error",
+        }
+        for field in str_fields:
+            if field in data and not isinstance(data[field], str):
+                data[field] = _json.dumps(data[field])
+        # Coerce dict[str,str] fields
+        for field in ("input_values", "mock_dependencies"):
+            if field in data and isinstance(data[field], dict):
+                data[field] = {
+                    k: _json.dumps(v) if not isinstance(v, str) else v
+                    for k, v in data[field].items()
+                }
+        return data
 
 
 class ContractTestSuite(BaseModel):

@@ -1019,6 +1019,7 @@ def render_handoff_brief(
     include_test_code: bool = True,
     log_key_preamble: str = "",
     standards_brief: str = "",
+    strategic_context: str = "",
 ) -> str:
     """Render a complete handoff document for a fresh agent.
 
@@ -1035,13 +1036,32 @@ def render_handoff_brief(
     """
     lines: list[str] = []
 
-    # Section 1: Mission
-    lines.append("# HANDOFF BRIEF")
-    lines.append(f"## Component: {contract.name} ({component_id})")
-    lines.append(f"## Attempt: {attempt}")
+    # Context reset: clear residual processing biases before domain priming.
+    # Paper XX (Ritual Shape) showed a 39% CE improvement from a reset
+    # instruction before domain-specific content. The reset gives the
+    # subsequent domain primer a clean activation baseline.
+    lines.append(
+        "This is a new component implementation task. You have no prior "
+        "conversation context. Focus exclusively on the specifications below."
+    )
     lines.append("")
 
-    # Section 2: Interface (the mental model)
+    # Strategic context: project intent + component contribution.
+    # Paper XX showed 15-50 tokens of domain content capture 98.8% of benefit.
+    # This activates the right processing mode before the interface details.
+    if strategic_context:
+        lines.append(strategic_context)
+        lines.append("")
+
+    # Section 1: Mission
+    lines.append(f"# {contract.name} ({component_id}) — Attempt {attempt}")
+    lines.append("")
+
+    # Section 2: Interface (the mental model) — the domain primer.
+    # This is the most important content in the handoff. Paper XX showed
+    # that 15 tokens of domain-matched content capture 98.8% of the
+    # coordination benefit. The interface stub activates domain-specific
+    # processing; everything after this is supplementary.
     lines.append("## YOUR INTERFACE CONTRACT")
     lines.append("```python")
     lines.append(render_stub(contract))

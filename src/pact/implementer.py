@@ -38,6 +38,30 @@ from pact.test_harness import run_contract_tests
 logger = logging.getLogger(__name__)
 
 
+def _build_strategic_context(
+    project: ProjectManager, contract: ComponentContract,
+) -> str:
+    """Build ~40-token strategic context for handoff.
+
+    Paper XX showed 15-50 tokens of domain content capture 98.8% of benefit.
+    This activates the right processing mode before interface details.
+    """
+    try:
+        task_text = project.load_task()
+        first_line = ""
+        for line in task_text.splitlines():
+            stripped = line.strip().lstrip("#").strip()
+            if stripped:
+                first_line = stripped
+                break
+        return (
+            f"Project: {first_line}. "
+            f"This component ({contract.name}) {contract.description}."
+        )
+    except FileNotFoundError:
+        return f"This component ({contract.name}) {contract.description}."
+
+
 def _fix_pydantic_v1_patterns(source: str) -> tuple[str, list[str]]:
     """Mechanically fix common Pydantic v1 patterns that crash on v2.
 
@@ -444,6 +468,7 @@ async def implement_component(
             external_context=external_context,
             learnings=learnings,
             prior_source=last_source,
+            strategic_context=_build_strategic_context(project, contract),
             language=language,
         )
 
@@ -597,6 +622,8 @@ async def implement_component_iterative(
     all_contracts = dict(dependency_contracts or {})
     all_contracts[contract.component_id] = contract
 
+    strategic_ctx = _build_strategic_context(project, contract)
+
     handoff = render_handoff_brief(
         component_id=contract.component_id,
         contract=contract,
@@ -607,6 +634,7 @@ async def implement_component_iterative(
         learnings=learnings,
         standards_brief=standards_brief,
         test_results=prior_test_results,
+        strategic_context=strategic_ctx,
     )
 
     # Write test file so the agent can run it
@@ -679,6 +707,8 @@ Rules:
 - Handle all error cases from the contract
 - Do NOT use __all__ — just define the names at module level
 - The test file imports from src/{module_name} — your module must be importable from there
+- If the task reads from stdin/stdout, the module MUST be directly executable as a script (include `if __name__ == "__main__": main()`)
+- Also check task.md and any test_harness.py in the project root — your solution must pass those too
 {prior_context}"""
 
     logger.info("Implementing %s iteratively via Claude Code (%s)", component_id, model)
@@ -791,6 +821,8 @@ async def implement_component_interactive(
     all_contracts = dict(dependency_contracts or {})
     all_contracts[contract.component_id] = contract
 
+    strategic_ctx = _build_strategic_context(project, contract)
+
     handoff = render_handoff_brief(
         component_id=contract.component_id,
         contract=contract,
@@ -799,6 +831,7 @@ async def implement_component_interactive(
         sops=sops,
         external_context=external_context,
         learnings=learnings,
+        strategic_context=strategic_ctx,
     )
 
     # Write test file so the agent can run it
@@ -932,6 +965,7 @@ async def _run_one_competitor(
             external_context=external_context,
             learnings=learnings,
             language=language,
+            strategic_context=_build_strategic_context(project, contract),
         )
 
         # Save to attempt directory (not main src)

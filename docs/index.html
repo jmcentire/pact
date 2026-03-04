@@ -578,6 +578,59 @@
   </div>
 </section>
 
+<section class="problem" id="benchmark">
+  <div class="container">
+    <div class="problem-grid">
+      <div>
+        <h2>Benchmarked on ICPC World Finals</h2>
+        <p>
+          5 problems, 212 test cases, Claude Opus 4.6. Pact scores <span class="highlight">212/212 (100%)</span>
+          on problems where single-agent Claude Code tops out at 79% (single-shot) or 92% (iterative with 5 retries).
+        </p>
+        <p>
+          The hardest problem &mdash; <span class="highlight">Trailing Digits</span> (2020 World Finals) &mdash; requires
+          O(log n) number theory. Claude Code gets 31/47 even with full test feedback and 5 iterations.
+          Pact's contract pipeline forces the math-first approach and solves it on the first attempt.
+        </p>
+        <p style="margin-top: 16px;">
+          <a href="https://github.com/jmcentire/pact/blob/main/benchmarks/icpc_official/RESULTS.md" class="btn btn-outline">Full Results</a>
+        </p>
+      </div>
+      <div class="insight-box">
+        <table style="width: 100%; border-collapse: collapse; font-size: 0.95rem;">
+          <thead>
+            <tr style="border-bottom: 2px solid var(--border);">
+              <th style="text-align: left; padding: 8px 12px; color: var(--text-muted);">Condition</th>
+              <th style="text-align: right; padding: 8px 12px; color: var(--text-muted);">Pass Rate</th>
+              <th style="text-align: right; padding: 8px 12px; color: var(--text-muted);">Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 10px 12px;">Claude Code (single-shot)</td>
+              <td style="text-align: right; padding: 10px 12px; color: var(--orange);">79%</td>
+              <td style="text-align: right; padding: 10px 12px; color: var(--text-muted);">$0.60</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 10px 12px;">Claude Code (iterative, 5x)</td>
+              <td style="text-align: right; padding: 10px 12px; color: var(--orange);">92%</td>
+              <td style="text-align: right; padding: 10px 12px; color: var(--text-muted);">$1.26</td>
+            </tr>
+            <tr>
+              <td style="padding: 10px 12px; font-weight: 600;">Pact</td>
+              <td style="text-align: right; padding: 10px 12px; color: var(--green); font-weight: 700;">100%</td>
+              <td style="text-align: right; padding: 10px 12px; color: var(--text-muted);">~$13</td>
+            </tr>
+          </tbody>
+        </table>
+        <p style="margin-top: 16px; font-size: 0.85rem; color: var(--text-muted);">
+          5 ICPC World Finals problems &middot; 212 test cases &middot; Claude Opus 4.6
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section class="sentinel" id="sentinel">
   <div class="container">
     <div class="sentinel-grid">
@@ -661,6 +714,36 @@
         that motivated Pact's design.
       </p>
       <a href="https://www.amazon.com/dp/B0GNLTXVC7" class="btn btn-outline">Read the Book</a>
+    </div>
+  </div>
+</section>
+
+<section class="problem" style="padding: 60px 0;">
+  <div class="container">
+    <div class="problem-grid">
+      <div>
+        <h2>From contracts to running services: <a href="https://jmcentire.github.io/baton/" style="color: var(--accent);">Baton</a></h2>
+        <p>
+          Pact produces components with provable interfaces. <strong>Baton</strong> wires them into a running
+          service topology with mock collapse, A/B routing, health monitoring, and self-healing.
+        </p>
+        <p>
+          Start fully mocked, gradually swap to live implementations, canary new versions with weighted
+          routing, and let the custodian auto-recover failures. Together, Pact and Baton cover the full
+          lifecycle from architecture to production.
+        </p>
+        <p style="margin-top: 16px;">
+          <a href="https://jmcentire.github.io/baton/" class="btn btn-outline">Learn about Baton</a>
+        </p>
+      </div>
+      <div class="insight-box">
+        <p class="quote">
+          "Pact builds the pieces with typed contracts. Baton runs them as a circuit &mdash;
+          pre-wired topology, smart adapters, mock collapse, and self-healing.
+          Architecture decisions stay enforced from design through production."
+        </p>
+        <p class="attribution">Circuit-first orchestration for contract-first components.</p>
+      </div>
     </div>
   </div>
 </section>

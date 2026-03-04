@@ -358,7 +358,11 @@ class Scheduler:
             state.health_snapshot = metrics.to_dict()
 
             # Run health check and apply remedies
-            state = self._check_health_and_remediate(state)
+            thresholds = getattr(self.project_config, "health_thresholds", {}) or {}
+            if thresholds.get("output_planning_ratio_critical") == 0.0:
+                pass  # Health checks effectively disabled via config
+            else:
+                state = self._check_health_and_remediate(state)
         except Exception:
             pass  # Health instrumentation never blocks the pipeline
 

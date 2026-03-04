@@ -22,6 +22,20 @@ Don't use Pact when:
 - The task is a bug fix, refactor, or small feature
 - You'd spend more time on contracts than on the code itself
 
+## Benchmark: ICPC World Finals
+
+Tested on 5 ICPC World Finals competitive programming problems (212 test cases total) using Claude Opus 4.6.
+
+| Condition | Pass Rate | Cost |
+|-----------|-----------|------|
+| Claude Code single-shot | 167/212 (79%) | $0.60 |
+| Claude Code iterative (5 attempts) | 196/212 (92%) | $1.26 |
+| Pact (solo, noshape) | **212/212 (100%)** | ~$13 |
+
+Pact's contract-first pipeline solves problems that iterative prompting cannot. On **Trailing Digits** (2020 World Finals), Claude Code scores 31/47 even with 5 retry iterations and full test feedback -- the naive algorithm times out on large inputs. Pact's interview and decomposition phases force upfront mathematical analysis, producing the correct O(log n) approach on the first implementation attempt.
+
+Full results: [icpc_official/RESULTS.md](https://github.com/jmcentire/pact/blob/main/benchmarks/icpc_official/RESULTS.md) in the benchmark directory.
+
 ## Philosophy: Contracts Are the Product
 
 Pact treats **contracts as source of truth and implementations as disposable artifacts.** The code is cattle, not pets.
@@ -285,6 +299,10 @@ Pact is one of three systems (alongside Emergence and Apprentice) built to test
 the ideas in [Beyond Code: Context, Constraints, and the New Craft of Software](https://www.amazon.com/dp/B0GNLTXVC7).
 The book covers the coordination, verification, and specification problems that
 motivated Pact's design.
+
+## Related: Baton
+
+[Baton](https://jmcentire.github.io/baton/) is a circuit orchestration platform that manages service topologies through a circuit-first design. Pact produces contracted components; Baton wires them into a running topology with mock collapse, A/B routing, health monitoring, and self-healing. Together they cover the full lifecycle: Pact builds the pieces with provable interfaces, Baton runs them in production.
 
 ## License
 
