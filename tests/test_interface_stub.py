@@ -272,7 +272,7 @@ class TestRenderHandoffBrief:
         contract = _make_pricing_contract()
         contracts = {"pricing": contract, "inventory": _make_inventory_contract()}
         brief = render_handoff_brief("pricing", contract, contracts)
-        assert "HANDOFF BRIEF" in brief
+        assert "new component implementation task" in brief
         assert "YOUR INTERFACE CONTRACT" in brief
         assert "class PriceResult:" in brief
 
@@ -343,7 +343,7 @@ class TestRenderHandoffBrief:
             "pricing", contract, {"pricing": contract},
             attempt=3,
         )
-        assert "Attempt: 3" in brief
+        assert "Attempt 3" in brief
 
 
 class TestRenderProgressSnapshot:

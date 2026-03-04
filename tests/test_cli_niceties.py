@@ -508,10 +508,10 @@ class TestAgentWithLearnings:
             {"category": "test_pattern", "lesson": "Use parametrize"},
         ]
         result = AgentBase.with_learnings(None, learnings)
-        assert "Learnings from previous runs:" in result
-        assert "[failure_mode]" in result
+        assert "Previous agents working on this component noted:" in result
+        assert "failure_mode" in result
         assert "Watch for edge cases" in result
-        assert "[test_pattern]" in result
+        assert "test_pattern" in result
 
     def test_with_learnings_limits_to_10(self):
         from pact.agents.base import AgentBase

@@ -74,12 +74,24 @@ class AgentBase:
         return await self._backend.assess(schema, prompt, system, max_tokens)
 
     def with_learnings(self, learnings: list[dict]) -> str:
-        """Format learnings as context string for prompts."""
+        """Format learnings as shared vocabulary for prompts.
+
+        Paper XX (Ritual Shape) showed that self-generated vocabulary closes
+        19.5% of the coordination gap while imposed naming hurts. Learnings
+        are presented as conversational notes from previous agents, not as
+        rules — the vocabulary should sound like it came from someone who
+        already worked on this component.
+        """
         if not learnings:
             return ""
-        lines = ["Learnings from previous runs:"]
+        lines = ["Previous agents working on this component noted:"]
         for entry in learnings[-10:]:
-            lines.append(f"  - [{entry.get('category', '')}] {entry.get('lesson', '')}")
+            category = entry.get('category', '')
+            lesson = entry.get('lesson', '')
+            if category:
+                lines.append(f"  - On {category}: {lesson}")
+            else:
+                lines.append(f"  - {lesson}")
         return "\n".join(lines)
 
     async def close(self) -> None:

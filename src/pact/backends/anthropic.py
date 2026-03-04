@@ -102,20 +102,27 @@ class AnthropicBackend:
 
         raise RuntimeError(f"Failed to get valid {schema.__name__} after 3 attempts")
 
-    @staticmethod
-    def _coerce_fields(data: dict) -> dict:
-        if not isinstance(data, dict):
-            return data
-        coerced = {}
-        for key, value in data.items():
-            if isinstance(value, str) and value.startswith(("[", "{")):
+    @classmethod
+    def _coerce_fields(cls, data):
+        """Recursively parse string fields that look like JSON.
+
+        LLMs sometimes return structured fields (lists, dicts) as JSON
+        strings instead of native objects.  This walks the entire tree
+        so nested structures are also fixed.
+        """
+        if isinstance(data, dict):
+            return {k: cls._coerce_fields(v) for k, v in data.items()}
+        if isinstance(data, list):
+            return [cls._coerce_fields(item) for item in data]
+        if isinstance(data, str):
+            stripped = data.strip()
+            if stripped and stripped[0] in ("[", "{"):
                 try:
-                    coerced[key] = json.loads(value)
+                    parsed = json.loads(stripped)
+                    return cls._coerce_fields(parsed)
                 except (json.JSONDecodeError, ValueError):
-                    coerced[key] = value
-            else:
-                coerced[key] = value
-        return coerced
+                    pass
+        return data
 
     async def _call_llm(
         self,
