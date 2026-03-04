@@ -2,6 +2,7 @@
 from pact.schemas import (
     QuestionType, InterviewQuestion, validate_answer,
     AnswerSource, AuditedAnswer, PerformanceBudget,
+    InterviewResult,
 )
 
 
@@ -199,3 +200,63 @@ class TestPerformanceBudget:
             performance_budget=pb,
         )
         assert fc.performance_budget.p95_latency_ms == 100
+
+
+class TestInterviewResultAuditedAnswers:
+    def test_interview_result_accepts_audited_answers(self):
+        ir = InterviewResult(
+            questions=["How?"],
+            user_answers={"How?": "Like this"},
+            approved=True,
+            audited_answers=[
+                AuditedAnswer(
+                    question_id="q_000",
+                    answer="Like this",
+                    source=AnswerSource.USER_INTERACTIVE,
+                    confidence=1.0,
+                    timestamp="2026-03-03T00:00:00Z",
+                ),
+            ],
+        )
+        assert len(ir.audited_answers) == 1
+        assert ir.audited_answers[0].source == AnswerSource.USER_INTERACTIVE
+
+    def test_interview_result_serializes_audited_answers(self):
+        ir = InterviewResult(
+            questions=["Why?"],
+            user_answers={"Why?": "Because"},
+            audited_answers=[
+                AuditedAnswer(
+                    question_id="q_000",
+                    answer="Because",
+                    source=AnswerSource.CLI_APPROVE,
+                    confidence=0.7,
+                ),
+            ],
+        )
+        data = ir.model_dump()
+        assert len(data["audited_answers"]) == 1
+        assert data["audited_answers"][0]["source"] == "cli_approve"
+
+    def test_interview_result_backward_compat(self):
+        """InterviewResult without audited_answers still works."""
+        ir = InterviewResult(questions=["Q?"], approved=False)
+        assert ir.audited_answers == []
+
+    def test_interview_result_roundtrip(self):
+        ir = InterviewResult(
+            questions=["Q1?"],
+            user_answers={"Q1?": "A1"},
+            audited_answers=[
+                AuditedAnswer(
+                    question_id="q_000",
+                    answer="A1",
+                    source=AnswerSource.AUTO_ASSUMPTION,
+                    confidence=0.85,
+                    matched_assumption="Always use A1",
+                ),
+            ],
+        )
+        json_str = ir.model_dump_json()
+        ir2 = InterviewResult.model_validate_json(json_str)
+        assert ir2.audited_answers[0].matched_assumption == "Always use A1"

@@ -6,9 +6,11 @@ each project has a dollar cap. No retries on budget exceeded.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from pydantic import BaseModel, Field
 
@@ -20,7 +22,7 @@ DEFAULT_MODEL_PRICING: dict[str, tuple[float, float]] = {
     # Anthropic
     "claude-haiku-4-5-20251001": (0.80, 4.00),
     "claude-sonnet-4-5-20250929": (3.00, 15.00),
-    "claude-opus-4-6": (15.00, 75.00),
+    "claude-opus-4-6": (5.00, 25.00),
     # OpenAI
     "gpt-4o": (2.50, 10.00),
     "gpt-4o-mini": (0.15, 0.60),
@@ -217,6 +219,25 @@ class BudgetTracker:
             return 0.0
         return self._cache_read_tokens / total
 
+    def summary(self) -> dict:
+        """Return a dict summarizing all budget and cache metrics."""
+        return {
+            "project_spend": self._project_spend,
+            "project_cap": self.per_project_cap,
+            "budget_remaining": self.budget_remaining,
+            "spend_percentage": self.spend_percentage,
+            "daily_spend": self.daily_spend,
+            "tokens_in": self._project_tokens_in,
+            "tokens_out": self._project_tokens_out,
+            "cache_creation_tokens": self._cache_creation_tokens,
+            "cache_read_tokens": self._cache_read_tokens,
+            "cache_hit_rate": self.cache_hit_rate,
+        }
+
+    def as_dict(self) -> dict:
+        """Alias for summary()."""
+        return self.summary()
+
 
 class PhaseBudget(BaseModel):
     """Budget tracking broken down by pipeline phase."""
@@ -270,3 +291,39 @@ class PhaseBudget(BaseModel):
         if shaping_budget_pct > 0:
             caps["shape"] = shaping_budget_pct
         return cls(phase_caps=caps)
+
+
+# ── External pricing file ─────────────────────────────────────────
+
+
+DEFAULT_PRICING_PATH = Path("~/.config/pact/model_pricing.json").expanduser()
+
+
+def load_pricing_file(path: Path = DEFAULT_PRICING_PATH) -> dict[str, tuple[float, float]]:
+    """Load model pricing from a JSON file.
+
+    File format: {"model_id": [input_cost, output_cost], ...}
+    Returns dict suitable for set_model_pricing_table().
+    """
+    data = json.loads(path.read_text())
+    result: dict[str, tuple[float, float]] = {}
+    for model_id, costs in data.items():
+        if isinstance(costs, list) and len(costs) == 2:
+            result[model_id] = (float(costs[0]), float(costs[1]))
+    return result
+
+
+def save_pricing_file(
+    path: Path = DEFAULT_PRICING_PATH,
+    pricing: dict[str, tuple[float, float]] | None = None,
+) -> Path:
+    """Save pricing table to a JSON file. Defaults to current active pricing.
+
+    Returns the path written to.
+    """
+    if pricing is None:
+        pricing = get_model_pricing_table()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {model: list(costs) for model, costs in sorted(pricing.items())}
+    path.write_text(json.dumps(data, indent=2) + "\n")
+    return path

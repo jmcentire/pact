@@ -6,10 +6,13 @@ ProjectConfig: per-project from pact.yaml.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 import yaml
 
@@ -248,9 +251,18 @@ def load_global_config(config_path: str | Path | None = None) -> GlobalConfig:
             fast=model_tiers_raw.get("fast", config.model_tiers.fast),
         )
 
-    # Apply pricing overrides if configured
+    # Load external pricing file if it exists
+    from pact.budget import DEFAULT_PRICING_PATH, load_pricing_file, set_model_pricing_table
+    if DEFAULT_PRICING_PATH.exists():
+        try:
+            file_overrides = load_pricing_file(DEFAULT_PRICING_PATH)
+            if file_overrides:
+                set_model_pricing_table(file_overrides)
+        except Exception as e:
+            logger.warning("Failed to load pricing file %s: %s", DEFAULT_PRICING_PATH, e)
+
+    # Apply pricing overrides from config (takes precedence over file)
     if config.model_pricing:
-        from pact.budget import set_model_pricing_table
         overrides = {
             model_id: (costs[0], costs[1])
             for model_id, costs in config.model_pricing.items()

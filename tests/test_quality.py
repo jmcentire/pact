@@ -136,3 +136,20 @@ class TestSideEffectModels:
         )
         assert fc.side_effects == ["reads_file: config.yaml"]
         assert fc.structured_side_effects == []
+
+
+class TestQualityIntegration:
+    """Verify quality.py is importable from its integration points."""
+
+    def test_importable_from_contract_author(self):
+        """Verify the import used in contract_author.py works."""
+        from pact.quality import audit_contract_specificity
+        contract = _make_contract(description="Uses best practices")
+        warnings = audit_contract_specificity(contract)
+        assert len(warnings) >= 1
+
+    def test_audit_returns_list(self):
+        from pact.quality import audit_contract_specificity
+        contract = _make_contract(description="Specific and clear")
+        result = audit_contract_specificity(contract)
+        assert isinstance(result, list)

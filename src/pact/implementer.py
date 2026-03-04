@@ -635,6 +635,7 @@ async def implement_component_iterative(
         standards_brief=standards_brief,
         test_results=prior_test_results,
         strategic_context=strategic_ctx,
+        include_test_code=False,  # Agent reads test file directly
     )
 
     # Write test file so the agent can run it
@@ -832,6 +833,7 @@ async def implement_component_interactive(
         external_context=external_context,
         learnings=learnings,
         strategic_context=strategic_ctx,
+        include_test_code=False,  # Agent reads test file directly
     )
 
     # Write test file so the agent can run it

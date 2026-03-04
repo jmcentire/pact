@@ -7,6 +7,9 @@ from pact.schemas import (
     FieldSpec,
     TypeSpec,
     ErrorCase,
+    SideEffect,
+    SideEffectKind,
+    PerformanceBudget,
 )
 
 
@@ -127,3 +130,85 @@ class TestRenderFocusedContract:
         result = _render_focused_contract(contract)
         assert "hello() -> str" in result
         assert "error:" not in result
+
+    def test_includes_structured_side_effects(self):
+        contract = ComponentContract(
+            component_id="side_fx",
+            name="SideFx",
+            description="Has side effects",
+            functions=[
+                FunctionContract(
+                    name="save",
+                    description="Saves data",
+                    inputs=[FieldSpec(name="data", type_ref="str")],
+                    output_type="None",
+                    structured_side_effects=[
+                        SideEffect(kind=SideEffectKind.WRITES_FILE, target="state.json"),
+                        SideEffect(kind=SideEffectKind.LOGGING, target="app.log"),
+                    ],
+                ),
+            ],
+        )
+        result = _render_focused_contract(contract)
+        assert "side_effect: writes_file -> state.json" in result
+        assert "side_effect: logging -> app.log" in result
+
+    def test_includes_string_side_effects_fallback(self):
+        contract = ComponentContract(
+            component_id="old_fx",
+            name="OldFx",
+            description="Has old-style side effects",
+            functions=[
+                FunctionContract(
+                    name="read",
+                    description="Reads data",
+                    inputs=[],
+                    output_type="str",
+                    side_effects=["reads_file: config.yaml"],
+                ),
+            ],
+        )
+        result = _render_focused_contract(contract)
+        assert "side_effect: reads_file: config.yaml" in result
+
+    def test_includes_performance_budget(self):
+        contract = ComponentContract(
+            component_id="perf",
+            name="Perf",
+            description="Performance-sensitive",
+            functions=[
+                FunctionContract(
+                    name="search",
+                    description="Search items",
+                    inputs=[FieldSpec(name="query", type_ref="str")],
+                    output_type="list[Item]",
+                    performance_budget=PerformanceBudget(
+                        p95_latency_ms=50,
+                        max_memory_mb=256,
+                        complexity="O(n log n)",
+                    ),
+                ),
+            ],
+        )
+        result = _render_focused_contract(contract)
+        assert "performance:" in result
+        assert "p95<50ms" in result
+        assert "mem<256MB" in result
+        assert "O(n log n)" in result
+
+    def test_no_performance_budget_when_none(self):
+        contract = ComponentContract(
+            component_id="noperf",
+            name="NoPerf",
+            description="No perf constraints",
+            functions=[
+                FunctionContract(
+                    name="greet",
+                    description="Greet user",
+                    inputs=[],
+                    output_type="str",
+                ),
+            ],
+        )
+        result = _render_focused_contract(contract)
+        assert "performance:" not in result

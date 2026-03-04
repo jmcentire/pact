@@ -28,7 +28,9 @@ Key principles:
 - Error cases must be exhaustive
 - Preconditions and postconditions must be verifiable
 - Dependencies must be explicitly declared
-- Names must be descriptive and consistent"""
+- Names must be descriptive and consistent
+- Functions with side effects must declare structured_side_effects (kind: none/reads_file/writes_file/network_call/mutates_state/logging, target, description)
+- Include performance_budget (p95_latency_ms, max_memory_mb, complexity) for performance-sensitive functions"""
 
 
 async def author_contract(
@@ -151,7 +153,9 @@ Requirements:
 - Include error cases for each function
 - Add preconditions and postconditions where meaningful
 - List all dependencies by component_id
-- All type references must resolve to types defined in this contract or primitives (str, int, float, bool, None, bytes, dict, list, any)"""
+- All type references must resolve to types defined in this contract or primitives (str, int, float, bool, None, bytes, dict, list, any)
+- Declare structured_side_effects for each function (use kind='none' for pure functions)
+- Set performance_budget on functions with latency or memory constraints"""
 
     contract, in_tok, out_tok = await agent.assess_cached(
         ComponentContract, prompt, CONTRACT_SYSTEM, cache_prefix=cache_prefix,
@@ -168,5 +172,11 @@ Requirements:
         component_id, len(contract.types), len(contract.functions),
         in_tok + out_tok,
     )
+
+    # Quality audit — non-blocking warnings for vague language
+    from pact.quality import audit_contract_specificity
+    quality_warnings = audit_contract_specificity(contract)
+    for w in quality_warnings:
+        logger.warning("Quality: %s", w)
 
     return contract, research, plan

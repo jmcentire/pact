@@ -295,15 +295,25 @@ def validate_all_contracts(
         else:
             all_errors.extend(validate_test_suite(test_suites[node_id]))
 
+        # Quality audit — non-blocking warnings for vague language
+        from pact.quality import audit_contract_specificity
+        quality_warnings = audit_contract_specificity(contract)
+        for w in quality_warnings:
+            logger.warning("Quality: %s", w)
+
     # Check dependency contracts — distinguish internal vs external
     tree_component_ids = set(tree.nodes.keys()) if tree else set()
 
     for cid, contract in contracts.items():
         for dep_id in contract.dependencies:
-            if dep_id in contracts:
+            # Apply name normalization before resolution
+            resolved = normalize_dependency_name(dep_id, list(contracts.keys()))
+            effective_id = resolved or dep_id
+
+            if effective_id in contracts:
                 continue  # Internal dependency with contract — OK
 
-            if dep_id in tree_component_ids:
+            if effective_id in tree_component_ids:
                 # Internal (in decomposition tree) but missing contract — error
                 all_errors.append(
                     f"Contract '{cid}' depends on '{dep_id}' which is in the "

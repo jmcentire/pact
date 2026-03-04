@@ -111,6 +111,25 @@ def _render_focused_contract(contract: ComponentContract) -> str:
                 for err in f.error_cases:
                     cond = f" when {err.condition}" if err.condition else ""
                     parts.append(f"    error: {err.name}{cond}")
+            # Structured side effects (or fall back to string side_effects)
+            if f.structured_side_effects:
+                for se in f.structured_side_effects:
+                    parts.append(f"    side_effect: {se.kind} -> {se.target}")
+            elif f.side_effects:
+                for se in f.side_effects:
+                    parts.append(f"    side_effect: {se}")
+            # Performance budget
+            if f.performance_budget:
+                pb = f.performance_budget
+                budget_parts = []
+                if pb.p95_latency_ms:
+                    budget_parts.append(f"p95<{pb.p95_latency_ms}ms")
+                if pb.max_memory_mb:
+                    budget_parts.append(f"mem<{pb.max_memory_mb}MB")
+                if pb.complexity:
+                    budget_parts.append(pb.complexity)
+                if budget_parts:
+                    parts.append(f"    performance: {', '.join(budget_parts)}")
 
     # Invariants
     if contract.invariants:

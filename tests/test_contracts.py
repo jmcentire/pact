@@ -354,6 +354,33 @@ class TestValidateAllContracts:
         gate = validate_all_contracts(tree, contracts, suites)
         assert gate.passed
 
+    def test_dependency_name_normalization(self):
+        """Case-mismatch dependency should be resolved via normalization."""
+        tree = DecompositionTree(
+            root_id="root",
+            nodes={
+                "root": DecompositionNode(
+                    component_id="root", name="Root", description="r",
+                    children=["my_component"],
+                ),
+                "my_component": DecompositionNode(
+                    component_id="my_component", name="MC", description="m",
+                    parent_id="root",
+                ),
+            },
+        )
+        # Root depends on "My_Component" (case mismatch with "my_component")
+        contracts = {
+            "root": _make_contract(component_id="root", dependencies=["My_Component"]),
+            "my_component": _make_contract(component_id="my_component"),
+        }
+        suites = {
+            "root": _make_test_suite(component_id="root"),
+            "my_component": _make_test_suite(component_id="my_component"),
+        }
+        gate = validate_all_contracts(tree, contracts, suites)
+        assert gate.passed  # Normalization should resolve the case mismatch
+
 
 class TestExtractBaseTypes:
     def test_simple_type(self):

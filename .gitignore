@@ -36,3 +36,6 @@ Thumbs.db
 .env
 *.key
 *.pem
+
+# User-local pricing overrides
+model_pricing.json
