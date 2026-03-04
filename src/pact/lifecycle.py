@@ -8,7 +8,7 @@ State transitions:
   paused → active          (resume)
 
 Phase transitions:
-  interview → shape → decompose → contract → implement → integrate → complete
+  interview → shape → decompose → contract → implement → integrate → polish → complete
   Any phase can transition to → diagnose → (back to prior phase)
   shape phase is skipped when shaping is disabled (default)
 """
@@ -47,7 +47,7 @@ def advance_phase(state: RunState, skip_phases: set[str] | None = None) -> str:
     """
     phase_order = [
         "interview", "shape", "decompose", "contract",
-        "implement", "integrate", "complete",
+        "implement", "integrate", "polish", "complete",
     ]
     try:
         idx = phase_order.index(state.phase)

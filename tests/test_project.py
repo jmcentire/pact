@@ -242,6 +242,90 @@ class TestTestSuites:
         assert len(all_s) == 2
 
 
+class TestGoodhartSuites:
+    def test_save_and_load_roundtrip(self, tmp_project: ProjectManager):
+        suite = ContractTestSuite(
+            component_id="pricing",
+            contract_version=1,
+            test_cases=[
+                TestCase(id="t1", description="commutative property for all inputs",
+                         function="add", category="invariant"),
+            ],
+            generated_code="def test_goodhart_commutative(): pass",
+        )
+        tmp_project.save_goodhart_suite(suite)
+        loaded = tmp_project.load_goodhart_suite("pricing")
+        assert loaded is not None
+        assert len(loaded.test_cases) == 1
+        assert loaded.component_id == "pricing"
+
+    def test_saves_code_file(self, tmp_project: ProjectManager):
+        suite = ContractTestSuite(
+            component_id="pricing",
+            contract_version=1,
+            generated_code="def test_goodhart_it(): pass",
+        )
+        tmp_project.save_goodhart_suite(suite)
+        code_path = tmp_project.goodhart_test_code_path("pricing")
+        assert code_path.exists()
+        assert "test_goodhart_it" in code_path.read_text()
+
+    def test_goodhart_directory_is_separate_from_tests(self, tmp_project: ProjectManager):
+        suite = ContractTestSuite(
+            component_id="pricing",
+            contract_version=1,
+            generated_code="def test_goodhart_it(): pass",
+        )
+        tmp_project.save_goodhart_suite(suite)
+        # Goodhart goes to goodhart/ not tests/
+        goodhart_dir = tmp_project.project_dir / ".pact" / "contracts" / "pricing" / "goodhart"
+        tests_dir = tmp_project.project_dir / ".pact" / "contracts" / "pricing" / "tests"
+        assert goodhart_dir.exists()
+        assert not tests_dir.exists()  # No visible tests created
+
+    def test_isolation_load_all_test_suites_excludes_goodhart(self, tmp_project: ProjectManager):
+        """Critical: load_all_test_suites must NOT include Goodhart suites."""
+        visible = ContractTestSuite(
+            component_id="pricing", contract_version=1,
+            test_cases=[TestCase(id="t1", description="d", function="f", category="happy_path")],
+            generated_code="def test_visible(): pass",
+        )
+        goodhart = ContractTestSuite(
+            component_id="pricing", contract_version=1,
+            test_cases=[TestCase(id="g1", description="d", function="f", category="invariant")],
+            generated_code="def test_goodhart_hidden(): pass",
+        )
+        tmp_project.save_test_suite(visible)
+        tmp_project.save_goodhart_suite(goodhart)
+
+        all_visible = tmp_project.load_all_test_suites()
+        assert "pricing" in all_visible
+        # The visible suite should have the visible test, not the goodhart one
+        assert any(tc.id == "t1" for tc in all_visible["pricing"].test_cases)
+        assert not any(tc.id == "g1" for tc in all_visible["pricing"].test_cases)
+
+    def test_load_all_goodhart_suites(self, tmp_project: ProjectManager):
+        for cid in ["a", "b"]:
+            s = ContractTestSuite(
+                component_id=cid, contract_version=1,
+                test_cases=[TestCase(id="g1", description="d", function="f", category="invariant")],
+                generated_code="def test_goodhart_it(): pass",
+            )
+            tmp_project.save_goodhart_suite(s)
+        all_g = tmp_project.load_all_goodhart_suites()
+        assert len(all_g) == 2
+
+    def test_load_missing_returns_none(self, tmp_project: ProjectManager):
+        assert tmp_project.load_goodhart_suite("nonexistent") is None
+
+    def test_goodhart_path_distinct_from_visible(self, tmp_project: ProjectManager):
+        visible_path = tmp_project.test_code_path("pricing")
+        goodhart_path = tmp_project.goodhart_test_code_path("pricing")
+        assert visible_path != goodhart_path
+        assert "tests" in str(visible_path)
+        assert "goodhart" in str(goodhart_path)
+
+
 class TestImplementations:
     def test_impl_dir(self, tmp_project: ProjectManager):
         d = tmp_project.impl_dir("pricing")

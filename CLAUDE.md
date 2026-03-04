@@ -35,7 +35,7 @@ Every agent follows 3 phases: Research -> Plan+Evaluate -> Execute. Research and
 2. **Shape** -- (Optional) Produce a Shape Up pitch: appetite, breadboard, rabbit holes, no-gos
 3. **Decompose** -- Task -> DecompositionNode tree (2-7 components), guided by shaping context
 3. **Contract** -- For each component (leaves first), generate ComponentContract
-4. **Test** -- For each contract, generate ContractTestSuite with executable tests
+4. **Test** -- For each contract, generate ContractTestSuite with executable tests + hidden Goodhart tests
 5. **Validate** -- Mechanical gate: all refs resolve, no cycles, test code parses
 6. **Implement** -- Each component independently by code_author agent, verified by contract tests
 7. **Integrate** -- Parent components: glue code wiring children, parent-level tests
@@ -84,6 +84,19 @@ Opt-in (`monitoring_enabled: true`). Pact-generated code embeds `PACT:<project_h
 **Narrative retry**: On retry attempts, the remediator carries forward prior failures, test results, research reports, and plan evaluations — matching the `implementer.py` pattern. A heroic narrative reframe ("senior engineer brought in because the previous approach failed") prevents the model from falling into the same reasoning rut. `build_narrative_debrief()` is a pure, testable function.
 
 **Budget hypervisor**: `estimate_tokens()` provides content-aware token estimation (symbol ratio → chars/token: 3.5 for code, 4.5 for prose). `record_tokens_validated()` cross-validates reported vs estimated counts using `max()` for conservative accounting. The `claude_code` backend no longer falls back to `len(text) // 4`. The `claude_code_team` backend now tracks spend via estimation.
+
+### Goodhart Tests (Hidden Acceptance Criteria)
+
+During the Test phase, Pact generates two test suites per component: **visible tests** (shown to the implementation agent) and **Goodhart tests** (hidden, never shared with agents). This counters Goodhart's Law: when agents can see all tests, they optimize for passing those specific inputs rather than truly satisfying the contract.
+
+Goodhart tests are adversarial — they probe for hardcoded returns, boundary-adjacent inputs, invariant generalization, and postcondition universality. They live in `.pact/contracts/<cid>/goodhart/` and are never loaded by `load_all_test_suites()` or `render_handoff_brief()`.
+
+During the **polish phase**, Goodhart tests run against all implementations. Failures trigger **graduated-disclosure remediation**: the component is re-implemented with behavioral hints (not exact errors) that get more specific on each attempt (max 2 by default). The agent never sees the actual test code.
+
+- **Level 1**: Vague behavioral hint from test description (e.g., "your add() function may not correctly handle the commutative property")
+- **Level 2**: Specific contract invariant (e.g., "The contract requires: add(a,b) == add(b,a). Your implementation appears to violate this.")
+
+Config: `max_goodhart_attempts` in pact.yaml (default: 2). Cost: ~$0.07/component for generation (1 LLM call, no research/plan).
 
 ### Casual-Pace Scheduling
 
@@ -162,7 +175,7 @@ src/pact/
     state.json         # Run lifecycle state
     audit.jsonl        # All actions + decisions
     decomposition/     # Tree + decisions
-    contracts/         # Per-component contracts + tests
+    contracts/         # Per-component contracts + tests + goodhart/
     implementations/   # Per-component code + attempts/
     standards.json     # Global standards (auto-generated after decomposition)
     tasks.json         # Phased task list (auto-generated after decomposition)
@@ -235,7 +248,7 @@ pact incident <project-dir> <id>      # Show incident details + diagnostic repor
 ## Testing
 
 ```bash
-make test          # 1482 tests, ~7s
+make test          # 1573 tests, ~7s
 make test-quick    # Stop on first failure
 ```
 

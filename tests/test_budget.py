@@ -17,11 +17,11 @@ class TestPricingForModel:
 
     def test_haiku(self):
         inp, out = pricing_for_model("claude-haiku-4-5-20251001")
-        assert inp == 0.80
+        assert inp == 1.00
 
     def test_unknown_defaults_to_haiku(self):
         inp, out = pricing_for_model("unknown-model-v99")
-        assert inp == 0.80
+        assert inp == 1.00
 
 
 class TestBudgetTracker:

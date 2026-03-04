@@ -367,13 +367,17 @@ async def integrate_component_iterative(
         for f in parent_contract.functions
     )
 
-    # Gather child implementation paths
+    # Gather child implementation paths (absolute for env vars, relative for prompts)
     child_src_dirs = {
         cid: project.impl_src_dir(cid) for cid in child_contracts
     }
+    child_src_dirs_rel = {
+        cid: path.relative_to(project.project_dir)
+        for cid, path in child_src_dirs.items()
+    }
     child_impl_listing = "\n".join(
         f"  - {cid}: {path}/"
-        for cid, path in child_src_dirs.items()
+        for cid, path in child_src_dirs_rel.items()
     )
 
     # Write test file so the agent can run it
@@ -383,6 +387,8 @@ async def integrate_component_iterative(
         test_file.write_text(parent_test_suite.generated_code)
 
     comp_dir = project.composition_dir(parent_id)
+    comp_dir_rel = comp_dir.relative_to(project.project_dir)
+    test_file_rel = test_file.relative_to(project.project_dir)
 
     module_name = parent_id.replace("-", "_")
 
@@ -427,9 +433,9 @@ Child contracts:
 
 The test file imports from: `./src/{module_name}`
 
-You MUST write your glue module at: {comp_dir}/src/{module_name}{file_ext}
+You MUST write your glue module at: {comp_dir_rel}/src/{module_name}{file_ext}
 
-Create the directory if needed: mkdir -p {comp_dir}/src/
+Create the directory if needed: mkdir -p {comp_dir_rel}/src/
 
 Children are importable using ESM imports. For example:
 {chr(10).join(f'  import {{ ... }} from "./{cid.replace("-", "_")}";' for cid in child_contracts)}
@@ -437,9 +443,9 @@ Children are importable using ESM imports. For example:
 ## Your Task
 
 1. Read each child implementation to understand their actual APIs:
-{chr(10).join(f'   - {path}/{cid.replace("-", "_")}{file_ext}' for cid, path in child_src_dirs.items())}
-2. Read the parent test file: {test_file}
-3. Write your glue module at: {comp_dir}/src/{module_name}{file_ext}
+{chr(10).join(f'   - {path}/{cid.replace("-", "_")}{file_ext}' for cid, path in child_src_dirs_rel.items())}
+2. Read the parent test file: {test_file_rel}
+3. Write your glue module at: {comp_dir_rel}/src/{module_name}{file_ext}
    - Import from each child module using ESM imports
    - Re-export ALL types and functions that the test file imports
    - Implement each parent function by delegating to appropriate children
@@ -447,7 +453,7 @@ Children are importable using ESM imports. For example:
 {ts_specific}{js_specific}   - Use named exports only (no default exports)
    - Do NOT add business logic — only wiring and delegation
 4. Run tests:
-   NODE_PATH="{env_path_str}" npx vitest run {test_file}
+   NODE_PATH="{env_path_str}" npx vitest run {test_file_rel}
 5. If tests fail, read the errors, fix your glue code, and re-run
 6. Keep iterating until ALL tests pass
 
@@ -486,9 +492,9 @@ Child contracts:
 
 The test file imports: `from src.{module_name} import ...`
 
-You MUST write your glue module at: {comp_dir}/src/{module_name}.py
+You MUST write your glue module at: {comp_dir_rel}/src/{module_name}.py
 
-Create the directory if needed: mkdir -p {comp_dir}/src/
+Create the directory if needed: mkdir -p {comp_dir_rel}/src/
 
 Children are importable directly by name (they're on PYTHONPATH). For example:
 {chr(10).join(f'  import {cid.replace("-", "_")}' for cid in child_contracts)}
@@ -498,17 +504,17 @@ Do NOT use sys.path manipulation. Just import children by their module name.
 ## Your Task
 
 1. Read each child implementation to understand their actual APIs:
-{chr(10).join(f'   - {path}/{cid.replace("-", "_")}.py' for cid, path in child_src_dirs.items())}
-2. Read the parent test file: {test_file}
-3. Write your glue module at: {comp_dir}/src/{module_name}.py
-   - Create {comp_dir}/src/__init__.py if needed
+{chr(10).join(f'   - {path}/{cid.replace("-", "_")}.py' for cid, path in child_src_dirs_rel.items())}
+2. Read the parent test file: {test_file_rel}
+3. Write your glue module at: {comp_dir_rel}/src/{module_name}.py
+   - Create {comp_dir_rel}/src/__init__.py if needed
    - Import from each child module by name (e.g. `import <child_module_name>`)
    - Re-export ALL types and functions that the test file imports
    - Implement each parent function by delegating to appropriate children
    - Match the exact type names, function signatures, and enum values from the contract
    - Do NOT add business logic — only wiring and delegation
 4. Run tests with correct PYTHONPATH:
-   PYTHONPATH="{pythonpath_str}" python3 -m pytest {test_file} -v
+   PYTHONPATH="{pythonpath_str}" python3 -m pytest {test_file_rel} -v
 5. If tests fail, read the errors, fix your glue code, and re-run
 6. Keep iterating until ALL tests pass
 

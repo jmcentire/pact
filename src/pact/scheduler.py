@@ -33,7 +33,15 @@ from pact.config import (
 from pact.decomposer import decompose_and_contract, run_interview
 from pact.diagnoser import determine_recovery_action, diagnose_failure
 from pact.events import EventBus, PactEvent
-from pact.implementer import implement_all, implement_all_iterative, implement_component_iterative
+from pact.implementer import (
+    _check_absolute_paths,
+    detect_stubs,
+    implement_all,
+    implement_all_iterative,
+    implement_component_iterative,
+    validate_and_fix_exports,
+)
+from pact.test_harness import run_contract_tests
 from pact.integrator import integrate_all, integrate_all_iterative
 from pact.lifecycle import advance_phase, format_run_summary
 from pact.project import ProjectManager
@@ -176,6 +184,75 @@ def detect_systemic_failure(
     return None
 
 
+def _build_goodhart_hint(
+    attempt: int,
+    results: TestResults,
+    goodhart_suite: "ContractTestSuite",
+) -> str:
+    """Build graduated behavioral hint from Goodhart test failures.
+
+    Level 1 (attempt 1): Vague behavioral hint from test descriptions only.
+    Level 2 (attempt 2+): Add specific invariant/postcondition from the contract.
+
+    Never shares actual test code, assertions, or specific failing inputs.
+    """
+    from pact.schemas import ContractTestSuite  # noqa: F811
+
+    # Map test IDs from failures to their descriptions in the suite
+    failing_test_ids = set()
+    for fd in results.failure_details:
+        failing_test_ids.add(fd.test_id)
+
+    # Build description map from goodhart suite
+    desc_map: dict[str, str] = {}
+    for tc in goodhart_suite.test_cases:
+        desc_map[tc.id] = tc.description
+
+    # Collect descriptions for failing tests
+    failing_descriptions = []
+    for tid in failing_test_ids:
+        desc = desc_map.get(tid, "")
+        if desc:
+            failing_descriptions.append(desc)
+
+    # If no descriptions matched (test runner uses different IDs), use all
+    if not failing_descriptions and goodhart_suite.test_cases:
+        failing_descriptions = [tc.description for tc in goodhart_suite.test_cases if tc.description]
+
+    if not failing_descriptions:
+        return "A code reviewer noted potential issues with your implementation's generality."
+
+    if attempt == 1:
+        # Level 1: Vague behavioral hints
+        hints = "\n".join(
+            f"- A code reviewer noted: your implementation may not correctly handle "
+            f"{desc}"
+            for desc in failing_descriptions
+        )
+        return (
+            "BEHAVIORAL REVIEW FEEDBACK (from an independent code review):\n"
+            f"{hints}\n\n"
+            "Please review your implementation for these potential issues. "
+            "The feedback suggests your code may work for specific inputs "
+            "but not generalize correctly."
+        )
+    else:
+        # Level 2+: More specific invariant/postcondition hints
+        hints = "\n".join(
+            f"- The contract requires: {desc}. "
+            f"Your implementation appears to violate this for some inputs "
+            f"not in the visible test suite."
+            for desc in failing_descriptions
+        )
+        return (
+            "SPECIFIC CONTRACT COMPLIANCE ISSUES:\n"
+            f"{hints}\n\n"
+            "Your implementation passes all visible tests but appears to "
+            "have gaps in contract compliance. These are not edge cases — "
+            "they are core behavioral properties from the contract."
+        )
+
+
 class Scheduler:
     """Casual-pace scheduler — poll, burst, persist, sleep."""
 
@@ -312,6 +389,8 @@ class Scheduler:
                 external_context=external_context,
                 learnings=learnings_str,
             )
+        elif phase == "polish":
+            state = await self._phase_polish(state)
         elif phase == "diagnose":
             state = await self._phase_diagnose(state, sops)
         elif phase == "complete":
@@ -765,8 +844,7 @@ class Scheduler:
         non_leaves = [n for n in tree.nodes.values() if n.children]
         if not non_leaves:
             # No integration needed — single component or all leaves
-            advance_phase(state)  # -> complete
-            state.complete()
+            advance_phase(state)  # -> polish
             return state
 
         pcfg = resolve_parallel_config(self.project_config, self.global_config)
@@ -853,7 +931,301 @@ class Scheduler:
             state.phase = "diagnose"
             state.pause_reason = f"Integration failed: {', '.join(failed)}"
         else:
-            state.complete()
+            advance_phase(state)  # -> polish
+
+        return state
+
+    async def _phase_polish(self, state: RunState) -> RunState:
+        """Polish phase — cross-component regression check + quality validation.
+
+        1. Re-run all contract tests across all components (catch regressions)
+        2. Detect stub/placeholder code
+        3. Check for absolute path leakage
+        4. Validate exports
+        5. If regressions: transition to diagnose
+        6. If only warnings: log and advance to complete
+        7. If clean: advance to complete
+        """
+        tree = self.project.load_tree()
+        if not tree:
+            advance_phase(state)
+            return state
+
+        contracts = self.project.load_all_contracts()
+        test_suites = self.project.load_all_test_suites()
+        language = self.project.language
+        project_dir_str = str(self.project.project_dir)
+
+        regression_failures: list[str] = []
+        warnings: list[str] = []
+
+        # 1. Re-run all contract tests
+        for cid in tree.topological_order():
+            node = tree.nodes.get(cid)
+            if not node:
+                continue
+
+            test_suite = test_suites.get(cid)
+            if not test_suite or not test_suite.generated_code:
+                continue
+
+            test_file = self.project.test_code_path(cid)
+            if not test_file.exists():
+                continue
+
+            # Determine src_dir: leaf -> impl_src_dir, non-leaf -> composition_dir
+            if node.children:
+                src_dir = self.project.composition_dir(cid)
+                extra_paths = [self.project.impl_src_dir(child) for child in node.children]
+            else:
+                src_dir = self.project.impl_src_dir(cid)
+                extra_paths = []
+
+            try:
+                results = await run_contract_tests(
+                    test_file, src_dir, extra_paths=extra_paths,
+                    language=language,
+                    project_dir=self.project.project_dir,
+                )
+                if not results.all_passed:
+                    regression_failures.append(
+                        f"{cid}: {results.failed + results.errors}/{results.total} failed"
+                    )
+            except Exception as e:
+                regression_failures.append(f"{cid}: test error: {e}")
+
+        # 2. Detect stubs in each component's src dir
+        for cid in tree.topological_order():
+            node = tree.nodes.get(cid)
+            if not node:
+                continue
+            if node.children:
+                src_dir = self.project.composition_dir(cid)
+            else:
+                src_dir = self.project.impl_src_dir(cid)
+            stubs = detect_stubs(src_dir, language)
+            for w in stubs:
+                warnings.append(f"[stub] {cid}: {w}")
+
+        # 3. Check for absolute path leakage
+        for cid in tree.topological_order():
+            node = tree.nodes.get(cid)
+            if not node:
+                continue
+            if node.children:
+                src_dir = self.project.composition_dir(cid)
+            else:
+                src_dir = self.project.impl_src_dir(cid)
+            path_warnings = _check_absolute_paths(src_dir, project_dir_str, language)
+            for w in path_warnings:
+                warnings.append(f"[path] {cid}: {w}")
+
+        # 4. Validate exports
+        for cid, contract in contracts.items():
+            node = tree.nodes.get(cid)
+            if not node:
+                continue
+            if node.children:
+                src_dir = self.project.composition_dir(cid)
+            else:
+                src_dir = self.project.impl_src_dir(cid)
+            missing = validate_and_fix_exports(src_dir, contract)
+            for name in missing:
+                warnings.append(f"[export] {cid}: missing export '{name}'")
+
+        # 5. Decide outcome
+        if regression_failures:
+            logger.warning(
+                "Polish found %d test regressions: %s",
+                len(regression_failures), regression_failures,
+            )
+            state.phase = "diagnose"
+            state.pause_reason = f"Polish regressions: {', '.join(regression_failures)}"
+            self.project.append_audit(
+                "polish",
+                f"regressions={len(regression_failures)} warnings={len(warnings)}",
+            )
+            return state
+
+        # 6. Run Goodhart (hidden) acceptance tests
+        goodhart_failures = await self._run_goodhart_tests(tree, language)
+
+        if goodhart_failures:
+            logger.info(
+                "Goodhart failures in %d components — entering remediation",
+                len(goodhart_failures),
+            )
+            state = await self._goodhart_remediate(
+                state, tree, contracts, test_suites, goodhart_failures, language,
+            )
+
+        if warnings:
+            logger.warning(
+                "Polish found %d warnings (non-blocking): %s",
+                len(warnings), warnings[:5],
+            )
+
+        # If remediation didn't push to diagnose, advance to complete
+        if state.phase == "polish":
+            advance_phase(state)  # -> complete
+
+        self.project.append_audit(
+            "polish",
+            f"regressions={len(regression_failures)} warnings={len(warnings)} "
+            f"goodhart_failures={len(goodhart_failures)}",
+        )
+
+        return state
+
+    async def _run_goodhart_tests(
+        self,
+        tree: DecompositionTree,
+        language: str,
+    ) -> dict[str, TestResults]:
+        """Run Goodhart tests for all components. Returns map of failures only."""
+        goodhart_failures: dict[str, TestResults] = {}
+
+        for cid in tree.topological_order():
+            node = tree.nodes.get(cid)
+            if not node:
+                continue
+
+            goodhart_suite = self.project.load_goodhart_suite(cid)
+            if not goodhart_suite or not goodhart_suite.generated_code:
+                continue
+
+            test_file = self.project.goodhart_test_code_path(cid)
+            if not test_file.exists():
+                continue
+
+            # Determine src_dir
+            if node.children:
+                src_dir = self.project.composition_dir(cid)
+                extra_paths = [self.project.impl_src_dir(child) for child in node.children]
+            else:
+                src_dir = self.project.impl_src_dir(cid)
+                extra_paths = []
+
+            try:
+                results = await run_contract_tests(
+                    test_file, src_dir, extra_paths=extra_paths,
+                    language=language,
+                    project_dir=self.project.project_dir,
+                )
+                if not results.all_passed:
+                    goodhart_failures[cid] = results
+                    logger.info(
+                        "Goodhart test failures for %s: %d/%d failed",
+                        cid, results.failed + results.errors, results.total,
+                    )
+            except Exception as e:
+                logger.warning("Goodhart test error for %s: %s", cid, e)
+
+        return goodhart_failures
+
+    async def _goodhart_remediate(
+        self,
+        state: RunState,
+        tree: DecompositionTree,
+        contracts: dict,
+        test_suites: dict,
+        goodhart_failures: dict[str, TestResults],
+        language: str,
+    ) -> RunState:
+        """Graduated-disclosure remediation for Goodhart test failures.
+
+        Re-implements failing components with behavioral hints that get
+        progressively more specific. Never shares actual test code.
+        """
+        max_goodhart_attempts = getattr(
+            self.project_config, "max_goodhart_attempts", None,
+        ) or 2
+
+        sops = self.project.load_sops()
+
+        for attempt in range(1, max_goodhart_attempts + 1):
+            logger.info(
+                "Goodhart remediation attempt %d/%d for %d components",
+                attempt, max_goodhart_attempts, len(goodhart_failures),
+            )
+
+            for cid, results in list(goodhart_failures.items()):
+                contract = contracts.get(cid)
+                test_suite = test_suites.get(cid)
+                if not contract or not test_suite:
+                    continue
+
+                goodhart_suite = self.project.load_goodhart_suite(cid)
+                if not goodhart_suite:
+                    continue
+
+                hint = _build_goodhart_hint(attempt, results, goodhart_suite)
+
+                # Re-implement with hint injected as learnings
+                dep_contracts = {
+                    dep_id: contracts[dep_id]
+                    for dep_id in contract.dependencies
+                    if dep_id in contracts
+                }
+
+                code_author_backend = resolve_backend(
+                    "code_author", self.project_config, self.global_config,
+                )
+                code_author_model = resolve_model(
+                    "code_author", self.project_config, self.global_config,
+                )
+
+                try:
+                    if code_author_backend in ("claude_code", "claude_code_team"):
+                        await implement_component_iterative(
+                            project=self.project,
+                            component_id=cid,
+                            contract=contract,
+                            test_suite=test_suite,
+                            budget=self.budget,
+                            model=code_author_model,
+                            dependency_contracts=dep_contracts or None,
+                            sops=sops,
+                            learnings=hint,
+                        )
+                    else:
+                        from pact.implementer import implement_component
+                        agent = self._make_agent("code_author")
+                        try:
+                            await implement_component(
+                                agent, self.project, cid, contract,
+                                test_suite,
+                                dependency_contracts=dep_contracts or None,
+                                sops=sops,
+                                learnings=hint,
+                            )
+                        finally:
+                            await agent.close()
+                except Exception as e:
+                    logger.warning("Goodhart remediation failed for %s: %s", cid, e)
+
+            # Re-run ALL Goodhart tests (cross-component regression check)
+            goodhart_failures = await self._run_goodhart_tests(tree, language)
+
+            if not goodhart_failures:
+                logger.info("All Goodhart tests pass after attempt %d", attempt)
+                self.project.append_audit(
+                    "goodhart_remediation",
+                    f"All passed after {attempt} attempt(s)",
+                )
+                return state
+
+        # Still failing after max attempts — log and proceed
+        remaining = list(goodhart_failures.keys())
+        logger.warning(
+            "Goodhart tests still failing after %d attempts for: %s",
+            max_goodhart_attempts, remaining,
+        )
+        self.project.append_audit(
+            "goodhart_remediation",
+            f"Max attempts ({max_goodhart_attempts}) reached, "
+            f"still failing: {', '.join(remaining)}",
+        )
 
         return state
 

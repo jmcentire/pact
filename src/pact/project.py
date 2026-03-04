@@ -19,6 +19,7 @@ The project directory is the unit of work:
       │   ├── interface.py (or interface.ts for TypeScript)
       │   ├── research.json
       │   ├── tests/contract_test.py (or contract_test.test.ts)
+      │   ├── goodhart/goodhart_test.py (hidden acceptance criteria)
       │   └── history/<timestamp>.json
       ├── implementations/<component_id>/
       │   ├── src/
@@ -357,6 +358,40 @@ class ProjectManager:
     def test_code_path(self, component_id: str) -> Path:
         test_ext = ".test.ts" if self.language == "typescript" else ".py"
         return self._contracts_dir / component_id / "tests" / f"contract_test{test_ext}"
+
+    # ── Goodhart (Hidden) Test Suites ─────────────────────────────
+
+    def save_goodhart_suite(self, suite: ContractTestSuite) -> Path:
+        d = self.contract_dir(suite.component_id) / "goodhart"
+        d.mkdir(exist_ok=True)
+        json_path = d / "goodhart_test_suite.json"
+        json_path.write_text(suite.model_dump_json(indent=2))
+        if suite.generated_code:
+            test_ext = ".test.ts" if self.language == "typescript" else ".py"
+            code_path = d / f"goodhart_test{test_ext}"
+            code_path.write_text(suite.generated_code)
+        return json_path
+
+    def load_goodhart_suite(self, component_id: str) -> ContractTestSuite | None:
+        path = self._contracts_dir / component_id / "goodhart" / "goodhart_test_suite.json"
+        if not path.exists():
+            return None
+        return ContractTestSuite.model_validate_json(path.read_text())
+
+    def load_all_goodhart_suites(self) -> dict[str, ContractTestSuite]:
+        suites = {}
+        if not self._contracts_dir.exists():
+            return suites
+        for d in self._contracts_dir.iterdir():
+            if d.is_dir():
+                s = self.load_goodhart_suite(d.name)
+                if s:
+                    suites[d.name] = s
+        return suites
+
+    def goodhart_test_code_path(self, component_id: str) -> Path:
+        test_ext = ".test.ts" if self.language == "typescript" else ".py"
+        return self._contracts_dir / component_id / "goodhart" / f"goodhart_test{test_ext}"
 
     # ── Implementations ────────────────────────────────────────────
 

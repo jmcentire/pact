@@ -425,6 +425,165 @@ def validate_and_fix_exports(
     return still_missing
 
 
+# ── Stub/Placeholder Detection ──────────────────────────────────────
+
+
+def _detect_stubs_python(source: str, filename: str) -> list[str]:
+    """AST-based detection of stub/placeholder function bodies in Python.
+
+    Detects functions whose body is only: pass, ..., raise NotImplementedError.
+    Skips dunder methods.
+    """
+    import ast
+
+    warnings: list[str] = []
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return warnings
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        name = node.name
+        # Skip dunder methods
+        if name.startswith("__") and name.endswith("__"):
+            continue
+
+        body = node.body
+        # Filter out docstrings
+        stmts = [
+            s for s in body
+            if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant) and isinstance(s.value.value, str))
+        ]
+
+        if not stmts:
+            warnings.append(f"{filename}:{node.lineno}: function '{name}' has empty body (docstring only)")
+            continue
+
+        if len(stmts) == 1:
+            stmt = stmts[0]
+            # pass
+            if isinstance(stmt, ast.Pass):
+                warnings.append(f"{filename}:{node.lineno}: function '{name}' is a stub (pass)")
+            # ... (Ellipsis)
+            elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and stmt.value.value is ...:
+                warnings.append(f"{filename}:{node.lineno}: function '{name}' is a stub (Ellipsis)")
+            # raise NotImplementedError
+            elif isinstance(stmt, ast.Raise) and stmt.exc is not None:
+                exc = stmt.exc
+                is_nie = False
+                if isinstance(exc, ast.Name) and exc.id == "NotImplementedError":
+                    is_nie = True
+                elif isinstance(exc, ast.Call):
+                    func = exc.func
+                    if isinstance(func, ast.Name) and func.id == "NotImplementedError":
+                        is_nie = True
+                if is_nie:
+                    warnings.append(f"{filename}:{node.lineno}: function '{name}' is a stub (NotImplementedError)")
+
+    return warnings
+
+
+def _detect_stubs_ts(source: str, filename: str) -> list[str]:
+    """Regex-based detection of stub/placeholder patterns in TypeScript/JavaScript.
+
+    Detects:
+    - throw new Error("Not implemented") and similar
+    - TODO/FIXME/PLACEHOLDER/STUB comment markers
+    """
+    import re
+
+    warnings: list[str] = []
+    lines = source.splitlines()
+
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip()
+        # throw new Error("Not implemented") / "not yet implemented" / "TODO"
+        if re.search(
+            r'throw\s+new\s+Error\s*\(\s*["\'](?:Not\s+implemented|not\s+yet\s+implemented|TODO|FIXME|stub|placeholder)',
+            stripped,
+            re.IGNORECASE,
+        ):
+            warnings.append(f"{filename}:{i}: stub throw pattern: {stripped[:80]}")
+
+    return warnings
+
+
+def _detect_comment_markers(source: str, filename: str) -> list[str]:
+    """Detect TODO/FIXME/PLACEHOLDER/STUB comment markers in source code."""
+    import re
+
+    warnings: list[str] = []
+    lines = source.splitlines()
+
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip()
+        # Comment markers: TODO, FIXME, PLACEHOLDER, STUB (in comments)
+        if re.search(r'(?:#|//)\s*(?:TODO|FIXME|PLACEHOLDER|STUB)\b', stripped, re.IGNORECASE):
+            warnings.append(f"{filename}:{i}: comment marker: {stripped[:80]}")
+
+    return warnings
+
+
+def detect_stubs(src_dir: Path, language: str) -> list[str]:
+    """Scan generated code for stub/placeholder patterns.
+
+    Returns a list of warning strings describing each stub found.
+    """
+    warnings: list[str] = []
+
+    if not src_dir.exists():
+        return warnings
+
+    if language == "python":
+        for f in src_dir.rglob("*.py"):
+            if f.is_file():
+                source = f.read_text()
+                warnings.extend(_detect_stubs_python(source, f.name))
+                warnings.extend(_detect_comment_markers(source, f.name))
+    elif language in ("typescript", "javascript"):
+        exts = (".ts", ".js")
+        for f in src_dir.rglob("*"):
+            if f.is_file() and f.suffix in exts:
+                source = f.read_text()
+                warnings.extend(_detect_stubs_ts(source, f.name))
+                warnings.extend(_detect_comment_markers(source, f.name))
+
+    return warnings
+
+
+def _check_absolute_paths(src_dir: Path, project_dir_str: str, language: str) -> list[str]:
+    """Scan generated code for references to the project's absolute filesystem path.
+
+    Returns a list of warning strings for each file containing absolute path references.
+    """
+    warnings: list[str] = []
+
+    if not src_dir.exists() or not project_dir_str:
+        return warnings
+
+    if language == "python":
+        exts = (".py",)
+    elif language in ("typescript", "javascript"):
+        exts = (".ts", ".js")
+    else:
+        return warnings
+
+    for f in src_dir.rglob("*"):
+        if not f.is_file() or f.suffix not in exts:
+            continue
+        source = f.read_text()
+        lines = source.splitlines()
+        for i, line in enumerate(lines, 1):
+            if project_dir_str in line:
+                warnings.append(
+                    f"{f.name}:{i}: absolute path reference: {line.strip()[:80]}"
+                )
+
+    return warnings
+
+
 async def implement_component(
     agent: AgentBase,
     project: ProjectManager,

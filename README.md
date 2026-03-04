@@ -82,20 +82,24 @@ Interview -----> Shape (opt) -----> Decompose -----> Contract -----> Test
                                          Integrate (glue + parent tests)
                                                                        |
                                                                        v
+                                         Polish (Goodhart tests + regression check)
+                                                                       |
+                                                                       v
                                                                  Diagnose (on failure)
 ```
 
-**Nine phases, all mechanical gates:**
+**Ten phases, all mechanical gates:**
 
 1. **Interview** -- Identify risks, ambiguities, ask clarifying questions
 2. **Shape** -- (Optional) Produce a Shape Up pitch: appetite, breadboard, rabbit holes, no-gos
 3. **Decompose** -- Task into 2-7 component tree, guided by shaping context if present
 4. **Contract** -- Each component gets a typed interface contract
-5. **Test** -- Each contract gets executable tests (the enforcement)
+5. **Test** -- Each contract gets executable tests plus hidden Goodhart tests (adversarial acceptance criteria the implementation agent never sees)
 6. **Validate** -- Mechanical gate: refs resolve, no cycles, tests parse
 7. **Implement** -- Each component built independently by a code agent
 8. **Integrate** -- Parent components composed via glue code
-9. **Diagnose** -- On failure: I/O tracing, root cause, recovery
+9. **Polish** -- Cross-component regression check + Goodhart test evaluation with graduated-disclosure remediation
+10. **Diagnose** -- On failure: I/O tracing, root cause, recovery
 
 ## Health Monitoring
 
@@ -277,7 +281,7 @@ my-project/
     state.json         # Run lifecycle
     audit.jsonl        # Full audit trail
     decomposition/     # Tree + decisions
-    contracts/         # Per-component interfaces + tests
+    contracts/         # Per-component interfaces + tests + goodhart/
     implementations/   # Per-component code
     compositions/      # Integration glue
     learnings/         # Accumulated learnings
@@ -288,7 +292,7 @@ my-project/
 
 ```bash
 make dev          # Install with LLM backend support
-make test         # Run full test suite (1501 tests)
+make test         # Run full test suite (1573 tests)
 make test-quick   # Stop on first failure
 make clean        # Remove venv and caches
 ```
