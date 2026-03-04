@@ -12,8 +12,8 @@ from pact.budget import BudgetExceeded, BudgetTracker, estimate_tokens, pricing_
 class TestPricingForModel:
     def test_exact_match(self):
         inp, out = pricing_for_model("claude-opus-4-6")
-        assert inp == 15.00
-        assert out == 75.00
+        assert inp == 5.00
+        assert out == 25.00
 
     def test_haiku(self):
         inp, out = pricing_for_model("claude-haiku-4-5-20251001")
@@ -51,7 +51,7 @@ class TestBudgetTracker:
         bt = BudgetTracker()
         bt.set_model_pricing("claude-opus-4-6")
         cost = bt.tokens_to_dollars(1_000_000, 0)
-        assert cost == 15.00
+        assert cost == 5.00
 
     def test_project_tokens(self):
         bt = BudgetTracker(per_project_cap=100.00)
@@ -144,3 +144,59 @@ class TestRecordTokensValidated:
         text = "x" * 100000
         result = bt.record_tokens_validated(0, 0, prompt_text=text, response_text=text)
         assert result is False
+
+
+class TestBudgetSummary:
+    def test_summary_keys(self):
+        bt = BudgetTracker(per_project_cap=10.00)
+        bt.set_model_pricing("claude-opus-4-6")
+        bt.record_tokens(1000, 500)
+        s = bt.summary()
+        expected_keys = {
+            "project_spend", "project_cap", "budget_remaining", "spend_percentage",
+            "daily_spend", "tokens_in", "tokens_out",
+            "cache_creation_tokens", "cache_read_tokens", "cache_hit_rate",
+        }
+        assert set(s.keys()) == expected_keys
+
+    def test_summary_values(self):
+        bt = BudgetTracker(per_project_cap=10.00)
+        bt.set_model_pricing("claude-opus-4-6")
+        bt.record_tokens(1000, 500)
+        bt.record_cache_tokens(creation=100, read=300)
+        s = bt.summary()
+        assert s["project_spend"] > 0
+        assert s["project_cap"] == 10.00
+        assert s["tokens_in"] == 1000
+        assert s["tokens_out"] == 500
+        assert s["cache_creation_tokens"] == 100
+        assert s["cache_read_tokens"] == 300
+        assert s["cache_hit_rate"] == 0.75
+
+    def test_as_dict_alias(self):
+        bt = BudgetTracker(per_project_cap=10.00)
+        assert bt.summary() == bt.as_dict()
+
+
+class TestPricingFile:
+    def test_save_load_roundtrip(self, tmp_path):
+        from pact.budget import load_pricing_file, save_pricing_file
+        pricing = {"test-model": (1.00, 2.00), "other-model": (3.00, 6.00)}
+        path = tmp_path / "pricing.json"
+        save_pricing_file(path, pricing)
+        loaded = load_pricing_file(path)
+        assert loaded == pricing
+
+    def test_save_defaults(self, tmp_path):
+        from pact.budget import get_model_pricing_table, load_pricing_file, save_pricing_file
+        path = tmp_path / "pricing.json"
+        save_pricing_file(path)
+        loaded = load_pricing_file(path)
+        current = get_model_pricing_table()
+        assert loaded == current
+
+    def test_creates_parent_dirs(self, tmp_path):
+        from pact.budget import save_pricing_file
+        path = tmp_path / "nested" / "dir" / "pricing.json"
+        save_pricing_file(path, {"m": (1.0, 2.0)})
+        assert path.exists()

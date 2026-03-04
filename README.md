@@ -170,6 +170,12 @@ pact build my-project sync_tracker --competitive --agents 3
 | `pact incidents <project>` | List active/recent incidents |
 | `pact incident <project> <id>` | Show incident details + diagnostic report |
 | `pact audit <project>` | Spec-compliance audit (compare task.md vs implementations) |
+| `pact tasks <project>` | List phase tasks with status |
+| `pact analyze <project>` | Run cross-artifact analysis |
+| `pact checklist <project>` | Generate requirements checklist |
+| `pact test-gen <project>` | Generate tests + security audit for any codebase |
+| `pact adopt <project>` | Adopt existing codebase under pact governance |
+| `pact pricing` | Show model pricing table (`--export` to override) |
 
 ## Configuration
 
@@ -186,7 +192,7 @@ plan_only: false
 
 # Override token pricing (per million tokens: [input, output])
 model_pricing:
-  claude-opus-4-6: [15.00, 75.00]
+  claude-opus-4-6: [5.00, 25.00]
   claude-sonnet-4-5-20250929: [3.00, 15.00]
   claude-haiku-4-5-20251001: [0.80, 4.00]
 
@@ -282,7 +288,7 @@ my-project/
 
 ```bash
 make dev          # Install with LLM backend support
-make test         # Run full test suite (1482 tests)
+make test         # Run full test suite (1501 tests)
 make test-quick   # Stop on first failure
 make clean        # Remove venv and caches
 ```

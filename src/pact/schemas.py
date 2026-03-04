@@ -189,6 +189,25 @@ class TestResults(BaseModel):
 # ── Interview Models ─────────────────────────────────────────────────
 
 
+class AnswerSource(StrEnum):
+    """Where an answer came from — provenance tracking."""
+    USER_INTERACTIVE = "user_interactive"
+    AUTO_ASSUMPTION = "auto_assumption"
+    INTEGRATION_SLACK = "integration_slack"
+    INTEGRATION_LINEAR = "integration_linear"
+    CLI_APPROVE = "cli_approve"
+
+
+class AuditedAnswer(BaseModel):
+    """An answer with full provenance."""
+    question_id: str
+    answer: str
+    source: AnswerSource
+    confidence: float = Field(ge=0.0, le=1.0, description="Match confidence for auto-filled")
+    timestamp: str = Field(default="", description="ISO 8601 timestamp")
+    matched_assumption: str | None = Field(default=None, description="Which assumption was matched, if any")
+
+
 class InterviewResult(BaseModel):
     """Output of the interview phase — risks, ambiguities, questions."""
     risks: list[str] = []
@@ -197,6 +216,7 @@ class InterviewResult(BaseModel):
     assumptions: list[str] = []
     user_answers: dict[str, str] = {}
     approved: bool = False
+    audited_answers: list[AuditedAnswer] = []
 
 
 # ── Interview V2 Models ─────────────────────────────────────────────
@@ -260,25 +280,6 @@ def validate_answer(question: InterviewQuestion, answer: str) -> str | None:
     if not answer.strip():
         return "Freetext answer cannot be empty"
     return None
-
-
-class AnswerSource(StrEnum):
-    """Where an answer came from — provenance tracking."""
-    USER_INTERACTIVE = "user_interactive"
-    AUTO_ASSUMPTION = "auto_assumption"
-    INTEGRATION_SLACK = "integration_slack"
-    INTEGRATION_LINEAR = "integration_linear"
-    CLI_APPROVE = "cli_approve"
-
-
-class AuditedAnswer(BaseModel):
-    """An answer with full provenance."""
-    question_id: str
-    answer: str
-    source: AnswerSource
-    confidence: float = Field(ge=0.0, le=1.0, description="Match confidence for auto-filled")
-    timestamp: str = Field(default="", description="ISO 8601 timestamp")
-    matched_assumption: str | None = Field(default=None, description="Which assumption was matched, if any")
 
 
 # ── Research & Planning Models ───────────────────────────────────────

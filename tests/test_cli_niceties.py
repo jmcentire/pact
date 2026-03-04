@@ -484,7 +484,7 @@ class TestBudgetProperties:
         bt = BudgetTracker(per_project_cap=10.00)
         assert bt.spend_percentage == 0.0
         bt.set_model_pricing("claude-opus-4-6")
-        bt.record_tokens(1_000_000, 0)  # $15.00 — 150%
+        bt.record_tokens(3_000_000, 0)  # $15.00 — 150%
         assert bt.spend_percentage > 100.0
 
     def test_spend_percentage_zero_cap(self):

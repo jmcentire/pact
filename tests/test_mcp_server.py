@@ -162,6 +162,20 @@ class TestMCPServerTools:
     def test_list_tools(self):
         server = PactMCPServer()
         tools = server.list_tools()
-        assert len(tools) >= 2
+        assert len(tools) >= 3
         names = [t["name"] for t in tools]
         assert "pact_validate" in names
+        assert "pact_resume" in names
+
+    def test_resume_no_project(self):
+        server = PactMCPServer(None)
+        result = server.tool_resume()
+        assert "error" in result
+
+    def test_resume_no_state(self, tmp_path):
+        pact_dir = tmp_path / ".pact"
+        pact_dir.mkdir()
+        (tmp_path / "task.md").write_text("# Test\n")
+        server = PactMCPServer(tmp_path)
+        result = server.tool_resume()
+        assert "error" in result

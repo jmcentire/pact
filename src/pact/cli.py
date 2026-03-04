@@ -246,6 +246,11 @@ def main() -> None:
     p_health = subparsers.add_parser("health", help="Check pipeline health (dysmemic pressure detection)")
     p_health.add_argument("project_dir", help="Project directory path")
 
+    # pricing
+    p_pricing = subparsers.add_parser("pricing", help="Show or export model pricing table")
+    p_pricing.add_argument("--export", action="store_true", help="Export pricing to ~/.config/pact/model_pricing.json")
+    p_pricing.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
+
     args = parser.parse_args()
 
     if args.verbose:
@@ -325,6 +330,35 @@ def main() -> None:
         asyncio.run(cmd_adopt(args))
     elif args.command == "health":
         cmd_health(args)
+    elif args.command == "pricing":
+        cmd_pricing(args)
+
+
+def cmd_pricing(args: argparse.Namespace) -> None:
+    """Show or export model pricing table."""
+    from pact.budget import get_model_pricing_table, save_pricing_file, DEFAULT_PRICING_PATH
+
+    pricing = get_model_pricing_table()
+
+    if args.export:
+        path = save_pricing_file()
+        print(f"Pricing exported to {path}")
+        print("Edit this file to override default pricing.")
+        return
+
+    if args.json_output:
+        import json
+        data = {model: list(costs) for model, costs in sorted(pricing.items())}
+        print(json.dumps(data, indent=2))
+        return
+
+    print("Model Pricing (per million tokens)")
+    print(f"{'Model':<40} {'Input':>10} {'Output':>10}")
+    print("-" * 62)
+    for model, (inp, out) in sorted(pricing.items()):
+        print(f"{model:<40} ${inp:>8.2f} ${out:>8.2f}")
+    print()
+    print(f"Override file: {DEFAULT_PRICING_PATH}")
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -905,6 +939,21 @@ def cmd_approve(args: argparse.Namespace) -> None:
                 answer_sources.append((q, answer, "auto", confidence))
 
         interview.approved = True
+
+        # Build audited answers with provenance
+        from datetime import datetime, timezone
+        from pact.schemas import AuditedAnswer, AnswerSource
+        interview.audited_answers = [
+            AuditedAnswer(
+                question_id=f"q_{i:03d}",
+                answer=ans,
+                source=AnswerSource.USER_INTERACTIVE if src == "user" else AnswerSource.CLI_APPROVE,
+                confidence=conf,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+            )
+            for i, (_, ans, src, conf) in enumerate(answer_sources)
+        ]
+
         project.save_interview(interview)
 
         # Print answer summary

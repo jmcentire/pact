@@ -244,6 +244,32 @@ class PactMCPServer:
             status["component_error"] = str(e)
             return status
 
+    def tool_resume(self, from_phase: str = "") -> dict[str, Any]:
+        """Resume a failed or paused run."""
+        if not self._ensure_project():
+            return {"error": "No Pact project found", "hint": "Run 'pact init <dir>' first"}
+
+        pm = self._get_project_manager()
+        if not pm:
+            return {"error": "Could not load project"}
+
+        try:
+            from pact.lifecycle import compute_resume_strategy, execute_resume
+            state = pm.load_state()
+            strategy = compute_resume_strategy(state, from_phase=from_phase or None)
+            execute_resume(state, strategy)
+            pm.save_state(state)
+            return {
+                "resumed": True,
+                "phase": state.phase,
+                "status": state.status,
+                "completed_components": strategy.completed_components,
+            }
+        except ValueError as e:
+            return {"error": str(e)}
+        except Exception as e:
+            return {"error": f"Resume failed: {e}"}
+
     def list_resources(self) -> list[dict[str, str]]:
         """List available MCP resources."""
         return [
@@ -259,4 +285,5 @@ class PactMCPServer:
         return [
             {"name": "pact_validate", "description": "Run contract validation"},
             {"name": "pact_status", "description": "Detailed status with component breakdown"},
+            {"name": "pact_resume", "description": "Resume a failed/paused run"},
         ]
