@@ -190,8 +190,8 @@ src/pact/
     state.json         # Run lifecycle state
     audit.jsonl        # All actions + decisions
     decomposition/     # Tree + decisions
-    contracts/         # Per-component contracts + tests + goodhart/
-    implementations/   # Per-component code + attempts/
+    contracts/         # Per-component contracts + goodhart/
+    implementations/   # Per-component code + contract tests + attempts/
     standards.json     # Global standards (auto-generated after decomposition)
     tasks.json         # Phased task list (auto-generated after decomposition)
     analysis.json      # Cross-artifact analysis report

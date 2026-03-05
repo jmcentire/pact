@@ -322,7 +322,7 @@ class TestGoodhartSuites:
         visible_path = tmp_project.test_code_path("pricing")
         goodhart_path = tmp_project.goodhart_test_code_path("pricing")
         assert visible_path != goodhart_path
-        assert "tests" in str(visible_path)
+        assert "implementations" in str(visible_path)
         assert "goodhart" in str(goodhart_path)
 
 

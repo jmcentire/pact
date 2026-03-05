@@ -197,7 +197,7 @@ async def generate_tests_for_contract(
     # Fix import paths in generated code to point at actual module
     if suite.generated_code:
         # Replace the default import path with the actual module
-        old_import = f"from src.{contract.component_id} import"
+        old_import = f"from {contract.component_id} import"
         new_import = f"from {module_path} import"
         suite.generated_code = suite.generated_code.replace(old_import, new_import)
 

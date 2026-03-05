@@ -36,11 +36,11 @@ class ArtifactBaseline(BaseModel):
         pact_dir = project_dir / ".pact"
         
         contract_hash = _hash_file(pact_dir / "contracts" / component_id / "interface.json")
-        test_hash = _hash_file(pact_dir / "contracts" / component_id / "tests" / "contract_test.py")
+        test_hash = _hash_file(pact_dir / "implementations" / component_id / "src" / "contract_test.py")
         
-        # Hash all implementation files concatenated
+        # Hash all implementation files concatenated (excluding test files)
         impl_dir = pact_dir / "implementations" / component_id / "src"
-        impl_hash = _hash_directory(impl_dir) if impl_dir.exists() else ""
+        impl_hash = _hash_directory(impl_dir, exclude_prefixes=("contract_test",)) if impl_dir.exists() else ""
         
         return cls(
             component_id=component_id,
@@ -58,13 +58,18 @@ def _hash_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _hash_directory(directory: Path) -> str:
+def _hash_directory(
+    directory: Path,
+    exclude_prefixes: tuple[str, ...] = (),
+) -> str:
     """SHA256 hash of all files in a directory, sorted by name."""
     if not directory.exists():
         return ""
     hasher = hashlib.sha256()
     for path in sorted(directory.rglob("*")):
         if path.is_file():
+            if exclude_prefixes and any(path.name.startswith(p) for p in exclude_prefixes):
+                continue
             hasher.update(path.name.encode())
             hasher.update(path.read_bytes())
     return hasher.hexdigest()

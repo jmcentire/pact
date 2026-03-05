@@ -490,7 +490,7 @@ Child contracts:
 
 ## CRITICAL: Module Structure Convention
 
-The test file imports: `from src.{module_name} import ...`
+The test file imports: `from {module_name} import ...`
 
 You MUST write your glue module at: {comp_dir_rel}/src/{module_name}.py
 

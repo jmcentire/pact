@@ -18,11 +18,11 @@ The project directory is the unit of work:
       │   ├── interface.json
       │   ├── interface.py (or interface.ts for TypeScript)
       │   ├── research.json
-      │   ├── tests/contract_test.py (or contract_test.test.ts)
+      │   ├── tests/contract_test_suite.json
       │   ├── goodhart/goodhart_test.py (hidden acceptance criteria)
       │   └── history/<timestamp>.json
       ├── implementations/<component_id>/
-      │   ├── src/
+      │   ├── src/<component_id>.py (or .ts) + contract_test.py (or .test.ts)
       │   ├── research.json
       │   ├── plan.json
       │   ├── metadata.json
@@ -334,7 +334,8 @@ class ProjectManager:
         if suite.generated_code:
             test_ext = ".test.ts" if self.language == "typescript" else ".py"
             test_filename = f"contract_test{test_ext}"
-            code_path = d / test_filename
+            impl_src = self.impl_src_dir(suite.component_id)
+            code_path = impl_src / test_filename
             code_path.write_text(suite.generated_code)
         return json_path
 
@@ -357,7 +358,7 @@ class ProjectManager:
 
     def test_code_path(self, component_id: str) -> Path:
         test_ext = ".test.ts" if self.language == "typescript" else ".py"
-        return self._contracts_dir / component_id / "tests" / f"contract_test{test_ext}"
+        return self._impl_dir / component_id / "src" / f"contract_test{test_ext}"
 
     # ── Goodhart (Hidden) Test Suites ─────────────────────────────
 
