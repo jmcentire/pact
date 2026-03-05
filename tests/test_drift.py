@@ -19,15 +19,14 @@ def _setup_component(tmp_path: Path, component_id: str = "comp_a"):
     """Create minimal component file structure."""
     pact = tmp_path / ".pact"
     contracts = pact / "contracts" / component_id
-    tests = contracts / "tests"
     impls = pact / "implementations" / component_id / "src"
     baselines = pact / "baselines"
-    
-    for d in [contracts, tests, impls, baselines]:
+
+    for d in [contracts, impls, baselines]:
         d.mkdir(parents=True, exist_ok=True)
-    
+
     (contracts / "interface.json").write_text('{"component_id": "comp_a"}')
-    (tests / "contract_test.py").write_text("def test_one(): pass")
+    (impls / "contract_test.py").write_text("def test_one(): pass")
     (impls / "main.py").write_text("def main(): return 42")
     
     return pact
@@ -133,7 +132,7 @@ class TestDetectDrift:
         # Modify both contract and tests
         contract = tmp_path / ".pact" / "contracts" / "comp_a" / "interface.json"
         contract.write_text('{"component_id": "comp_a", "version": 2}')
-        test = tmp_path / ".pact" / "contracts" / "comp_a" / "tests" / "contract_test.py"
+        test = tmp_path / ".pact" / "implementations" / "comp_a" / "src" / "contract_test.py"
         test.write_text("def test_updated(): pass")
         drifts = detect_drift(baseline, tmp_path)
         # Should report that impl needs updating since contract changed

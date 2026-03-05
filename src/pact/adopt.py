@@ -333,7 +333,7 @@ async def adopt_codebase(
             )
             # Fix import paths for the actual module location
             if suite.generated_code:
-                old_import = f"from src.{contract.component_id} import"
+                old_import = f"from {contract.component_id} import"
                 new_import = f"from {module_name} import"
                 suite.generated_code = suite.generated_code.replace(old_import, new_import)
             suite.component_id = component_id

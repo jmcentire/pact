@@ -282,8 +282,8 @@ my-project/
     state.json         # Run lifecycle
     audit.jsonl        # Full audit trail
     decomposition/     # Tree + decisions
-    contracts/         # Per-component interfaces + tests + goodhart/
-    implementations/   # Per-component code
+    contracts/         # Per-component interfaces + goodhart/
+    implementations/   # Per-component code + contract tests
     compositions/      # Integration glue
     learnings/         # Accumulated learnings
     monitoring/        # Incidents, budget state, diagnostic reports

@@ -262,7 +262,7 @@ Requirements:
 - Mock all dependencies using vi.mock() and vi.fn()
 - Import from vitest: import {{ describe, it, expect, vi }} from 'vitest'
 - Import the component module using relative ESM imports, e.g.:
-  import {{ functionName }} from '../src/{contract.component_id}'
+  import {{ functionName }} from './{contract.component_id}'
 - Each test should have clear assertions
 - test_language must be "typescript"
 - ONLY use vitest — do NOT use jest, mocha, or any other test framework
@@ -294,7 +294,7 @@ Requirements:
 - Mock all dependencies using vi.mock() and vi.fn()
 - Import from vitest: import {{ describe, it, expect, vi }} from 'vitest'
 - Import the component module using relative ESM imports with .js extensions, e.g.:
-  import {{ functionName }} from '../src/{contract.component_id}.js'
+  import {{ functionName }} from './{contract.component_id}.js'
 - Each test should have clear assertions
 - test_language must be "javascript"
 - ONLY use vitest — do NOT use jest, mocha, or any other test framework
@@ -322,7 +322,7 @@ Requirements:
   * Invariant tests if contract has invariants
 - generated_code must be valid Python pytest code
 - Mock all dependencies using unittest.mock
-- Import the component module as: from src.{contract.component_id} import *
+- Import the component module as: from {contract.component_id} import *
   (or a reasonable module path based on the component)
 - Each test should have clear assertions
 - test_language must be "python"
