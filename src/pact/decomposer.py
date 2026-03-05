@@ -13,6 +13,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
+from pydantic import BaseModel
+
 from pact.agents.base import AgentBase
 from pact.agents.contract_author import author_contract
 from pact.agents.test_author import author_goodhart_tests, author_tests
@@ -31,6 +33,51 @@ from pact.schemas import (
 
 logger = logging.getLogger(__name__)
 
+# ── Register Establishment ────────────────────────────────────────────
+
+REGISTER_SYSTEM = """Determine the processing register for this task — the cognitive
+mode that should govern all subsequent work. Return a concise register descriptor.
+
+Examples of processing registers:
+- rigorous-analytical: formal verification, exhaustive edge cases, defensive coding
+- exploratory-generative: creative problem-solving, rapid prototyping, novel approaches
+- systematic-verification: methodical coverage, compliance-focused, checklist-driven
+- pragmatic-implementation: practical trade-offs, ship-focused, MVP-first
+
+Consider the task domain, constraints, and stakes. One phrase, no explanation."""
+
+
+class _RegisterResponse(BaseModel):
+    """LLM output for register establishment."""
+    processing_register: str
+
+
+async def run_register_establishment(
+    agent: AgentBase,
+    task: str,
+    sops: str = "",
+) -> str:
+    """Establish processing register before domain content.
+
+    Research (Papers 36-39) shows register is the representational hub
+    that domain anchors to. Setting it first in ~15 tokens captures
+    98.8% of coordination benefit. Reset clears residual register,
+    this call establishes the new one.
+    """
+    prompt = f"""What processing register should govern this task?
+
+Task summary (first 200 chars): {task[:200]}
+
+SOPs context: {sops[:200] if sops else 'None'}
+
+Return a concise register descriptor (e.g. "rigorous-analytical")."""
+
+    result, _, _ = await agent.assess(_RegisterResponse, prompt, REGISTER_SYSTEM)
+    register = result.processing_register.strip().lower()
+    logger.info("Processing register established: %s", register)
+    return register
+
+
 # ── Interview ────────────────────────────────────────────────────────
 
 INTERVIEW_SYSTEM = """You are a cynical senior architect reviewing a task specification.
@@ -43,10 +90,25 @@ async def run_interview(
     agent: AgentBase,
     task: str,
     sops: str = "",
+    processing_register: str = "",
 ) -> InterviewResult:
-    """Run the interview phase — identify risks and ask clarifying questions."""
-    prompt = f"""Review this task specification and identify issues:
+    """Run the interview phase — identify risks and ask clarifying questions.
 
+    If processing_register is provided (from config or prior establishment),
+    the interview operates within that register. If empty, register is
+    established first via run_register_establishment().
+    """
+    # Establish register if not already set
+    if not processing_register:
+        processing_register = await run_register_establishment(agent, task, sops)
+
+    register_context = (
+        f"\nProcessing register: {processing_register}\n"
+        f"Conduct this review in {processing_register} mode.\n"
+    )
+
+    prompt = f"""Review this task specification and identify issues:
+{register_context}
 Task:
 {task}
 
@@ -63,6 +125,7 @@ Be specific and actionable. Focus on issues that would cause
 different engineers to implement incompatible solutions."""
 
     result, _, _ = await agent.assess(InterviewResult, prompt, INTERVIEW_SYSTEM)
+    result.processing_register = processing_register
     return result
 
 
@@ -306,6 +369,7 @@ async def decompose_and_contract(
     sops: str = "",
     max_plan_revisions: int = 2,
     build_mode: str = "auto",
+    processing_register: str = "",
 ) -> GateResult:
     """Run the full decomposition -> contract -> test -> validate pipeline.
 
@@ -316,8 +380,10 @@ async def decompose_and_contract(
     """
     task = project.load_task()
 
-    # Load or run interview
+    # Load or run interview — register comes from interview or config override
     interview = project.load_interview()
+    if not processing_register and interview:
+        processing_register = interview.processing_register
 
     # Load existing tree or run decomposition
     existing_tree = project.load_tree()
@@ -386,6 +452,7 @@ async def decompose_and_contract(
                 engineering_decisions=[d.model_dump() for d in decisions],
                 sops=sops,
                 max_plan_revisions=max_plan_revisions,
+                processing_register=processing_register,
             )
 
             contracts[component_id] = contract

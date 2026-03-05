@@ -436,6 +436,18 @@ class Scheduler:
 
             state.health_snapshot = metrics.to_dict()
 
+            # Register drift checking (probabilistic, after generation phases)
+            if (
+                phase in GENERATION_PHASES
+                and state.processing_register
+                and state.status == "active"
+            ):
+                try:
+                    await self._check_register_drift(state, metrics)
+                    state.health_snapshot = metrics.to_dict()
+                except Exception:
+                    pass  # Drift checking never blocks the pipeline
+
             # Run health check and apply remedies
             thresholds = getattr(self.project_config, "health_thresholds", {}) or {}
             if thresholds.get("output_planning_ratio_critical") == 0.0:
@@ -464,18 +476,35 @@ class Scheduler:
         return state
 
     async def _phase_interview(self, state: RunState, sops: str) -> RunState:
-        """Run interview phase."""
+        """Run interview phase.
+
+        Establishes processing register before domain analysis.
+        Register comes from: config override > existing interview > LLM establishment.
+        """
         existing = self.project.load_interview()
         if existing and existing.approved:
+            # Carry register forward from existing interview
+            if existing.processing_register:
+                state.processing_register = existing.processing_register
             advance_phase(state)
             return state
+
+        # Config override for register (user can set in pact.yaml)
+        config_register = self.project_config.processing_register
 
         agent = self._make_agent("decomposer")
         try:
             task = self.project.load_task()
-            result = await run_interview(agent, task, sops)
+            result = await run_interview(
+                agent, task, sops,
+                processing_register=config_register,
+            )
+            state.processing_register = result.processing_register
             self.project.save_interview(result)
-            self.project.append_audit("interview", f"{len(result.questions)} questions")
+            self.project.append_audit(
+                "interview",
+                f"{len(result.questions)} questions, register={result.processing_register}",
+            )
 
             if not result.questions:
                 result.approved = True
@@ -572,6 +601,7 @@ class Scheduler:
                 agent, self.project, sops=sops,
                 max_plan_revisions=self.global_config.max_plan_revisions,
                 build_mode=self.build_mode.value,
+                processing_register=state.processing_register,
             )
 
             if gate.passed:
@@ -1405,6 +1435,57 @@ class Scheduler:
         state.last_check_in = datetime.now().isoformat()
         self.project.save_state(state)
         return state
+
+    async def _check_register_drift(
+        self, state: RunState, metrics: "HealthMetrics",
+    ) -> None:
+        """Probabilistically check recent artifacts for register drift.
+
+        Uses fast-tier model for minimal cost. Check rate is tunable
+        via register_check_rate in pact.yaml (default 0.1 = 10%).
+        """
+        from pact.register import check_artifacts_for_drift
+
+        check_rate = self.project_config.register_check_rate
+
+        # Collect component IDs with implementations
+        implemented = [
+            t.component_id for t in state.component_tasks
+            if t.status in ("completed", "implementing", "failed")
+            and t.attempts > 0
+        ]
+        if not implemented:
+            return
+
+        # Use fast-tier model for cost efficiency
+        agent = self._make_agent("decomposer")
+        try:
+            # Temporarily switch to fast model
+            from pact.config import resolve_model_tiers
+            tiers = resolve_model_tiers(self.global_config, self.project_config)
+            original_model = agent._model
+            agent.set_model(tiers.fast)
+
+            results = await check_artifacts_for_drift(
+                agent=agent,
+                project_dir=self.project.project_dir,
+                expected_register=state.processing_register,
+                component_ids=implemented,
+                check_rate=check_rate,
+            )
+
+            # Record results in health metrics
+            for cid, consistent, confidence in results:
+                metrics.record_register_check(drifted=not consistent)
+                if not consistent:
+                    logger.warning(
+                        "Register drift detected in %s (confidence=%.2f)",
+                        cid, confidence,
+                    )
+
+            agent.set_model(original_model)
+        finally:
+            await agent.close()
 
     def _check_health_and_remediate(self, state: RunState) -> RunState:
         """Check health and apply automated remedies if needed.

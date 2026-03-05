@@ -90,7 +90,7 @@ Interview -----> Shape (opt) -----> Decompose -----> Contract -----> Test
 
 **Ten phases, all mechanical gates:**
 
-1. **Interview** -- Identify risks, ambiguities, ask clarifying questions
+1. **Interview** -- Establish processing register, then identify risks, ambiguities, ask clarifying questions
 2. **Shape** -- (Optional) Produce a Shape Up pitch: appetite, breadboard, rabbit holes, no-gos
 3. **Decompose** -- Task into 2-7 component tree, guided by shaping context if present
 4. **Contract** -- Each component gets a typed interface contract
@@ -112,6 +112,7 @@ Pact monitors its own coordination health — detecting the specific failure mod
 | **Budget velocity** | Coordination cost exceeding execution value |
 | **Phase balance** | Any single phase consuming disproportionate budget |
 | **Cascade detection** | One component's failure propagating through the tree |
+| **Register drift** | Agent departing from established processing mode mid-task |
 
 When critical conditions fire, Pact pauses and proposes remedies via FIFO — the user decides whether to apply them. The system never silently modifies its own configuration.
 
@@ -292,7 +293,7 @@ my-project/
 
 ```bash
 make dev          # Install with LLM backend support
-make test         # Run full test suite (1573 tests)
+make test         # Run full test suite (1617 tests)
 make test-quick   # Stop on first failure
 make clean        # Remove venv and caches
 ```

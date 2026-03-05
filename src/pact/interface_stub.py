@@ -1020,6 +1020,7 @@ def render_handoff_brief(
     log_key_preamble: str = "",
     standards_brief: str = "",
     strategic_context: str = "",
+    processing_register: str = "",
 ) -> str:
     """Render a complete handoff document for a fresh agent.
 
@@ -1037,18 +1038,30 @@ def render_handoff_brief(
     lines: list[str] = []
 
     # Context reset: clear residual processing biases before domain priming.
-    # Paper XX (Ritual Shape) showed a 39% CE improvement from a reset
+    # Paper 36 (Ritual Shape) showed a 39% CE improvement from a reset
     # instruction before domain-specific content. The reset gives the
-    # subsequent domain primer a clean activation baseline.
+    # subsequent register/domain primer a clean activation baseline.
     lines.append(
         "This is a new component implementation task. You have no prior "
         "conversation context. Focus exclusively on the specifications below."
     )
     lines.append("")
 
+    # Register priming: establish processing mode before domain content.
+    # Papers 35-39 established the representational hierarchy:
+    # register (hub) > domain > structural shape. Setting register first
+    # gives domain content the right hub to anchor to. This is why 15
+    # tokens capture 98.8% of benefit — they set the register, not domain.
+    if processing_register:
+        lines.append(
+            f"Processing register: {processing_register}. "
+            f"Maintain this cognitive mode throughout all work on this component."
+        )
+        lines.append("")
+
     # Strategic context: project intent + component contribution.
-    # Paper XX showed 15-50 tokens of domain content capture 98.8% of benefit.
-    # This activates the right processing mode before the interface details.
+    # Paper 36 showed 15-50 tokens of domain content capture 98.8% of benefit.
+    # With register already primed, domain content anchors to the right hub.
     if strategic_context:
         lines.append(strategic_context)
         lines.append("")

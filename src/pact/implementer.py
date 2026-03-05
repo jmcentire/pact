@@ -629,6 +629,7 @@ async def implement_component(
             prior_source=last_source,
             strategic_context=_build_strategic_context(project, contract),
             language=language,
+            processing_register=contract.processing_register,
         )
 
         # Save implementation files
@@ -794,6 +795,7 @@ async def implement_component_iterative(
         standards_brief=standards_brief,
         test_results=prior_test_results,
         strategic_context=strategic_ctx,
+        processing_register=contract.processing_register,
         include_test_code=False,  # Agent reads test file directly
     )
 
@@ -992,6 +994,7 @@ async def implement_component_interactive(
         external_context=external_context,
         learnings=learnings,
         strategic_context=strategic_ctx,
+        processing_register=contract.processing_register,
         include_test_code=False,  # Agent reads test file directly
     )
 
@@ -1127,6 +1130,7 @@ async def _run_one_competitor(
             learnings=learnings,
             language=language,
             strategic_context=_build_strategic_context(project, contract),
+            processing_register=contract.processing_register,
         )
 
         # Save to attempt directory (not main src)

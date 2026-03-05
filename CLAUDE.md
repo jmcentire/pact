@@ -31,7 +31,7 @@ Every agent follows 3 phases: Research -> Plan+Evaluate -> Execute. Research and
 
 ### Core Workflow
 
-1. **Interview** -- System reads task+SOPs, identifies risks/ambiguities, asks user clarifying questions
+1. **Interview** -- Establishes processing register (cognitive mode), then identifies risks/ambiguities, asks user clarifying questions
 2. **Shape** -- (Optional) Produce a Shape Up pitch: appetite, breadboard, rabbit holes, no-gos
 3. **Decompose** -- Task -> DecompositionNode tree (2-7 components), guided by shaping context
 3. **Contract** -- For each component (leaves first), generate ComponentContract
@@ -76,6 +76,21 @@ After decomposition, pact automatically collects shared conventions from contrac
 - Coding conventions from SOPs
 
 Standards are injected into every agent's handoff brief and persisted at `.pact/standards.json`.
+
+### Processing Register
+
+Research (Papers 35-39) established that LLM representations follow a hierarchy: register (processing mode) > domain > structural shape. Register is the hub that domain anchors to. Pact makes this explicit:
+
+- **Establishment**: Interview phase determines the processing register before any domain analysis (e.g., "rigorous-analytical", "exploratory-generative", "systematic-verification")
+- **Propagation**: Register is a first-class field on `ComponentContract` and flows through the handoff protocol: reset → prime register → prime domain
+- **Override**: Set `processing_register` in `pact.yaml` to skip LLM establishment
+- **Monitoring**: Health system tracks register drift — agents departing from their established processing mode — as an early indicator of coordination failure
+
+```yaml
+# pact.yaml
+processing_register: rigorous-analytical  # optional override
+register_check_rate: 0.1                  # drift check probability per component (0.0-1.0)
+```
 
 ### Production Monitoring & Auto-Remediation
 
@@ -194,7 +209,7 @@ src/pact/
 | Schema | Purpose |
 |--------|---------|
 | `DecompositionTree` | Tree of components with traversal (leaves, parallel groups, subtree) |
-| `ComponentContract` | Typed interface: functions, types, invariants, dependencies |
+| `ComponentContract` | Typed interface: functions, types, invariants, dependencies, processing_register |
 | `ContractTestSuite` | Executable tests generated from contract |
 | `TestResults` | Aggregated pass/fail with failure details |
 | `ScoredAttempt` | Competitive attempt with pass rate + duration scoring |
@@ -248,7 +263,7 @@ pact incident <project-dir> <id>      # Show incident details + diagnostic repor
 ## Testing
 
 ```bash
-make test          # 1573 tests, ~7s
+make test          # 1617 tests, ~7s
 make test-quick    # Stop on first failure
 ```
 

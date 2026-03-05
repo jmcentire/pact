@@ -275,6 +275,7 @@ async def remediate_incident(
                 prior_failures=prior_failures if attempt > 1 else None,
                 prior_test_results=last_test_results,
                 prior_research=last_research,
+                processing_register=contract.processing_register,
             )
 
             # Capture research/plan for next attempt

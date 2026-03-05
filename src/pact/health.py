@@ -44,6 +44,8 @@ class HealthCondition(StrEnum):
     rejection_rate = "rejection_rate"
     budget_velocity = "budget_velocity"
     phase_balance = "phase_balance"
+    # Register consistency (Papers 35-39)
+    register_drift = "register_drift"
 
 
 # ── Metrics Tracking ───────────────────────────────────────────────
@@ -93,6 +95,10 @@ class HealthMetrics:
     component_failures: dict[str, int] = field(default_factory=dict)
     cascade_events: int = 0  # Times one failure triggered another
 
+    # Register drift tracking (Papers 35-39)
+    register_drift_events: int = 0  # Times register inconsistency detected
+    register_checks: int = 0        # Total register consistency checks
+
     # Per-phase token tracking
     phase_tokens: dict[str, PhaseTokens] = field(default_factory=dict)
 
@@ -141,6 +147,12 @@ class HealthMetrics:
     def record_cascade(self) -> None:
         self.cascade_events += 1
 
+    def record_register_check(self, drifted: bool) -> None:
+        """Record a register consistency check result."""
+        self.register_checks += 1
+        if drifted:
+            self.register_drift_events += 1
+
     def to_dict(self) -> dict:
         """Serialize to a JSON-safe dict for persistence in RunState."""
         return {
@@ -158,6 +170,8 @@ class HealthMetrics:
             "implementations_produced": self.implementations_produced,
             "component_failures": dict(self.component_failures),
             "cascade_events": self.cascade_events,
+            "register_drift_events": self.register_drift_events,
+            "register_checks": self.register_checks,
             "phase_tokens": {
                 phase: {
                     "input_tokens": pt.input_tokens,
@@ -197,6 +211,8 @@ class HealthMetrics:
             implementations_produced=data.get("implementations_produced", 0),
             component_failures=data.get("component_failures", {}),
             cascade_events=data.get("cascade_events", 0),
+            register_drift_events=data.get("register_drift_events", 0),
+            register_checks=data.get("register_checks", 0),
             phase_tokens=phase_tokens,
             total_spend=data.get("total_spend", 0.0),
             budget_cap=data.get("budget_cap", 10.0),
@@ -237,6 +253,13 @@ class HealthMetrics:
             return 0.0
         useful = self.contracts_produced + self.tests_produced + self.implementations_produced
         return useful / self.total_spend
+
+    @property
+    def register_drift_rate(self) -> float:
+        """Fraction of register checks that detected drift (0.0 - 1.0)."""
+        if self.register_checks == 0:
+            return 0.0
+        return self.register_drift_events / self.register_checks
 
     @property
     def artifacts_produced(self) -> int:
@@ -296,6 +319,8 @@ PHASE_BALANCE_CRITICAL = 0.6           # Single phase consuming 60%+ of tokens
 CASCADE_WARNING = 2                    # 2+ cascade events
 CASCADE_CRITICAL = 5                   # 5+ cascade events
 COMPONENT_FAILURE_THRESHOLD = 3        # Same component failing 3+ times
+REGISTER_DRIFT_WARNING = 0.2           # 20%+ of checks show drift
+REGISTER_DRIFT_CRITICAL = 0.5          # 50%+ of checks show drift
 
 
 def check_health(
@@ -323,6 +348,7 @@ def check_health(
     findings.append(_check_budget_velocity(metrics, t))
     findings.append(_check_phase_balance(metrics, t))
     findings.append(_check_graceful_degradation(metrics, t))
+    findings.append(_check_register_drift(metrics, t))
     findings.extend(_check_five_conditions(metrics))
 
     report = HealthReport(findings=findings)
@@ -597,6 +623,58 @@ def _check_graceful_degradation(metrics: HealthMetrics, t: dict[str, float] | No
         condition=HealthCondition.graceful_degradation,
         status=HealthStatus.healthy,
         message="No cascade events or repeated failures",
+    )
+
+
+def _check_register_drift(metrics: HealthMetrics, t: dict[str, float] | None = None) -> HealthFinding:
+    """Check if agents are drifting from their established processing register.
+
+    Papers 35-39 established that register (processing mode) is the
+    representational hub that domain anchors to. When an agent drifts
+    from rigorous-analytical into exploratory-generative mid-task,
+    coordination failure follows — but register drift is detectable
+    before it surfaces as wrong output.
+    """
+    t = t or {}
+    rate = metrics.register_drift_rate
+    warn = t.get("register_drift_warning", REGISTER_DRIFT_WARNING)
+    crit = t.get("register_drift_critical", REGISTER_DRIFT_CRITICAL)
+
+    if metrics.register_checks < 2:
+        return HealthFinding(
+            condition=HealthCondition.register_drift,
+            status=HealthStatus.healthy,
+            message="Insufficient data for register drift check",
+            metric_value=rate,
+        )
+
+    if rate >= crit:
+        return HealthFinding(
+            condition=HealthCondition.register_drift,
+            status=HealthStatus.critical,
+            message=f"Register drift rate {rate:.0%} — "
+                    f"{metrics.register_drift_events}/{metrics.register_checks} checks "
+                    f"show agents departing from established processing mode. "
+                    f"Coordination failure is upstream of output failure.",
+            metric_value=rate,
+            threshold=crit,
+        )
+
+    if rate >= warn:
+        return HealthFinding(
+            condition=HealthCondition.register_drift,
+            status=HealthStatus.warning,
+            message=f"Register drift rate {rate:.0%} — "
+                    f"agents may be departing from established processing mode.",
+            metric_value=rate,
+            threshold=warn,
+        )
+
+    return HealthFinding(
+        condition=HealthCondition.register_drift,
+        status=HealthStatus.healthy,
+        message=f"Register consistency: {1.0 - rate:.0%} stable",
+        metric_value=rate,
     )
 
 
