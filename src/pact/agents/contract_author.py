@@ -43,6 +43,7 @@ async def author_contract(
     engineering_decisions: list[dict] | None = None,
     sops: str = "",
     max_plan_revisions: int = 2,
+    processing_register: str = "",
 ) -> tuple[ComponentContract, ResearchReport, PlanEvaluation]:
     """Generate a ComponentContract following the Research-First Protocol.
 
@@ -68,9 +69,14 @@ async def author_contract(
             for d in engineering_decisions
         )
 
+    register_context = ""
+    if processing_register:
+        register_context = f"\nProcessing register: {processing_register}\n"
+
     task_desc = (
         f"Define the interface contract for component '{component_name}' "
         f"(id: {component_id}).\n"
+        f"{register_context}"
         f"Description: {component_description}\n"
         f"Parent context: {parent_description or 'root component'}\n"
         f"{dep_summary}{decisions_summary}"
@@ -164,6 +170,8 @@ Requirements:
     # Ensure required fields are set correctly
     contract.component_id = component_id
     contract.name = component_name
+    if processing_register:
+        contract.processing_register = processing_register
     if dep_ids:
         contract.dependencies = dep_ids
 

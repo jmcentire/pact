@@ -166,6 +166,10 @@ class ProjectConfig:
     # Build mode
     build_mode: str | None = None  # None = use global default
 
+    # Processing register (cognitive mode for agents)
+    processing_register: str = ""   # e.g. "rigorous-analytical", "exploratory-generative"
+    register_check_rate: float = 0.1  # Probability of drift-checking each component (0.0-1.0)
+
     # Language support
     language: str = "python"        # Valid values: "python", "typescript", "javascript"
     test_framework: str = ""        # Auto-detect: "pytest" for python, "vitest" for typescript/javascript
@@ -317,6 +321,8 @@ def load_project_config(project_dir: str | Path) -> ProjectConfig:
         impatience=raw.get("impatience"),
         role_timeouts=raw.get("role_timeouts"),
         build_mode=raw.get("build_mode"),
+        processing_register=raw.get("processing_register", ""),
+        register_check_rate=raw.get("register_check_rate", 0.1),
         language=raw.get("language", "python"),
         test_framework=raw.get("test_framework", ""),
         monitoring_log_files=raw.get("monitoring_log_files", []),

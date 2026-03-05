@@ -117,6 +117,7 @@ class ComponentContract(BaseModel):
     dependency_contracts: dict[str, list[str]] = {}
     invariants: list[str] = []
     requires: list[str] = []
+    processing_register: str = ""
 
 
 # ── Test Models ──────────────────────────────────────────────────────
@@ -227,6 +228,7 @@ class InterviewResult(BaseModel):
     user_answers: dict[str, str] = {}
     approved: bool = False
     audited_answers: list[AuditedAnswer] = []
+    processing_register: str = ""
 
 
 # ── Interview V2 Models ─────────────────────────────────────────────
@@ -519,6 +521,7 @@ class RunState(BaseModel):
     pause_reason: str = ""
     phase_cycles: int = 0
     health_snapshot: dict = {}  # Serialized HealthMetrics, accumulates across phases
+    processing_register: str = ""
 
     def record_tokens(self, input_tokens: int, output_tokens: int, cost: float) -> None:
         self.total_tokens += input_tokens + output_tokens
