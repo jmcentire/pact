@@ -106,17 +106,8 @@ def generate_smoke_tests(
         if module_path.endswith(".py"):
             module_path = module_path[:-3]
 
-        # Test file path mirrors source layout: pact/test_adopt.py
-        stem = Path(rel_path).stem
-        parent_dir = str(Path(rel_path).parent)
-        # For __init__.py, include parent package to avoid basename collisions
-        if stem == "__init__" and parent_dir != ".":
-            pkg_name = Path(parent_dir).name
-            test_file_rel = f"{parent_dir}/test_{pkg_name}_init.py"
-        elif parent_dir == ".":
-            test_file_rel = f"test_{stem}.py"
-        else:
-            test_file_rel = f"{parent_dir}/test_{stem}.py"
+        # Flat test filename using dotted module path (avoids package collisions)
+        test_file_rel = f"test_{module_path.replace('.', '_')}.py"
 
         # Safe identifier for test function names
         safe_id = module_path.replace(".", "_")
@@ -382,14 +373,12 @@ async def adopt_codebase(
     )
 
     # Generate mechanical smoke tests (no LLM) for all modes
-    # Tests mirror source layout: tests/smoke/pact/test_adopt.py for src/pact/adopt.py
+    # Flat files in tests/smoke/ with dotted module names (e.g. test_pact_adopt.py)
     smoke_suites = generate_smoke_tests(analysis, language)
     smoke_dir = project_path / "tests" / "smoke"
     smoke_dir.mkdir(parents=True, exist_ok=True)
-    for test_rel_path, code in smoke_suites.items():
-        test_file = smoke_dir / test_rel_path
-        test_file.parent.mkdir(parents=True, exist_ok=True)
-        test_file.write_text(code)
+    for test_filename, code in smoke_suites.items():
+        (smoke_dir / test_filename).write_text(code)
     result.smoke_tests_generated = len(smoke_suites)
     if smoke_suites:
         project.append_audit("adopt_smoke_tests", f"{len(smoke_suites)} smoke test files generated")
