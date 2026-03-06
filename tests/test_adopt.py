@@ -145,8 +145,8 @@ class TestGenerateSmokeTests:
             ],
         )
         suites = generate_smoke_tests(analysis)
-        assert "main" in suites
-        code = suites["main"]
+        assert "test_main.py" in suites
+        code = suites["test_main.py"]
         assert "import importlib" in code
         assert 'importlib.import_module("main")' in code
 
@@ -161,7 +161,7 @@ class TestGenerateSmokeTests:
             ],
         )
         suites = generate_smoke_tests(analysis)
-        code = suites["math_utils"]
+        code = suites["test_math_utils.py"]
         assert "test_add_is_callable" in code
         assert "test_multiply_is_callable" in code
         assert 'getattr(mod, "add"' in code
@@ -176,8 +176,8 @@ class TestGenerateSmokeTests:
             ],
         )
         suites = generate_smoke_tests(analysis)
-        assert "src_auth_login" in suites
-        code = suites["src_auth_login"]
+        assert "src/auth/test_login.py" in suites
+        code = suites["src/auth/test_login.py"]
         assert 'importlib.import_module("src.auth.login")' in code
 
     def test_skips_empty_files(self):
@@ -189,8 +189,8 @@ class TestGenerateSmokeTests:
             ],
         )
         suites = generate_smoke_tests(analysis)
-        assert "empty" not in suites
-        assert "real" in suites
+        assert not any("empty" in k for k in suites)
+        assert "test_real.py" in suites
 
     def test_empty_codebase(self):
         analysis = CodebaseAnalysis(root_path="/tmp/test", source_files=[])
