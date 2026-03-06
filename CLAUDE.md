@@ -124,6 +124,10 @@ During the **polish phase**, Goodhart tests run against all implementations. Fai
 
 Config: `max_goodhart_attempts` in pact.yaml (default: 2). Cost: ~$0.07/component for generation (1 LLM call, no research/plan).
 
+### Smoke Test Generation (`pact adopt`)
+
+`pact adopt` generates mechanical smoke tests — no LLM required. AST analysis extracts all public module-level function signatures (filtering out methods, private functions, and nested functions via source line indentation check). Each signature produces an import + callable check test. Output goes to `tests/smoke/` (conventional location). v0.5.1 generates 248 smoke tests for Pact's own codebase.
+
 ### Casual-Pace Scheduling
 
 Poll-based, not event-loop. Agents invoked for focused bursts, state fully persisted between bursts.
@@ -274,7 +278,7 @@ pact incident <project-dir> <id>      # Show incident details + diagnostic repor
 ## Testing
 
 ```bash
-make test          # 1630 tests, ~7s
+make test          # 1886 tests, ~7s
 make test-quick    # Stop on first failure
 ```
 

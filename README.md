@@ -300,6 +300,8 @@ Beyond contract validation, Pact includes structural checks that catch problems 
 
 - **Handoff Brief Validation** -- `pact handoff <project> <component-id> --validate` checks context fence presence, primer ordering, natural format, token budget, and dependency coverage. Useful for debugging agent coordination issues.
 
+- **Smoke Test Generation** -- `pact adopt` generates mechanical smoke tests from AST analysis -- no LLM required. Extracts all public module-level function signatures (filtering out methods, private functions, and nested functions via indentation check) and produces import + callable check tests in `tests/smoke/`.
+
 ## Claude Code Integration
 
 Pact ships with a Claude Code custom slash command for crafting optimal task specifications:
@@ -314,7 +316,7 @@ This interactive command interviews you about your project and generates researc
 
 ```bash
 make dev          # Install with LLM backend support
-make test         # Run full test suite (1630 tests)
+make test         # Run full test suite (1886 tests)
 make test-quick   # Stop on first failure
 make clean        # Remove venv and caches
 ```
