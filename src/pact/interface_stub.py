@@ -1004,6 +1004,35 @@ def project_id_hash(project_dir: str) -> str:
 # ── Handoff Brief ────────────────────────────────────────────────────
 
 
+def context_fence(processing_register: str = "", strategic_context: str = "") -> str:
+    """Generate a context fence: reset + register prime + domain prime.
+
+    Research (Papers XX-XXIII):
+    - Reset instruction before priming = 39% CE improvement (Paper XX)
+    - Reset is mode-switching, not garbage collection (Paper XXIII)
+    - 15 tokens of domain content capture 98.8% of benefit (Paper XX)
+    - Nothing belongs between reset and prime (Paper XXII)
+    - Fence and prime compose independently (Paper XXIII, rho=0.858)
+
+    The fence is three parts in strict sequence:
+    1. Reset: backward + forward reference installs processing boundary
+    2. Register prime: cognitive mode (~15 tokens)
+    3. Domain prime: project/component context (~15-50 tokens)
+    """
+    parts = [
+        "You are starting fresh on this task. Disregard any prior conversation "
+        "context. Focus exclusively on the specifications that follow."
+    ]
+    if processing_register:
+        parts.append(
+            f"Processing register: {processing_register}. "
+            f"Maintain this cognitive mode throughout."
+        )
+    if strategic_context:
+        parts.append(strategic_context)
+    return "\n\n".join(parts)
+
+
 def render_handoff_brief(
     component_id: str,
     contract: ComponentContract,
@@ -1021,153 +1050,186 @@ def render_handoff_brief(
     standards_brief: str = "",
     strategic_context: str = "",
     processing_register: str = "",
+    max_context_tokens: int = 0,
 ) -> str:
     """Render a complete handoff document for a fresh agent.
 
-    This is the "you're picking up where someone left off" briefing.
-    Designed so a brand-new agent with zero prior context can understand
-    exactly what to do, what's been tried, and what constraints apply.
+    Structure follows the Reset-Prime-Deliver protocol (Papers XX-XXIV):
 
-    The brief contains:
-    1. Interface stub (mental model)
-    2. Dependency map (what you can call)
-    3. Test summary (what you must pass)
-    4. History (what's been tried, what failed)
-    5. SOPs (rules to follow)
+    Tier 1 (always): Context fence + interface stub (domain primer)
+    Tier 2 (if room): Tests + prior failures (task specification)
+    Tier 3 (if room): Learnings, standards, shaping, SOPs (supplementary)
+
+    Paper XX: natural conversational format > rigid markdown headers (+0.475 nats).
+    Paper XX: content beyond ~150 tokens of domain priming degrades performance.
+    Paper XXII: more explicit instruction = worse results (director mode -37.1%).
+
+    Args:
+        max_context_tokens: If >0, apply tiered compression to keep the brief
+            within this token budget. Tier 1 is never truncated.
     """
-    lines: list[str] = []
+    # ── Tier 1: Context fence + domain primer (never truncated) ──
 
-    # Context reset: clear residual processing biases before domain priming.
-    # Paper 36 (Ritual Shape) showed a 39% CE improvement from a reset
-    # instruction before domain-specific content. The reset gives the
-    # subsequent register/domain primer a clean activation baseline.
-    lines.append(
-        "This is a new component implementation task. You have no prior "
-        "conversation context. Focus exclusively on the specifications below."
-    )
-    lines.append("")
+    tier1_lines: list[str] = []
 
-    # Register priming: establish processing mode before domain content.
-    # Papers 35-39 established the representational hierarchy:
-    # register (hub) > domain > structural shape. Setting register first
-    # gives domain content the right hub to anchor to. This is why 15
-    # tokens capture 98.8% of benefit — they set the register, not domain.
-    if processing_register:
-        lines.append(
-            f"Processing register: {processing_register}. "
-            f"Maintain this cognitive mode throughout all work on this component."
-        )
-        lines.append("")
+    # Context fence: reset + register + strategic context
+    fence = context_fence(processing_register, strategic_context)
+    tier1_lines.append(fence)
+    tier1_lines.append("")
 
-    # Strategic context: project intent + component contribution.
-    # Paper 36 showed 15-50 tokens of domain content capture 98.8% of benefit.
-    # With register already primed, domain content anchors to the right hub.
-    if strategic_context:
-        lines.append(strategic_context)
-        lines.append("")
+    # Mission (conversational, not rigid header)
+    tier1_lines.append(f"You are implementing {contract.name} ({component_id}), attempt {attempt}.")
+    tier1_lines.append("")
 
-    # Section 1: Mission
-    lines.append(f"# {contract.name} ({component_id}) — Attempt {attempt}")
-    lines.append("")
+    # Interface stub — the domain primer. This is the most important content.
+    # Paper XX: 15 tokens of domain-matched content capture 98.8% of benefit.
+    tier1_lines.append("Here is the interface contract you need to implement:")
+    tier1_lines.append("```python")
+    tier1_lines.append(render_stub(contract))
+    tier1_lines.append("```")
+    tier1_lines.append("")
 
-    # Section 2: Interface (the mental model) — the domain primer.
-    # This is the most important content in the handoff. Paper XX showed
-    # that 15 tokens of domain-matched content capture 98.8% of the
-    # coordination benefit. The interface stub activates domain-specific
-    # processing; everything after this is supplementary.
-    lines.append("## YOUR INTERFACE CONTRACT")
-    lines.append("```python")
-    lines.append(render_stub(contract))
-    lines.append("```")
-    lines.append("")
-
-    # Section 2b: Log key preamble (for production traceability)
+    # Log key preamble (production traceability — part of the contract)
     if log_key_preamble:
-        lines.append("## LOG KEY PREAMBLE (include at top of every module)")
-        lines.append("```python")
-        lines.append(log_key_preamble)
-        lines.append("```")
-        lines.append("ALL log statements MUST include the PACT log key for production traceability.")
-        lines.append("")
+        tier1_lines.append("Include this logging preamble at the top of every module:")
+        tier1_lines.append("```python")
+        tier1_lines.append(log_key_preamble)
+        tier1_lines.append("```")
+        tier1_lines.append("")
 
-    # Section 2c: Global standards (shared conventions)
+    tier1 = "\n".join(tier1_lines)
+    used_tokens = _estimate_tokens(tier1)
+
+    # ── Tier 2: Task specification (tests, dependencies, failures) ──
+
+    tier2_lines: list[str] = []
+
+    # Global standards
     if standards_brief:
-        lines.append(standards_brief)
-        lines.append("")
+        tier2_lines.append(standards_brief)
+        tier2_lines.append("")
 
-    # Section 3: Dependencies
+    # Dependencies
     if contract.dependencies:
-        lines.append("## AVAILABLE DEPENDENCIES")
-        lines.append("```")
-        lines.append(render_dependency_map(component_id, contracts))
-        lines.append("```")
-        lines.append("")
+        tier2_lines.append("Your available dependencies:")
+        tier2_lines.append("```")
+        tier2_lines.append(render_dependency_map(component_id, contracts))
+        tier2_lines.append("```")
+        tier2_lines.append("")
 
-    # Section 4: Tests to pass
+    # Tests to pass
     if test_suite:
         if include_test_code:
-            lines.append(f"## TESTS TO PASS ({len(test_suite.test_cases)} cases)")
+            tier2_lines.append(
+                f"Your implementation needs to pass these {len(test_suite.test_cases)} tests:"
+            )
             for tc in test_suite.test_cases:
                 marker = ""
                 if test_results and test_results.failure_details:
                     failed_ids = {f.test_id for f in test_results.failure_details}
                     if tc.id in failed_ids:
-                        marker = " ** PREVIOUSLY FAILED **"
-                lines.append(f"  - [{tc.category}] {tc.id}: {tc.description}{marker}")
-            lines.append("")
+                        marker = " [PREVIOUSLY FAILED]"
+                tier2_lines.append(f"  - [{tc.category}] {tc.id}: {tc.description}{marker}")
+            tier2_lines.append("")
 
             if test_suite.generated_code:
-                lines.append("### Test code:")
-                lines.append("```python")
-                lines.append(test_suite.generated_code)
-                lines.append("```")
-                lines.append("")
+                tier2_lines.append("Test code:")
+                tier2_lines.append("```python")
+                tier2_lines.append(test_suite.generated_code)
+                tier2_lines.append("```")
+                tier2_lines.append("")
         else:
-            # compact listing
             if test_suite.test_cases:
-                lines.append(f"## TESTS TO PASS ({len(test_suite.test_cases)} cases)")
+                tier2_lines.append(
+                    f"Your implementation needs to pass these {len(test_suite.test_cases)} tests:"
+                )
                 for tc in test_suite.test_cases:
                     desc = tc.description or ""
-                    lines.append(f"- {tc.id}: {desc}")
-            lines.append("")
+                    tier2_lines.append(f"- {tc.id}: {desc}")
+            tier2_lines.append("")
 
-    # Section 5: History (what's been tried)
+    # Prior failures
     if prior_failures:
-        lines.append("## PRIOR FAILURES (do NOT repeat these mistakes)")
+        tier2_lines.append("Previous attempts failed — avoid repeating these mistakes:")
         for i, failure in enumerate(prior_failures, 1):
-            lines.append(f"  {i}. {failure}")
-        lines.append("")
+            tier2_lines.append(f"  {i}. {failure}")
+        tier2_lines.append("")
 
     if test_results and not test_results.all_passed:
-        lines.append(f"## LAST TEST RUN: {test_results.passed}/{test_results.total} passed")
+        tier2_lines.append(
+            f"Last test run: {test_results.passed} of {test_results.total} passed. "
+            f"Specific failures:"
+        )
         for fd in test_results.failure_details[:5]:
-            lines.append(f"  FAIL: {fd.test_id} — {fd.error_message}")
-        lines.append("")
+            tier2_lines.append(f"  - {fd.test_id}: {fd.error_message}")
+        tier2_lines.append("")
 
-    # Section 6: Shaping context (from Shape Up phase)
+    tier2 = "\n".join(tier2_lines)
+    tier2_tokens = _estimate_tokens(tier2)
+
+    # ── Tier 3: Supplementary context (learnings, shaping, SOPs) ──
+    # Paper XX: content beyond domain priming saturation is noise.
+    # These are lowest priority — trimmed first if over budget.
+
+    tier3_lines: list[str] = []
+
     if pitch_context:
-        lines.append("## SHAPING CONTEXT")
-        lines.append(pitch_context)
-        lines.append("")
+        tier3_lines.append("Shaping context for this component:")
+        tier3_lines.append(pitch_context)
+        tier3_lines.append("")
 
-    # Section 7: External context (from integrations)
     if external_context:
-        lines.append(external_context)
-        lines.append("")
+        tier3_lines.append(external_context)
+        tier3_lines.append("")
 
-    # Section 8: Learnings from previous runs
     if learnings:
-        lines.append("## LEARNINGS")
-        lines.append(learnings)
-        lines.append("")
+        tier3_lines.append(learnings)
+        tier3_lines.append("")
 
-    # Section 9: SOPs
     if sops:
-        lines.append("## OPERATING PROCEDURES (mandatory)")
-        lines.append(sops)
-        lines.append("")
+        tier3_lines.append("Follow these operating procedures:")
+        tier3_lines.append(sops)
+        tier3_lines.append("")
 
-    return "\n".join(lines)
+    tier3 = "\n".join(tier3_lines)
+    tier3_tokens = _estimate_tokens(tier3)
+
+    # ── Assemble with tiered compression ──
+
+    if max_context_tokens > 0:
+        remaining = max_context_tokens - used_tokens
+        if remaining >= tier2_tokens + tier3_tokens:
+            # Everything fits
+            return tier1 + tier2 + tier3
+        elif remaining >= tier2_tokens:
+            # Tier 2 fits, truncate tier 3
+            tier3_budget = remaining - tier2_tokens
+            tier3 = _truncate_to_tokens(tier3, tier3_budget)
+            return tier1 + tier2 + tier3
+        else:
+            # Only tier 1 + partial tier 2
+            tier2 = _truncate_to_tokens(tier2, remaining)
+            return tier1 + tier2
+
+    # No budget — include everything
+    return tier1 + tier2 + tier3
+
+
+def _truncate_to_tokens(text: str, max_tokens: int) -> str:
+    """Truncate text to approximately max_tokens, breaking at line boundaries."""
+    if max_tokens <= 0:
+        return ""
+    lines = text.split("\n")
+    result: list[str] = []
+    used = 0
+    for line in lines:
+        line_tokens = _estimate_tokens(line)
+        if used + line_tokens > max_tokens:
+            result.append("  (remaining context trimmed for brevity)")
+            break
+        result.append(line)
+        used += line_tokens
+    return "\n".join(result)
 
 
 # ── Progress Snapshot ────────────────────────────────────────────────

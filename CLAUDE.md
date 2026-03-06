@@ -16,6 +16,7 @@ pact tasks <project-dir>           # Generate/display task list
 pact analyze <project-dir>         # Cross-artifact analysis
 pact checklist <project-dir>       # Requirements quality checklist
 pact export-tasks <project-dir>    # Export TASKS.md
+pact handoff <project-dir> <id>    # Render/validate handoff brief
 pact directive <project-dir> <json> # Send structured directive to daemon
 ```
 
@@ -85,6 +86,16 @@ Research (Papers 35-39) established that LLM representations follow a hierarchy:
 - **Propagation**: Register is a first-class field on `ComponentContract` and flows through the handoff protocol: reset → prime register → prime domain
 - **Override**: Set `processing_register` in `pact.yaml` to skip LLM establishment
 - **Monitoring**: Health system tracks register drift — agents departing from their established processing mode — as an early indicator of coordination failure
+- **Context Fence**: All system prompts include a context fence ("You are starting fresh...") as the first line. `context_fence()` in `interface_stub.py` is the reusable helper. Papers XX-XXIII: 39% CE improvement.
+- **Natural Format**: Handoff briefs use conversational format, not rigid markdown headers. Paper XX: +0.475 nats improvement.
+- **Tiered Compression**: `render_handoff_brief(max_context_tokens=N)` applies three-tier compression. Tier 1 (fence + stub) never truncated. Paper XX: content beyond ~150 tokens of domain priming degrades performance.
+- **Reduced Over-instruction**: System prompts trimmed from rule lists to concise domain activation. Paper XXII: "Director mode" -37.1%.
+- **Centroid Selection**: When `competitive_implementations` enabled, `resolution.py` selects the implementation closest to ensemble centroid (code similarity). Paper XIX: 48.9% gap closure.
+- **Andon Cord**: `design_bug` diagnosis routes back to decompose (not dead-end failure). Phase cycle limits prevent infinite loops.
+- **Cross-Component Validation**: `validate_cross_component_interfaces()` checks shared type compatibility and dependency output/input structural compatibility across components.
+- **North-Star Validation**: `validate_north_star()` checks that composed contracts plausibly fulfill the original task (verb coverage, root/leaf function presence). Runs in polish phase.
+- **Early Decomposition Validation**: `validate_decomposition_coverage()` catches structural issues (orphans, empty descriptions, duplicates, low keyword coverage) before spending LLM calls on contract generation.
+- **Handoff CLI**: `pact handoff <project-dir> <component-id>` renders and validates handoff briefs. `--validate` checks context fence, primer ordering, natural format, token budget. `--max-tokens` applies tiered compression.
 
 ```yaml
 # pact.yaml
@@ -263,7 +274,7 @@ pact incident <project-dir> <id>      # Show incident details + diagnostic repor
 ## Testing
 
 ```bash
-make test          # 1617 tests, ~7s
+make test          # 1630 tests, ~7s
 make test-quick    # Stop on first failure
 ```
 

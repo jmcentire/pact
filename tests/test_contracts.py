@@ -8,7 +8,9 @@ from pact.contracts import (
     extract_base_types,
     validate_all_contracts,
     validate_contract_completeness,
+    validate_decomposition_coverage,
     validate_dependency_graph,
+    validate_north_star,
     validate_test_suite,
     validate_type_references,
 )
@@ -506,3 +508,158 @@ class TestParameterizedTypeValidation:
         )
         errors = validate_type_references(c)
         assert errors == []
+
+
+class TestValidateNorthStar:
+    """Tests for north-star validation — do contracts fulfill the original task?"""
+
+    def _make_tree(self, nodes_data: dict[str, dict]) -> DecompositionTree:
+        nodes = {}
+        root_id = ""
+        for nid, data in nodes_data.items():
+            if not root_id:
+                root_id = nid
+            nodes[nid] = DecompositionNode(
+                component_id=nid,
+                name=data.get("name", nid),
+                description=data.get("description", ""),
+                children=data.get("children", []),
+                parent_id=data.get("parent_id", ""),
+            )
+        return DecompositionTree(root_id=root_id, nodes=nodes)
+
+    def test_no_warnings_when_verbs_covered(self):
+        tree = self._make_tree({"root": {"name": "Root", "description": "Root"}})
+        contracts = {
+            "root": _make_contract(
+                "root",
+                functions=[
+                    FunctionContract(name="parse_data", description="Parse input", inputs=[], output_type="str"),
+                    FunctionContract(name="validate_result", description="Validate output", inputs=[], output_type="bool"),
+                ],
+            ),
+        }
+        warnings = validate_north_star("parse and validate the data", tree, contracts)
+        assert not warnings
+
+    def test_warns_when_task_verbs_uncovered(self):
+        tree = self._make_tree({"root": {"name": "Root", "description": "Root"}})
+        contracts = {
+            "root": _make_contract(
+                "root",
+                functions=[
+                    FunctionContract(name="get_data", description="Get data", inputs=[], output_type="str"),
+                ],
+            ),
+        }
+        warnings = validate_north_star(
+            "audit and monitor and report the system", tree, contracts,
+        )
+        assert any("audit" in w or "monitor" in w for w in warnings)
+
+    def test_warns_on_empty_root_functions(self):
+        tree = self._make_tree({"root": {"name": "Root", "description": "Root"}})
+        contracts = {
+            "root": ComponentContract(
+                component_id="root", name="Root", description="Root",
+                functions=[],
+            ),
+        }
+        warnings = validate_north_star("build something", tree, contracts)
+        assert any("no functions" in w.lower() for w in warnings)
+
+    def test_warns_on_empty_leaf_functions(self):
+        tree = self._make_tree({
+            "root": {"name": "Root", "description": "Root", "children": ["leaf"]},
+            "leaf": {"name": "Leaf", "description": "Leaf", "parent_id": "root"},
+        })
+        contracts = {
+            "root": _make_contract("root"),
+            "leaf": ComponentContract(
+                component_id="leaf", name="Leaf", description="Leaf",
+                functions=[],
+            ),
+        }
+        warnings = validate_north_star("do something", tree, contracts)
+        assert any("leaf" in w and "no functions" in w.lower() for w in warnings)
+
+    def test_empty_task_no_warnings(self):
+        tree = self._make_tree({"root": {"name": "R", "description": "R"}})
+        contracts = {"root": _make_contract("root")}
+        assert validate_north_star("", tree, contracts) == []
+
+    def test_empty_contracts_no_warnings(self):
+        tree = self._make_tree({"root": {"name": "R", "description": "R"}})
+        assert validate_north_star("build something", tree, {}) == []
+
+
+class TestValidateDecompositionCoverage:
+    """Tests for early decomposition validation."""
+
+    def _make_tree(self, nodes_data: dict[str, dict]) -> DecompositionTree:
+        nodes = {}
+        root_id = ""
+        for nid, data in nodes_data.items():
+            if not root_id:
+                root_id = nid
+            nodes[nid] = DecompositionNode(
+                component_id=nid,
+                name=data.get("name", nid),
+                description=data.get("description", "A component"),
+                children=data.get("children", []),
+                parent_id=data.get("parent_id", ""),
+            )
+        return DecompositionTree(root_id=root_id, nodes=nodes)
+
+    def test_valid_tree_no_warnings(self):
+        tree = self._make_tree({
+            "root": {"name": "Root", "description": "Root system for parsing", "children": ["a", "b"]},
+            "a": {"name": "A", "description": "Component handles parsing operations", "parent_id": "root"},
+            "b": {"name": "B", "description": "Component handles validation operations", "parent_id": "root"},
+        })
+        warnings = validate_decomposition_coverage("parsing and validation operations", tree)
+        assert not warnings
+
+    def test_warns_on_empty_description(self):
+        tree = self._make_tree({
+            "root": {"name": "Root", "description": "Root", "children": ["a"]},
+            "a": {"name": "A", "description": "", "parent_id": "root"},
+        })
+        warnings = validate_decomposition_coverage("", tree)
+        assert any("empty description" in w.lower() for w in warnings)
+
+    def test_warns_on_orphan_node(self):
+        tree = self._make_tree({
+            "root": {"name": "Root", "description": "Root"},
+            "orphan": {"name": "Orphan", "description": "Lost node"},
+        })
+        warnings = validate_decomposition_coverage("", tree)
+        assert any("orphan" in w.lower() for w in warnings)
+
+    def test_warns_on_duplicate_descriptions(self):
+        tree = self._make_tree({
+            "root": {"name": "Root", "description": "Root system", "children": ["a", "b"]},
+            "a": {"name": "A", "description": "This component handles all the data processing and transformation", "parent_id": "root"},
+            "b": {"name": "B", "description": "This component handles all the data processing and transformation", "parent_id": "root"},
+        })
+        warnings = validate_decomposition_coverage("", tree)
+        assert any("identical descriptions" in w.lower() for w in warnings)
+
+    def test_warns_on_low_keyword_coverage(self):
+        tree = self._make_tree({
+            "root": {"name": "Root", "description": "Root manages logging", "children": ["a"]},
+            "a": {"name": "A", "description": "A does logging too", "parent_id": "root"},
+        })
+        warnings = validate_decomposition_coverage(
+            "authenticate users encrypt passwords validate tokens authorize requests", tree,
+        )
+        assert any("keyword" in w.lower() for w in warnings)
+
+    def test_empty_tree_warns(self):
+        tree = DecompositionTree(root_id="r", nodes={})
+        warnings = validate_decomposition_coverage("", tree)
+        assert warnings
+
+    def test_none_tree_warns(self):
+        warnings = validate_decomposition_coverage("", None)
+        assert warnings

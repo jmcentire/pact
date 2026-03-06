@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from pact.agents.base import AgentBase
 from pact.agents.contract_author import author_contract
 from pact.agents.test_author import author_goodhart_tests, author_tests
-from pact.contracts import validate_all_contracts
+from pact.contracts import validate_all_contracts, validate_decomposition_coverage
 from pact.project import ProjectManager
 from pact.schemas import (
     ComponentContract,
@@ -80,10 +80,11 @@ Return a concise register descriptor (e.g. "rigorous-analytical")."""
 
 # ── Interview ────────────────────────────────────────────────────────
 
-INTERVIEW_SYSTEM = """You are a cynical senior architect reviewing a task specification.
-Your job is to find risks, ambiguities, and missing decisions BEFORE
-any work begins. Be thorough but practical — focus on issues that would
-cause implementation failures, not theoretical concerns."""
+INTERVIEW_SYSTEM = """You are starting fresh on this review with no prior context.
+
+You are a cynical senior architect reviewing a task specification.
+Find risks, ambiguities, and missing decisions BEFORE any work begins.
+Focus on issues that would cause implementation failures."""
 
 
 async def run_interview(
@@ -131,30 +132,16 @@ different engineers to implement incompatible solutions."""
 
 # ── Decomposition ────────────────────────────────────────────────────
 
-DECOMPOSE_SYSTEM = """You are a software architect deciding how to build a task.
+DECOMPOSE_SYSTEM = """You are starting fresh on this decomposition with no prior context.
 
-First, decide: should this task be implemented directly as a single module,
-or does it genuinely require multiple independent components?
+You are a software architect deciding how to build a task.
 
-PREFER DIRECT IMPLEMENTATION (is_trivial=true) when:
-- The task can be handled by one well-structured module (<500 LOC)
-- All functionality shares the same data model and state
-- There are no truly independent subsystems
-- A single engineer could implement it in one session
+Prefer direct implementation (is_trivial=true) when the task can be one
+well-structured module (<500 LOC) with shared data model and state.
 
-DECOMPOSE ONLY when:
-- The task has genuinely independent subsystems (e.g., auth + billing + notifications)
-- Components need different expertise or could be developed in parallel
-- The interfaces between subsystems are clean and natural
-
-If you decompose:
-- Each component is a black box with clear inputs, outputs, and responsibilities
-- Dependencies between components are explicit
-- Leaf components are small enough for one agent to implement
-- Keep it shallow — prefer wider over deeper
-
-If the task should be implemented directly, set is_trivial=true and provide
-a single component with the full task description."""
+Decompose only when there are genuinely independent subsystems with clean
+interfaces. Each component is a black box with explicit dependencies.
+Keep it shallow — prefer wider over deeper."""
 
 
 class DecompositionResult:
@@ -410,6 +397,17 @@ async def decompose_and_contract(
         project.save_tree(decomp_tree)
         project.save_decisions([d.model_dump() for d in decisions])
         project.append_audit("decomposition", f"{len(decomp_tree.nodes)} components")
+
+        # Early validation: check decomposition structure before spending
+        # LLM calls on contract/test generation
+        coverage_warnings = validate_decomposition_coverage(task, decomp_tree)
+        for w in coverage_warnings:
+            logger.warning("Decomposition: %s", w)
+        if coverage_warnings:
+            project.append_audit(
+                "decomposition_validation",
+                f"{len(coverage_warnings)} warnings: {'; '.join(coverage_warnings[:3])}",
+            )
 
     # Generate contracts (leaves first), skipping already-completed ones
     order = decomp_tree.topological_order()

@@ -1,4 +1,8 @@
-"""Interactive project setup wizard for Pact."""
+"""Interactive project setup wizard for Pact.
+
+Walks users through project setup with clear guidance, producing
+annotated sample files with inline instructions.
+"""
 
 from __future__ import annotations
 
@@ -195,30 +199,132 @@ def resolve_test_framework(config: WizardConfig) -> str:
 # ── File generators ──────────────────────────────────────────────────
 
 
-def generate_task_md(config: WizardConfig) -> str:
-    """Generate task.md content from wizard config."""
-    name = config.project_name or "Untitled Project"
-    desc = config.description or "Describe your task here."
-    return f"""# {name}
+def _task_example(language: str) -> str:
+    """Return a language-appropriate task example."""
+    if language == "python":
+        return """\
+# Example: DAG Task Scheduler
+#
+# Build a task scheduler that executes dependent tasks in topological order.
+# Each task has a name, a callable, and a list of dependency task names.
+#
+# ## Context
+# This replaces a manual script that runs data pipeline steps sequentially.
+# The new scheduler should parallelize independent steps.
+#
+# ## Constraints
+# - Must detect circular dependencies and raise CyclicDependencyError
+# - Must propagate task failures to all downstream dependents (mark as SKIPPED)
+# - Must validate that all dependency names reference existing tasks
+# - No external dependencies beyond the standard library
+#
+# ## Requirements
+# - register_task(name, callable, dependencies) -> None
+# - run_all() -> dict[str, TaskResult]
+# - TaskResult has status (SUCCESS/FAILED/SKIPPED), duration, and error fields
+# - Duplicate task names raise DuplicateTaskError"""
 
-{desc}
+    elif language == "typescript":
+        return """\
+# Example: Rate Limiter
+#
+# Build a token-bucket rate limiter for API endpoints.
+# Each endpoint has its own bucket with configurable rate and burst.
+#
+# ## Context
+# Replacing a simple per-second counter with proper token bucket semantics.
+#
+# ## Constraints
+# - Must support multiple named endpoints with independent limits
+# - Must be thread-safe (no race conditions on bucket state)
+# - Time source must be injectable for testing
+#
+# ## Requirements
+# - createLimiter(config: RateLimitConfig) -> RateLimiter
+# - limiter.tryAcquire(endpoint: string) -> { allowed: boolean, retryAfterMs?: number }
+# - limiter.reset(endpoint: string) -> void"""
+
+    else:
+        return """\
+# Example: Event Emitter
+#
+# Build a typed event emitter with wildcard support.
+#
+# ## Context
+# Lightweight pub/sub for a browser application, replacing a heavier library.
+#
+# ## Constraints
+# - Must support wildcard listeners (e.g., "user.*" matches "user.login")
+# - Must support once() listeners that auto-remove after first call
+# - No external dependencies
+#
+# ## Requirements
+# - on(event, handler) -> unsubscribe function
+# - once(event, handler) -> unsubscribe function
+# - emit(event, ...args) -> void
+# - off(event, handler) -> void"""
+
+
+def generate_task_md(config: WizardConfig) -> str:
+    """Generate task.md with inline guidance and a language-appropriate example."""
+    name = config.project_name or "Untitled Project"
+    desc = config.description or ""
+    example = _task_example(config.language)
+
+    task_body = desc if desc else (
+        "Write your task description here. Be specific about what the system "
+        "should do, not how it should be built. Pact's interview phase will "
+        "ask clarifying questions about ambiguities."
+    )
+
+    return f"""\
+# {name}
+
+{task_body}
 
 ## Context
 
-<!-- Background information, existing systems, or prior decisions -->
+<!-- Write 2-3 sentences of background. What exists today? What problem
+     does this solve? What triggered this work?
+
+     Example: "This replaces a manual CSV import script that breaks on
+     malformed rows. The new version needs to handle partial failures
+     and report which rows were skipped." -->
 
 ## Constraints
 
-<!-- Hard requirements: performance, compatibility, security, etc. -->
+<!-- List hard requirements that constrain the solution. These are
+     non-negotiable rules the implementation must follow.
+
+     Good constraints are specific and testable:
+       - "Must handle 10,000 records in under 5 seconds"
+       - "Must not use any network calls"
+       - "Must raise ValidationError (not ValueError) for bad input"
+
+     Bad constraints are vague:
+       - "Must be fast"
+       - "Must be well-tested" -->
 
 ## Requirements
 
-<!-- What the final deliverable must do -->
+<!-- List what the deliverable must do. Each requirement should describe
+     observable behavior, not internal structure.
+
+     Good requirements:
+       - "parse(csv_text) returns list of Record objects"
+       - "Malformed rows are collected in result.errors, not raised"
+       - "Empty input returns empty list, not error"
+
+     Bad requirements:
+       - "Use a class-based architecture"
+       - "Follow SOLID principles" -->
+
+{example}
 """
 
 
 def generate_sops_md(config: WizardConfig) -> str:
-    """Generate language-aware sops.md from wizard config."""
+    """Generate language-aware sops.md with inline guidance."""
     framework = resolve_test_framework(config)
     lang = config.language
     max_lines = config.max_file_lines
@@ -271,6 +377,13 @@ def generate_sops_md(config: WizardConfig) -> str:
     return f"""\
 # Operating Procedures
 
+<!-- SOPs tell Pact's agents HOW to write code. Think of these as the
+     coding standards you'd give a new team member on day one.
+
+     Keep it short. Pact's research shows that ~150 tokens of domain
+     context captures 98.8% of the benefit. A 500-line SOP is past
+     the saturation point -- it actively degrades agent performance. -->
+
 {tech_stack}
 
 {standards}
@@ -283,6 +396,16 @@ def generate_sops_md(config: WizardConfig) -> str:
 ## Preferences
 - {stdlib_pref}
 - Keep files under {max_lines} lines
+
+<!-- Add project-specific conventions below. Examples:
+     - "Use UTC for all timestamps"
+     - "Error messages must include the invalid value"
+     - "All public functions must be async"
+     - "Use snake_case for file names, PascalCase for classes"
+
+     Don't add rules that duplicate the language defaults above.
+     The agents already know standard {lang} conventions. Only add
+     rules where YOUR project deviates from the norm. -->
 """
 
 

@@ -251,6 +251,14 @@ def main() -> None:
     p_pricing.add_argument("--export", action="store_true", help="Export pricing to ~/.config/pact/model_pricing.json")
     p_pricing.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
 
+    # handoff
+    p_handoff = subparsers.add_parser("handoff", help="Render/validate handoff brief for a component")
+    p_handoff.add_argument("project_dir", help="Project directory path")
+    p_handoff.add_argument("component_id", help="Component ID to render handoff for")
+    p_handoff.add_argument("--validate", action="store_true", help="Run structural validation on the handoff")
+    p_handoff.add_argument("--max-tokens", type=int, default=0, help="Apply tiered compression (0=no limit)")
+    p_handoff.add_argument("--json", action="store_true", dest="json_output", help="Output validation results as JSON")
+
     # wizard
     p_wizard = subparsers.add_parser("wizard", help="Guided project setup wizard")
     p_wizard.add_argument("project_dir", help="Project directory path")
@@ -338,6 +346,8 @@ def main() -> None:
         cmd_health(args)
     elif args.command == "pricing":
         cmd_pricing(args)
+    elif args.command == "handoff":
+        cmd_handoff(args)
     elif args.command == "wizard":
         cmd_wizard(args)
 
@@ -2174,6 +2184,156 @@ async def cmd_adopt(args: argparse.Namespace) -> None:
     )
 
     print(result.summary())
+
+
+def cmd_handoff(args: argparse.Namespace) -> None:
+    """Render and optionally validate the handoff brief for a component."""
+    import json as json_mod
+
+    from pact.interface_stub import context_fence, render_handoff_brief
+    from pact.project import ProjectManager
+
+    project = ProjectManager(args.project_dir)
+    tree = project.load_tree()
+    if not tree:
+        print("No decomposition tree found. Run decomposition first.")
+        return
+
+    cid = args.component_id
+    contracts = project.load_all_contracts()
+    if cid not in contracts:
+        print(f"No contract found for component '{cid}'.")
+        print(f"Available: {', '.join(sorted(contracts.keys()))}")
+        return
+
+    contract = contracts[cid]
+    test_suites = project.load_all_test_suites()
+    test_suite = test_suites.get(cid)
+
+    # Load optional context
+    sops = ""
+    sops_path = project.project_dir / "sops.md"
+    if sops_path.exists():
+        sops = sops_path.read_text()
+
+    # Load learnings
+    learnings = ""
+    learnings_path = project.pact_dir / "learnings" / "learnings.jsonl"
+    if learnings_path.exists():
+        entries = []
+        for line in learnings_path.read_text().splitlines():
+            if line.strip():
+                try:
+                    entry = json_mod.loads(line)
+                    entries.append(entry.get("lesson", str(entry)))
+                except json_mod.JSONDecodeError:
+                    pass
+        if entries:
+            learnings = "Previous agents noted: " + "; ".join(entries[:5])
+
+    # Load standards
+    standards_brief = ""
+    standards_path = project.pact_dir / "standards.json"
+    if standards_path.exists():
+        try:
+            from pact.standards import render_standards_brief
+            standards_data = json_mod.loads(standards_path.read_text())
+            from pact.schemas import GlobalStandards
+            standards = GlobalStandards(**standards_data)
+            standards_brief = render_standards_brief(standards)
+        except Exception:
+            pass
+
+    brief = render_handoff_brief(
+        component_id=cid,
+        contract=contract,
+        contracts=contracts,
+        test_suite=test_suite,
+        sops=sops,
+        learnings=learnings,
+        standards_brief=standards_brief,
+        max_context_tokens=args.max_tokens,
+    )
+
+    if args.validate:
+        # Structural validation of the handoff
+        issues: list[dict] = []
+
+        # Check context fence present
+        if "starting fresh" not in brief[:200]:
+            issues.append({
+                "level": "error",
+                "check": "context_fence",
+                "message": "Missing context fence (reset instruction) in first 200 chars",
+            })
+
+        # Check interface stub present
+        if "interface contract" not in brief.lower():
+            issues.append({
+                "level": "error",
+                "check": "domain_primer",
+                "message": "Missing interface contract (domain primer)",
+            })
+
+        # Check stub appears before tests (ordering)
+        stub_pos = brief.lower().find("interface contract")
+        test_pos = brief.lower().find("tests")
+        if stub_pos > 0 and test_pos > 0 and stub_pos > test_pos:
+            issues.append({
+                "level": "warning",
+                "check": "primer_ordering",
+                "message": "Interface stub appears after tests — should lead",
+            })
+
+        # Check for rigid headers (anti-pattern from Paper XX)
+        rigid_headers = ["## YOUR ", "## TASK:", "## REQUIREMENTS:", "## CONSTRAINTS:"]
+        for header in rigid_headers:
+            if header in brief:
+                issues.append({
+                    "level": "warning",
+                    "check": "natural_format",
+                    "message": f"Rigid header '{header}' found — conversational format preferred",
+                })
+
+        # Estimate token count
+        token_est = len(brief) // 4
+        if token_est > 2000:
+            issues.append({
+                "level": "info",
+                "check": "token_budget",
+                "message": f"Handoff is ~{token_est} tokens. Consider --max-tokens for compression.",
+            })
+
+        # Check dependency coverage
+        for dep_id in contract.dependencies:
+            if dep_id not in contracts:
+                issues.append({
+                    "level": "warning",
+                    "check": "dependency_coverage",
+                    "message": f"Dependency '{dep_id}' has no contract — handoff may be incomplete",
+                })
+
+        if args.json_output:
+            print(json_mod.dumps({
+                "component_id": cid,
+                "token_estimate": token_est,
+                "issues": issues,
+                "valid": not any(i["level"] == "error" for i in issues),
+            }, indent=2))
+        else:
+            print(f"Handoff validation for '{cid}':")
+            print(f"  Estimated tokens: ~{token_est}")
+            if not issues:
+                print("  All checks passed.")
+            else:
+                for issue in issues:
+                    marker = {"error": "ERROR", "warning": "WARN", "info": "INFO"}[issue["level"]]
+                    print(f"  [{marker}] {issue['check']}: {issue['message']}")
+            print()
+            print("--- Rendered handoff brief ---")
+            print(brief)
+    else:
+        print(brief)
 
 
 def cmd_health(args: argparse.Namespace) -> None:

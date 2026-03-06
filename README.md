@@ -180,6 +180,7 @@ pact build my-project sync_tracker --competitive --agents 3
 | `pact checklist <project>` | Generate requirements checklist |
 | `pact test-gen <project>` | Generate tests + security audit for any codebase |
 | `pact adopt <project>` | Adopt existing codebase under pact governance |
+| `pact handoff <project> <id>` | Render/validate handoff brief for a component |
 | `pact pricing` | Show model pricing table (`--export` to override) |
 
 ## Configuration
@@ -289,11 +290,31 @@ my-project/
     monitoring/        # Incidents, budget state, diagnostic reports
 ```
 
+## Validation & Quality Gates
+
+Beyond contract validation, Pact includes structural checks that catch problems early:
+
+- **North-Star Validation** -- After implementation, checks that composed contracts plausibly fulfill the original task. Extracts action verbs from `task.md` and verifies they appear in contract function names/descriptions. Catches the "9 components pass 796 tests but the service can't actually do anything" failure mode.
+
+- **Early Decomposition Validation** -- Runs after decomposition but before spending LLM calls on contract generation. Checks for orphan nodes, empty descriptions, duplicate descriptions, and task keyword coverage. Saves cost on structurally broken decompositions.
+
+- **Handoff Brief Validation** -- `pact handoff <project> <component-id> --validate` checks context fence presence, primer ordering, natural format, token budget, and dependency coverage. Useful for debugging agent coordination issues.
+
+## Claude Code Integration
+
+Pact ships with a Claude Code custom slash command for crafting optimal task specifications:
+
+```
+/project:craft-task
+```
+
+This interactive command interviews you about your project and generates research-backed `task.md`, `sops.md`, and `pact.yaml` files optimized for Pact's decomposition pipeline.
+
 ## Development
 
 ```bash
 make dev          # Install with LLM backend support
-make test         # Run full test suite (1617 tests)
+make test         # Run full test suite (1630 tests)
 make test-quick   # Stop on first failure
 make clean        # Remove venv and caches
 ```

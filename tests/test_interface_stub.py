@@ -272,15 +272,15 @@ class TestRenderHandoffBrief:
         contract = _make_pricing_contract()
         contracts = {"pricing": contract, "inventory": _make_inventory_contract()}
         brief = render_handoff_brief("pricing", contract, contracts)
-        assert "new component implementation task" in brief
-        assert "YOUR INTERFACE CONTRACT" in brief
+        assert "starting fresh" in brief
+        assert "interface contract" in brief
         assert "class PriceResult:" in brief
 
     def test_contains_dependency_map(self):
         contract = _make_pricing_contract()
         contracts = {"pricing": contract, "inventory": _make_inventory_contract()}
         brief = render_handoff_brief("pricing", contract, contracts)
-        assert "AVAILABLE DEPENDENCIES" in brief
+        assert "dependencies" in brief.lower()
         assert "check_availability" in brief
 
     def test_contains_test_info(self):
@@ -295,7 +295,7 @@ class TestRenderHandoffBrief:
             generated_code="def test_happy(): assert True",
         )
         brief = render_handoff_brief("pricing", contract, {"pricing": contract}, test_suite=suite)
-        assert "TESTS TO PASS (2 cases)" in brief
+        assert "2 tests" in brief
         assert "test_happy" in brief
 
     def test_marks_previously_failed_tests(self):
@@ -324,9 +324,8 @@ class TestRenderHandoffBrief:
             "pricing", contract, {"pricing": contract},
             prior_failures=["Off by one in tax calculation", "Missing None check"],
         )
-        assert "PRIOR FAILURES" in brief
+        assert "failed" in brief.lower() or "mistakes" in brief.lower()
         assert "Off by one" in brief
-        assert "do NOT repeat" in brief
 
     def test_includes_sops(self):
         contract = _make_pricing_contract()
@@ -334,7 +333,7 @@ class TestRenderHandoffBrief:
             "pricing", contract, {"pricing": contract},
             sops="# Rules\n- Use Result types\n- No exceptions",
         )
-        assert "OPERATING PROCEDURES" in brief
+        assert "operating procedures" in brief.lower()
         assert "Result types" in brief
 
     def test_attempt_number_shown(self):
@@ -343,7 +342,7 @@ class TestRenderHandoffBrief:
             "pricing", contract, {"pricing": contract},
             attempt=3,
         )
-        assert "Attempt 3" in brief
+        assert "attempt 3" in brief.lower()
 
 
 class TestRenderProgressSnapshot:

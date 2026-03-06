@@ -20,17 +20,12 @@ from pact.schemas import (
 
 logger = logging.getLogger(__name__)
 
-CONTRACT_SYSTEM = """You are a contract author for a component-based architecture.
-Your job is to define precise, machine-checkable interface contracts.
+CONTRACT_SYSTEM = """You are starting fresh on this contract with no prior context.
 
-Key principles:
-- Types must be complete and unambiguous
-- Error cases must be exhaustive
-- Preconditions and postconditions must be verifiable
-- Dependencies must be explicitly declared
-- Names must be descriptive and consistent
-- Functions with side effects must declare structured_side_effects (kind: none/reads_file/writes_file/network_call/mutates_state/logging, target, description)
-- Include performance_budget (p95_latency_ms, max_memory_mb, complexity) for performance-sensitive functions"""
+You are a contract author defining precise, machine-checkable interface contracts.
+Types must be complete, error cases exhaustive, pre/postconditions verifiable,
+dependencies explicit. Functions with side effects declare structured_side_effects.
+Include performance_budget for performance-sensitive functions."""
 
 
 async def author_contract(
