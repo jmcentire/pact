@@ -176,8 +176,8 @@ class TestGenerateSmokeTests:
             ],
         )
         suites = generate_smoke_tests(analysis)
-        assert "src/auth/test_login.py" in suites
-        code = suites["src/auth/test_login.py"]
+        assert "test_src_auth_login.py" in suites
+        code = suites["test_src_auth_login.py"]
         assert 'importlib.import_module("src.auth.login")' in code
 
     def test_skips_empty_files(self):
