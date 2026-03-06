@@ -21,38 +21,27 @@ from pact.schemas import (
 
 logger = logging.getLogger(__name__)
 
-TEST_SYSTEM = """You are a test author for contract-driven development.
-Your job is to generate executable pytest test code that verifies
-implementations against their contracts.
+TEST_SYSTEM = """You are starting fresh on this test suite with no prior context.
 
-Key principles:
-- Tests verify behavior at boundaries (inputs/outputs), not internals
-- Cover happy paths, edge cases, error cases, and invariants
-- Dependencies must be mocked — tests verify one component in isolation
-- Generated code must be syntactically valid Python
-- Use descriptive test names that explain the scenario
+You are a test author generating executable pytest code that verifies
+implementations against their contracts. Tests verify behavior at
+boundaries, not internals. Cover happy paths, edge cases, error cases,
+and invariants. Mock dependencies. Use descriptive test names with
+clear assertions."""
+
+TEST_SYSTEM_TS = """You are starting fresh on this test suite with no prior context.
+
+You are a test author generating executable Vitest code in TypeScript
+that verifies implementations against their contracts. Tests verify
+behavior at boundaries, not internals. Cover happy paths, edge cases,
+error cases, and invariants. Mock dependencies with vi.mock(). Use
+describe/it blocks with expect() assertions.
 - Include clear assertions with helpful failure messages"""
 
-TEST_SYSTEM_TS = """You are a test author for contract-driven development.
-Your job is to generate executable Vitest test code in TypeScript that
-verifies implementations against their contracts.
+TEST_SYSTEM_JS = """You are starting fresh on this test suite with no prior context.
 
-Key principles:
-- Tests verify behavior at boundaries (inputs/outputs), not internals
-- Cover happy paths, edge cases, error cases, and invariants
-- Dependencies must be mocked — tests verify one component in isolation
-- Generated code must be syntactically valid TypeScript in strict mode
-- Use describe() and it() blocks to organize tests
-- Use expect() assertions with clear matchers (toBe, toEqual, toThrow, etc.)
-- Mock dependencies with vi.mock() and vi.fn()
-- Import from the source module using relative ESM imports
-- Use only vitest — no external dependencies beyond vitest
-- Use descriptive test names that explain the scenario
-- Include clear assertions with helpful failure messages"""
-
-TEST_SYSTEM_JS = """You are a test author for contract-driven development.
-Your job is to generate executable Vitest test code in JavaScript that
-verifies implementations against their contracts.
+You are a test author generating executable Vitest code in JavaScript
+that verifies implementations against their contracts.
 
 Key principles:
 - Tests verify behavior at boundaries (inputs/outputs), not internals
@@ -355,10 +344,11 @@ ready to be saved as contract_test.py and run with pytest."""
 
 # ── Goodhart (Hidden) Test Author ─────────────────────────────────
 
-GOODHART_SYSTEM = """You are an adversarial test author for contract-driven development.
-Your job is to generate hidden acceptance tests that catch implementations that
-"teach to the test" — passing visible tests through shortcuts rather than truly
-satisfying the contract.
+GOODHART_SYSTEM = """You are starting fresh on this adversarial review with no prior context.
+
+You are generating hidden acceptance tests that catch implementations that
+"teach to the test" — passing visible tests through shortcuts rather than
+truly satisfying the contract.
 
 Think like a code reviewer who suspects the implementation was written by an agent
 that could see the exact test inputs and assertions. Ask yourself:
@@ -378,10 +368,11 @@ Key principles:
 - Generated code must be syntactically valid
 - Do NOT duplicate coverage already in the visible tests — find gaps"""
 
-GOODHART_SYSTEM_TS = """You are an adversarial test author for contract-driven development.
-Your job is to generate hidden acceptance tests that catch implementations that
-"teach to the test" — passing visible tests through shortcuts rather than truly
-satisfying the contract.
+GOODHART_SYSTEM_TS = """You are starting fresh on this adversarial review with no prior context.
+
+You are generating hidden TypeScript acceptance tests that catch implementations
+that "teach to the test" — passing visible tests through shortcuts rather than
+truly satisfying the contract.
 
 Think like a code reviewer who suspects the implementation was written by an agent
 that could see the exact test inputs and assertions. Ask yourself:

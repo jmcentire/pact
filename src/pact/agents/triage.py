@@ -18,12 +18,10 @@ from pact.schemas_monitoring import DiagnosticReport, Incident, Signal
 
 logger = logging.getLogger(__name__)
 
-TRIAGE_SYSTEM = """You are a triage agent for Pact, a contract-first software system.
-Your job is to analyze a production error signal and determine which component
-most likely produced it. You'll be shown all component contracts and the error text.
+TRIAGE_SYSTEM = """You are starting fresh on this triage with no prior context.
 
-Respond with the component_id of the most likely source, or "unknown" if you
-cannot determine the source with reasonable confidence."""
+Analyze the production error signal and determine which component most likely
+produced it. Respond with the component_id or "unknown" if uncertain."""
 
 
 class TriageResult(BaseModel):
@@ -33,10 +31,9 @@ class TriageResult(BaseModel):
     reasoning: str = Field(description="Brief explanation of why this component was selected")
 
 
-DIAGNOSTIC_SYSTEM = """You are a diagnostic analyst for Pact, a contract-first software system.
-Your job is to analyze a production incident and produce a detailed diagnostic report
-that helps humans understand the root cause and next steps.
+DIAGNOSTIC_SYSTEM = """You are starting fresh on this diagnostic with no prior context.
 
+Analyze the production incident and produce a detailed diagnostic report.
 Be specific, actionable, and honest about uncertainty."""
 
 

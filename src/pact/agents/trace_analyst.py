@@ -21,17 +21,13 @@ from pact.schemas import (
 
 logger = logging.getLogger(__name__)
 
-TRACE_SYSTEM = """You are a trace analyst diagnosing integration failures.
-Given I/O traces at component boundaries, you find where actual behavior
-diverges from expected behavior.
+TRACE_SYSTEM = """You are starting fresh on this diagnosis with no prior context.
 
-Diagnosis categories:
-- implementation_bug: Component produces wrong output for its contract
-- contract_bug: Contract is incomplete or wrong (child satisfies contract but parent fails)
-- glue_bug: Integration wiring is wrong (data transformation, routing)
-- design_bug: Decomposition itself is wrong (components can't compose)
+You are a trace analyst diagnosing integration failures. Given I/O traces
+at component boundaries, find where actual behavior diverges from expected.
 
-Be precise. Identify the specific component and function where divergence occurs."""
+Diagnosis categories: implementation_bug, contract_bug, glue_bug, design_bug.
+Be precise — identify the specific component and function where divergence occurs."""
 
 
 async def analyze_trace(

@@ -327,16 +327,22 @@ def validate_all_contracts(
                     cid, dep_id,
                 )
 
+    # Cross-component interface compatibility (warnings, not blocking)
+    interface_warnings = validate_cross_component_interfaces(contracts)
+    for w in interface_warnings:
+        logger.warning("Interface: %s", w)
+
     if all_errors:
         return GateResult(
             passed=False,
             reason=f"Contract validation failed with {len(all_errors)} error(s)",
-            details=all_errors,
+            details=all_errors + [f"[warning] {w}" for w in interface_warnings],
         )
 
     return GateResult(
         passed=True,
         reason="All contracts validated successfully",
+        details=[f"[warning] {w}" for w in interface_warnings] if interface_warnings else [],
     )
 
 
@@ -494,3 +500,276 @@ def _node_path(tree: DecompositionTree, node_id: str) -> str:
         parts.append(node.name or current)
         current = node.parent_id
     return " > ".join(reversed(parts))
+
+
+def validate_cross_component_interfaces(
+    contracts: dict[str, ComponentContract],
+) -> list[str]:
+    """Check interface compatibility between dependent components.
+
+    FINDINGS.md showed that contracts generated in isolation had interface
+    mismatches (e.g., template_engine expecting {{title}} but templates
+    using {{site_title}}). This validation catches those mismatches.
+
+    Checks:
+    1. When component A depends on B, A's input types referencing B's
+       output types must use matching field names and types
+    2. Shared type names across components must have compatible definitions
+    3. Function output types from one component used as input types in
+       another must be structurally compatible
+
+    Returns list of warning strings (not errors — interface mismatches
+    are warnings that inform the user, not hard gates).
+    """
+    warnings: list[str] = []
+
+    # Build index of all type definitions across components
+    type_defs: dict[str, list[tuple[str, "ComponentContract"]]] = {}
+    for cid, contract in contracts.items():
+        for t in contract.types:
+            if t.name not in type_defs:
+                type_defs[t.name] = []
+            type_defs[t.name].append((cid, contract))
+
+    # Check 1: Shared type names must have compatible definitions
+    for type_name, sources in type_defs.items():
+        if len(sources) <= 1:
+            continue
+        # Compare field sets between all definitions of the same type
+        field_sets: dict[str, set[str]] = {}
+        for cid, contract in sources:
+            t = next(t for t in contract.types if t.name == type_name)
+            if t.fields:
+                field_sets[cid] = {f.name for f in t.fields}
+
+        if len(field_sets) >= 2:
+            cids = list(field_sets.keys())
+            for i in range(len(cids)):
+                for j in range(i + 1, len(cids)):
+                    a_fields = field_sets[cids[i]]
+                    b_fields = field_sets[cids[j]]
+                    if a_fields != b_fields:
+                        only_a = a_fields - b_fields
+                        only_b = b_fields - a_fields
+                        detail_parts = []
+                        if only_a:
+                            detail_parts.append(
+                                f"only in {cids[i]}: {', '.join(sorted(only_a))}"
+                            )
+                        if only_b:
+                            detail_parts.append(
+                                f"only in {cids[j]}: {', '.join(sorted(only_b))}"
+                            )
+                        warnings.append(
+                            f"Type '{type_name}' has different fields in "
+                            f"'{cids[i]}' vs '{cids[j]}': {'; '.join(detail_parts)}"
+                        )
+
+    # Check 2: Dependency output/input type compatibility
+    for cid, contract in contracts.items():
+        for dep_id in contract.dependencies:
+            dep = contracts.get(dep_id)
+            if not dep:
+                continue
+            # Check that types referenced by dep's function outputs are
+            # defined consistently if also referenced by this contract
+            dep_output_types = {f.output_type for f in dep.functions}
+            my_input_types = set()
+            for func in contract.functions:
+                for inp in func.inputs:
+                    my_input_types.add(inp.type_ref)
+
+            shared_refs = dep_output_types & my_input_types
+            for ref in shared_refs:
+                # If the type is defined in both contracts, check compatibility
+                dep_type = next((t for t in dep.types if t.name == ref), None)
+                my_type = next((t for t in contract.types if t.name == ref), None)
+                if dep_type and my_type and dep_type.fields and my_type.fields:
+                    dep_fields = {f.name for f in dep_type.fields}
+                    my_fields = {f.name for f in my_type.fields}
+                    if dep_fields != my_fields:
+                        warnings.append(
+                            f"Interface mismatch: '{dep_id}' outputs type "
+                            f"'{ref}' with fields {sorted(dep_fields)} but "
+                            f"'{cid}' expects fields {sorted(my_fields)}"
+                        )
+
+    return warnings
+
+
+def validate_north_star(
+    task_text: str,
+    tree: DecompositionTree,
+    contracts: dict[str, ComponentContract],
+) -> list[str]:
+    """Validate that decomposed components can plausibly fulfill the original task.
+
+    This is the north-star validation: do the contracts, when composed, actually
+    cover what the task asked for? The SEO agent case showed that 9 components
+    can pass 796 tests while the assembled service can't actually do the job.
+
+    Checks (mechanical, no LLM):
+    1. Task requirements mentioned in task.md should map to at least one
+       contract function (keyword overlap heuristic)
+    2. The root component should have functions covering the top-level verbs
+    3. Leaf components without functions are dead weight
+
+    Returns list of warning strings (advisory, not blocking).
+    """
+    warnings: list[str] = []
+    if not task_text or not contracts:
+        return warnings
+
+    task_lower = task_text.lower()
+    task_words = set(task_lower.split())
+
+    # Common task verbs that should map to contract functions
+    action_verbs = {
+        "parse", "validate", "generate", "create", "build", "search",
+        "find", "filter", "sort", "transform", "convert", "calculate",
+        "compute", "render", "format", "send", "receive", "store",
+        "save", "load", "read", "write", "delete", "update", "check",
+        "verify", "authenticate", "authorize", "encrypt", "decrypt",
+        "compress", "serialize", "deserialize", "fetch",
+        "audit", "analyze", "report", "export", "import", "process",
+        "handle", "route", "dispatch", "schedule", "execute", "run",
+        "monitor", "notify", "publish", "subscribe", "index",
+        "crawl", "scrape", "extract", "merge", "split", "join",
+        "connect", "register", "login",
+    }
+    task_verbs = task_words & action_verbs
+
+    # Collect all contract function names and descriptions
+    all_functions: set[str] = set()
+    all_func_descriptions: list[str] = []
+    for contract in contracts.values():
+        for func in contract.functions:
+            all_functions.add(func.name.lower())
+            all_func_descriptions.append(func.description.lower())
+
+    # Check 1: Task verbs should appear in at least one function
+    uncovered_verbs: list[str] = []
+    for verb in sorted(task_verbs):
+        found = any(verb in fn for fn in all_functions) or any(
+            verb in fd for fd in all_func_descriptions
+        )
+        if not found:
+            uncovered_verbs.append(verb)
+
+    if uncovered_verbs and len(uncovered_verbs) > len(task_verbs) * 0.5:
+        warnings.append(
+            f"Task mentions actions [{', '.join(uncovered_verbs)}] but no "
+            f"contract function name or description covers them. The "
+            f"composed system may not fulfill the stated goal."
+        )
+
+    # Check 2: Root component should have functions
+    root_contract = contracts.get(tree.root_id)
+    if root_contract and not root_contract.functions:
+        warnings.append(
+            f"Root component '{tree.root_id}' has no functions. "
+            f"The top-level interface is empty."
+        )
+
+    # Check 3: Leaf components without functions
+    for node_id, node in tree.nodes.items():
+        if not node.children:
+            contract = contracts.get(node_id)
+            if contract and not contract.functions:
+                warnings.append(
+                    f"Leaf component '{node_id}' has no functions. "
+                    f"It contributes nothing to the composed system."
+                )
+
+    return warnings
+
+
+def validate_decomposition_coverage(
+    task_text: str,
+    tree: DecompositionTree,
+) -> list[str]:
+    """Early validation: check decomposition structure before contract generation.
+
+    Runs immediately after decomposition, before spending LLM calls on
+    contract/test generation. Catches structural issues early.
+
+    Checks:
+    1. Root has children (unless unary)
+    2. No orphan nodes
+    3. Component descriptions aren't empty
+    4. Component descriptions aren't duplicates
+    5. Task keywords appear in component descriptions
+
+    Returns list of warning strings.
+    """
+    warnings: list[str] = []
+    if not tree or not tree.nodes:
+        warnings.append("Decomposition produced no components.")
+        return warnings
+
+    root = tree.nodes.get(tree.root_id)
+    if not root:
+        warnings.append(f"Root node '{tree.root_id}' not found in tree.")
+        return warnings
+
+    # Check 1: Root has children (unless unary mode)
+    if len(tree.nodes) > 1 and not root.children:
+        warnings.append(
+            "Root component has no children despite multiple nodes. "
+            "Decomposition may be malformed."
+        )
+
+    # Check 2: Orphan nodes
+    for nid, node in tree.nodes.items():
+        if nid != tree.root_id and not node.parent_id:
+            warnings.append(f"Component '{nid}' has no parent — orphaned node.")
+
+    # Check 3: Empty descriptions
+    for nid, node in tree.nodes.items():
+        if not node.description or not node.description.strip():
+            warnings.append(
+                f"Component '{nid}' has empty description. "
+                f"Contract generation will lack context."
+            )
+
+    # Check 4: Duplicate descriptions
+    descriptions: dict[str, str] = {}
+    for nid, node in tree.nodes.items():
+        desc = (node.description or "").strip().lower()
+        if desc and len(desc) > 20:
+            if desc in descriptions:
+                warnings.append(
+                    f"Components '{descriptions[desc]}' and '{nid}' have "
+                    f"identical descriptions — likely a decomposition error."
+                )
+            else:
+                descriptions[desc] = nid
+
+    # Check 5: Task keyword coverage
+    if task_text:
+        task_lower = task_text.lower()
+        task_significant = {
+            w for w in task_lower.split()
+            if len(w) > 4 and w.isalpha()
+        }
+        stop_words = {
+            "should", "would", "could", "about", "these", "their",
+            "which", "where", "there", "other", "every", "after",
+            "before", "being", "between", "through", "under",
+            "above", "below", "while", "during", "until", "since",
+        }
+        task_significant -= stop_words
+
+        if task_significant:
+            all_desc_text = " ".join(
+                (n.description or "").lower() for n in tree.nodes.values()
+            )
+            missing = {w for w in task_significant if w not in all_desc_text}
+            coverage = 1.0 - (len(missing) / len(task_significant))
+            if coverage < 0.3:
+                warnings.append(
+                    f"Only {coverage:.0%} of task keywords appear in component "
+                    f"descriptions. The decomposition may not cover the full task."
+                )
+
+    return warnings

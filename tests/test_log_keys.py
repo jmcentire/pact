@@ -107,7 +107,7 @@ class TestHandoffBriefWithLogKey:
             contracts={"pricing": contract},
             log_key_preamble=preamble,
         )
-        assert "LOG KEY PREAMBLE" in brief
+        assert "logging preamble" in brief.lower()
         assert "PACT:abc123:pricing" in brief
 
     def test_handoff_without_preamble(self):
@@ -117,7 +117,7 @@ class TestHandoffBriefWithLogKey:
             contract=contract,
             contracts={"pricing": contract},
         )
-        assert "LOG KEY PREAMBLE" not in brief
+        assert "logging preamble" not in brief.lower()
 
     def test_code_author_includes_log_key(self):
         """Verify the code author prompt includes log key instructions."""

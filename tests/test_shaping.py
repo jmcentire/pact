@@ -536,11 +536,11 @@ class TestHandoffBriefShaping:
             contracts={"test": contract},
             pitch_context="Appetite: small\nNo-Gos:\n  - No LDAP",
         )
-        assert "SHAPING CONTEXT" in brief
+        assert "shaping context" in brief.lower() or "Shaping context" in brief
         assert "No LDAP" in brief
 
     def test_handoff_brief_without_pitch_context(self):
-        """render_handoff_brief omits SHAPING CONTEXT when empty."""
+        """render_handoff_brief omits shaping context when empty."""
         from pact.interface_stub import render_handoff_brief
         from pact.schemas import ComponentContract
 
@@ -554,7 +554,7 @@ class TestHandoffBriefShaping:
             contract=contract,
             contracts={"test": contract},
         )
-        assert "SHAPING CONTEXT" not in brief
+        assert "shaping context" not in brief.lower()
 
 
 # ── Lifecycle Tests ──────────────────────────────────────────────────

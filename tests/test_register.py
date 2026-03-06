@@ -222,11 +222,11 @@ class TestRegisterInHandoffBrief:
             strategic_context="Project: Test. This component parses input.",
         )
 
-        # Find positions
-        reset_pos = brief.find("no prior conversation context")
+        # Find positions — verify reset → register → strategic → interface ordering
+        reset_pos = brief.find("prior conversation")
         register_pos = brief.find("Processing register:")
         strategic_pos = brief.find("Project: Test")
-        interface_pos = brief.find("YOUR INTERFACE CONTRACT")
+        interface_pos = brief.find("interface contract")
 
         # Order: reset → register → strategic → interface
         assert reset_pos < register_pos < strategic_pos < interface_pos

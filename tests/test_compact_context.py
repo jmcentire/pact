@@ -139,7 +139,7 @@ class TestHandoffBriefLazyTestCode:
             test_suite=test_suite,
             include_test_code=False,
         )
-        assert "2 cases" in brief
+        assert "2 tests" in brief or "2 cases" in brief
 
     def test_without_test_code_smaller(self):
         contract = _make_contract()

@@ -22,102 +22,36 @@ from pact.schemas import (
 
 logger = logging.getLogger(__name__)
 
-CODE_SYSTEM = """You are a code author implementing a component against its contract.
-The contract defines WHAT to build. The tests define HOW to verify.
-Your job is to produce an implementation that passes all contract tests.
+CODE_SYSTEM = """You are starting fresh on this implementation with no prior context.
 
-Key principles:
-- Implement exactly what the contract specifies, nothing more
-- CRITICAL: All types, functions, and error classes must use the EXACT names
-  from the contract stub. Check the REQUIRED EXPORTS list at the bottom of the
-  stub — every name listed there MUST be importable from your module. Tests
-  import these names directly and will fail at collection if any are missing
-  or renamed.
-- All functions must match their contract signatures exactly
-- Error/exception classes referenced in error_cases MUST use the exact class
-  names shown (e.g., ConfigFileNotFoundError, not FileNotFoundError)
-- For enum types: member names must EXACTLY match the variant names from the
-  contract/stub. If the stub shows `active = "active"`, use lowercase `active`
-  as the member name — do NOT convert to UPPERCASE convention
-- Do not add features beyond the contract
-- If the contract defines standalone functions (not methods on a class), implement
-  them as MODULE-LEVEL FUNCTIONS, not as methods of a class. Tests import and call
-  them directly by name (e.g., `from src.module import compute; compute(...)`)
-- Write clean, readable code
-- ALL log statements must include the PACT log key for production traceability
-- Use the provided log key preamble at the top of every module
-- IMPORTANT: If using Pydantic, use Pydantic v2 API exclusively:
-  - Use `model_validator` / `field_validator` decorators, NOT `@validator` / `@root_validator`
-  - Use `model_config = ConfigDict(...)`, NOT inner `class Config:`
-  - Use `Field(pattern=...)`, NOT `Field(regex=...)`
-  - Import from `pydantic` directly, NOT from `pydantic.main`, `pydantic.error_wrappers`, etc.
-  - Use `model_dump()` / `model_validate()`, NOT `.dict()` / `.parse_obj()`
-  - field_validator does NOT accept `always=True` — remove it
-  - Do NOT import `ModelMetaclass`, `flatten_errors`, or other v1 internals"""
+You are implementing a component against its contract. The contract defines
+WHAT to build, the tests define HOW to verify. Produce an implementation
+that passes all contract tests.
 
-CODE_SYSTEM_TS = """You are a code author implementing a component against its contract.
-The contract defines WHAT to build. The tests define HOW to verify.
-Your job is to produce an implementation that passes all contract tests.
+All type, function, and error class names must match the contract stub exactly.
+Check the REQUIRED EXPORTS list at the bottom of the stub — tests import these
+names directly. Standalone functions are module-level, not class methods.
+Enum member names match variant names exactly (no UPPERCASE conversion).
+All log statements include the PACT log key. If using Pydantic, use v2 API
+(model_validator, field_validator, model_dump, ConfigDict)."""
 
-Key principles:
-- Implement exactly what the contract specifies, nothing more
-- CRITICAL: All types, functions, and error classes must use the EXACT names
-  from the contract stub. Check the REQUIRED EXPORTS list at the bottom of the
-  stub — every name listed there MUST be a named export from your module. Tests
-  import these names directly and will fail at collection if any are missing
-  or renamed.
-- All functions must match their contract signatures exactly
-- Error/exception classes referenced in error_cases MUST use the exact class
-  names shown (e.g., ConfigFileNotFoundError, not FileNotFoundError).
-  Implement them as typed Error subclasses:
-    export class ConfigFileNotFoundError extends Error { ... }
-- For enum types: use `export type X = "a" | "b"` (union literal) or
-  `export enum X { ... }` — member names must EXACTLY match the variant names
-  from the contract/stub
-- Do not add features beyond the contract
-- If the contract defines standalone functions (not methods on a class), implement
-  them as MODULE-LEVEL named exports. Tests import and call them directly
-  (e.g., `import { compute } from './module';`)
-- Write clean, readable TypeScript in strict mode
-- ALL log statements must include the PACT log key for production traceability
-- Use the provided log key preamble at the top of every module
-- Use TypeScript strict mode (`strict: true` semantics)
-- Use named exports — NO default exports
-- Use `unknown` instead of `any`; narrow types with type guards
-- Use ESM imports with file extensions where needed
-- If Zod is specified in the SOPs, use Zod for runtime validation
-- For error handling, throw typed Error subclasses (not raw Error)"""
+CODE_SYSTEM_TS = """You are starting fresh on this implementation with no prior context.
 
-CODE_SYSTEM_JS = """You are a code author implementing a component against its contract.
-The contract defines WHAT to build. The tests define HOW to verify.
-Your job is to produce an implementation that passes all contract tests.
+You are implementing a TypeScript component against its contract. All type,
+function, and error class names must match the contract stub exactly. Check
+the REQUIRED EXPORTS list — tests import these names directly. Standalone
+functions are module-level named exports. Use strict mode, unknown instead
+of any. Error classes extend Error. Named exports only, no defaults.
+All log statements include the PACT log key."""
 
-Key principles:
-- Implement exactly what the contract specifies, nothing more
-- CRITICAL: All types, functions, and error classes must use the EXACT names
-  from the contract stub. Check the REQUIRED EXPORTS list at the bottom of the
-  stub — every name listed there MUST be a named export from your module. Tests
-  import these names directly and will fail at collection if any are missing
-  or renamed.
-- All functions must match their contract signatures exactly
-- Error/exception classes referenced in error_cases MUST use the exact class
-  names shown (e.g., ConfigFileNotFoundError, not FileNotFoundError).
-  Implement them as Error subclasses:
-    export class ConfigFileNotFoundError extends Error { ... }
-- For enum types: use a plain object with string values or string constants
-  — names must EXACTLY match the variant names from the contract/stub
-- Do not add features beyond the contract
-- If the contract defines standalone functions (not methods on a class), implement
-  them as MODULE-LEVEL named exports. Tests import and call them directly
-  (e.g., `import { compute } from './module.js';`)
-- Write clean, readable JavaScript (ES6+ modules)
-- ALL log statements must include the PACT log key for production traceability
-- Use the provided log key preamble at the top of every module
-- Use named exports — NO default exports
-- Use ESM imports with .js file extensions
-- Use JSDoc comments for documentation (not TypeScript annotations)
-- Do NOT use TypeScript syntax — no type annotations, no interfaces, no generics
-- For error handling, throw Error subclasses (not raw Error)"""
+CODE_SYSTEM_JS = """You are starting fresh on this implementation with no prior context.
+
+You are implementing a JavaScript component against its contract. All
+function and error class names must match the contract stub exactly. Check
+the REQUIRED EXPORTS list — tests import these names directly. Standalone
+functions are module-level named exports. Use ESM imports with .js extensions.
+Error classes extend Error. Named exports only, no defaults. No TypeScript
+syntax. JSDoc for documentation. All log statements include the PACT log key."""
 
 
 class ImplementationResult:

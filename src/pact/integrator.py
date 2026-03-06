@@ -26,46 +26,28 @@ from pact.test_harness import run_contract_tests
 
 logger = logging.getLogger(__name__)
 
-GLUE_SYSTEM = """You are an integration engineer wiring child components together.
-Given a parent contract and its children's contracts, produce glue code
-that composes child implementations into the parent's interface.
+GLUE_SYSTEM = """You are starting fresh on this integration task with no prior context.
 
-Key principles:
-- Glue code handles data transformation between components
-- Glue code handles routing (which child to call when)
-- Glue code does NOT add business logic
-- All parent functions must be implemented by delegating to children
-- Error propagation must match the parent contract"""
+You are an integration engineer wiring child components into the parent's
+interface. Glue code handles data transformation and routing between
+components but adds no business logic. All parent functions delegate
+to children. Error propagation must match the parent contract."""
 
-GLUE_SYSTEM_TS = """You are an integration engineer wiring child components together.
-Given a parent contract and its children's contracts, produce TypeScript glue code
-that composes child implementations into the parent's interface.
+GLUE_SYSTEM_TS = """You are starting fresh on this integration task with no prior context.
 
-Key principles:
-- Import children using ESM imports (e.g., `import { fn } from './child_module';`)
-- Export parent interface implementation using named exports
-- Glue code handles data transformation between components
-- Glue code handles routing (which child to call when)
-- Glue code does NOT add business logic
-- All parent functions must be implemented by delegating to children
-- Error propagation must match the parent contract
-- Use TypeScript strict mode; use `unknown` instead of `any`
-- Use TypeScript module composition patterns (re-export, type narrowing)"""
+You are an integration engineer producing TypeScript glue code that
+composes child implementations into the parent's interface. Import
+children using ESM imports, export using named exports. Glue code
+handles data transformation and routing — no business logic. Use
+strict mode, unknown instead of any."""
 
-GLUE_SYSTEM_JS = """You are an integration engineer wiring child components together.
-Given a parent contract and its children's contracts, produce JavaScript glue code
-that composes child implementations into the parent's interface.
+GLUE_SYSTEM_JS = """You are starting fresh on this integration task with no prior context.
 
-Key principles:
-- Import children using ESM imports with .js extensions (e.g., `import { fn } from './child_module.js';`)
-- Export parent interface implementation using named exports
-- Glue code handles data transformation between components
-- Glue code handles routing (which child to call when)
-- Glue code does NOT add business logic
-- All parent functions must be implemented by delegating to children
-- Error propagation must match the parent contract
-- Do NOT use TypeScript syntax — plain JavaScript ES6+ modules only
-- Use JSDoc comments for documentation"""
+You are an integration engineer producing JavaScript glue code that
+composes child implementations into the parent's interface. Import
+children using ESM imports with .js extensions, export using named
+exports. Glue code handles data transformation and routing — no
+business logic. Plain JavaScript ES6+ modules only."""
 
 
 async def integrate_component(

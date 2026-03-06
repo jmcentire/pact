@@ -1077,7 +1077,24 @@ class Scheduler:
             )
             return state
 
-        # 6. Run Goodhart (hidden) acceptance tests
+        # 6. North-star validation: do contracts fulfill the original task?
+        try:
+            task_text = self.project.load_task()
+            if task_text:
+                from pact.contracts import validate_north_star
+                ns_warnings = validate_north_star(task_text, tree, contracts)
+                for w in ns_warnings:
+                    logger.warning("North-star: %s", w)
+                    warnings.append(f"[north-star] {w}")
+                if ns_warnings:
+                    self.project.append_audit(
+                        "north_star_validation",
+                        f"{len(ns_warnings)} warnings",
+                    )
+        except Exception as e:
+            logger.debug("North-star validation skipped: %s", e)
+
+        # 7. Run Goodhart (hidden) acceptance tests
         goodhart_failures = await self._run_goodhart_tests(tree, language)
 
         if goodhart_failures:
@@ -1682,8 +1699,17 @@ class Scheduler:
                     elif action == "update_contract":
                         state.phase = "decompose"
                     elif action == "redesign":
-                        state.fail(f"Design bug in {node.component_id}: requires human intervention")
-                        return state
+                        # Andon cord: route design bugs back to decompose
+                        # instead of failing. The phase_cycles counter
+                        # prevents infinite loops (max_phase_cycles limit).
+                        state.phase = "decompose"
+                        logger.warning(
+                            "Design bug in %s — andon cord: routing back to "
+                            "decompose for redesign (cycle %d/%d)",
+                            node.component_id,
+                            state.phase_cycles,
+                            self.global_config.max_phase_cycles,
+                        )
 
             project_tree = self.project.load_tree()
             if project_tree:
