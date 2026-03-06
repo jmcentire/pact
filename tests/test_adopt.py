@@ -13,6 +13,7 @@ from pact.adopt import (
     AdoptionResult,
     adopt_codebase,
     build_decomposition_tree,
+    generate_smoke_tests,
     link_existing_implementations,
 )
 from pact.codebase_analyzer import analyze_codebase
@@ -130,6 +131,85 @@ class TestBuildDecompositionTree:
         assert "multiply" in desc
 
 
+# ── Smoke Test Generation ─────────────────────────────────────────
+
+
+class TestGenerateSmokeTests:
+    def test_generates_import_test(self):
+        analysis = CodebaseAnalysis(
+            root_path="/tmp/test",
+            source_files=[
+                SourceFile(path="main.py", functions=[
+                    ExtractedFunction(name="hello"),
+                ]),
+            ],
+        )
+        suites = generate_smoke_tests(analysis)
+        assert "main" in suites
+        code = suites["main"]
+        assert "import importlib" in code
+        assert 'importlib.import_module("main")' in code
+
+    def test_generates_callable_checks(self):
+        analysis = CodebaseAnalysis(
+            root_path="/tmp/test",
+            source_files=[
+                SourceFile(path="math_utils.py", functions=[
+                    ExtractedFunction(name="add"),
+                    ExtractedFunction(name="multiply"),
+                ]),
+            ],
+        )
+        suites = generate_smoke_tests(analysis)
+        code = suites["math_utils"]
+        assert "test_add_is_callable" in code
+        assert "test_multiply_is_callable" in code
+        assert 'getattr(mod, "add"' in code
+
+    def test_handles_nested_modules(self):
+        analysis = CodebaseAnalysis(
+            root_path="/tmp/test",
+            source_files=[
+                SourceFile(path="src/auth/login.py", functions=[
+                    ExtractedFunction(name="authenticate"),
+                ]),
+            ],
+        )
+        suites = generate_smoke_tests(analysis)
+        assert "src_auth_login" in suites
+        code = suites["src_auth_login"]
+        assert 'importlib.import_module("src.auth.login")' in code
+
+    def test_skips_empty_files(self):
+        analysis = CodebaseAnalysis(
+            root_path="/tmp/test",
+            source_files=[
+                SourceFile(path="empty.py", functions=[]),
+                SourceFile(path="real.py", functions=[ExtractedFunction(name="work")]),
+            ],
+        )
+        suites = generate_smoke_tests(analysis)
+        assert "empty" not in suites
+        assert "real" in suites
+
+    def test_empty_codebase(self):
+        analysis = CodebaseAnalysis(root_path="/tmp/test", source_files=[])
+        suites = generate_smoke_tests(analysis)
+        assert suites == {}
+
+    def test_multiple_files(self):
+        analysis = CodebaseAnalysis(
+            root_path="/tmp/test",
+            source_files=[
+                SourceFile(path="a.py", functions=[ExtractedFunction(name="f1")]),
+                SourceFile(path="b.py", functions=[ExtractedFunction(name="f2")]),
+                SourceFile(path="c.py", functions=[ExtractedFunction(name="f3")]),
+            ],
+        )
+        suites = generate_smoke_tests(analysis)
+        assert len(suites) == 3
+
+
 # ── Implementation Linking ─────────────────────────────────────────
 
 
@@ -235,7 +315,56 @@ class TestAdoptDryRun:
         assert (tmp_path / ".pact" / "test-gen" / "security_audit.md").exists()
 
     @pytest.mark.asyncio
+    async def test_dry_run_generates_smoke_tests(self, tmp_path):
+        (tmp_path / "math_utils.py").write_text(textwrap.dedent("""\
+            def add(a, b):
+                return a + b
+
+            def multiply(a, b):
+                return a * b
+        """))
+
+        result = await adopt_codebase(tmp_path, dry_run=True)
+        assert result.smoke_tests_generated >= 1
+
+        smoke_dir = tmp_path / "tests" / "smoke"
+        assert smoke_dir.exists()
+        test_files = list(smoke_dir.glob("test_*.py"))
+        assert len(test_files) >= 1
+
+        # Verify the generated test is valid Python
+        code = test_files[0].read_text()
+        assert "test_add_is_callable" in code
+        assert "test_multiply_is_callable" in code
+
+    @pytest.mark.asyncio
+    async def test_smoke_tests_are_runnable(self, tmp_path):
+        """Generated smoke tests should actually pass when run against the source."""
+        (tmp_path / "greet.py").write_text(textwrap.dedent("""\
+            def hello(name):
+                return f"Hello {name}"
+        """))
+
+        result = await adopt_codebase(tmp_path, dry_run=True)
+        assert result.smoke_tests_generated >= 1
+
+        smoke_dir = tmp_path / "tests" / "smoke"
+        test_file = smoke_dir / "test_greet.py"
+        assert test_file.exists()
+
+        # Run the generated tests with the source on PYTHONPATH
+        import subprocess
+        proc = subprocess.run(
+            ["python3", "-m", "pytest", str(test_file), "-v"],
+            capture_output=True, text=True,
+            cwd=str(tmp_path),
+            env={**__import__("os").environ, "PYTHONPATH": str(tmp_path)},
+        )
+        assert proc.returncode == 0, f"Smoke tests failed:\n{proc.stdout}\n{proc.stderr}"
+
+    @pytest.mark.asyncio
     async def test_empty_project(self, tmp_path):
         result = await adopt_codebase(tmp_path, dry_run=True)
         assert result.components == 0
         assert result.total_functions == 0
+        assert result.smoke_tests_generated == 0

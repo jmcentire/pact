@@ -599,6 +599,11 @@
         <h3>Claude Code Slash Command</h3>
         <p>Ships with <code>/project:craft-task</code> &mdash; an interactive prompt that interviews you and generates research-backed task.md, sops.md, and pact.yaml optimized for Pact's pipeline.</p>
       </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x1f9ea;</span>
+        <h3>Smoke Test Generation</h3>
+        <p>Mechanical smoke tests from AST analysis &mdash; no LLM required. <code>pact adopt</code> extracts every public module-level function signature and generates import + callable checks in <code>tests/smoke/</code>. Filters out methods, private functions, and nested functions.</p>
+      </div>
     </div>
   </div>
 </section>
@@ -680,7 +685,7 @@
         <div class="step"><span class="arrow">&#9656;</span> <span>Fixer agent spawned with contract context</span></div>
         <div class="step"><span class="arrow">&#9656;</span> <span>Reproducer test added to contract</span></div>
         <div class="step"><span class="arrow">&#9656;</span> <span>Implementation rebuilt from scratch</span></div>
-        <div class="step"><span class="arrow">&#9656;</span> <span><span class="label">1,630 tests pass</span> <span class="dim">// verified</span></span></div>
+        <div class="step"><span class="arrow">&#9656;</span> <span><span class="label">1,886 tests pass</span> <span class="dim">// verified</span></span></div>
         <div class="step"><span class="arrow">&#9656;</span> <span>Contract got stricter. Bug can't recur.</span></div>
       </div>
     </div>
