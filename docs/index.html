@@ -604,6 +604,11 @@
         <h3>Smoke Test Generation</h3>
         <p>Mechanical smoke tests from AST analysis &mdash; no LLM required. <code>pact adopt</code> extracts every public module-level function signature and generates import + callable checks in <code>tests/smoke/</code>. Filters out methods, private functions, and nested functions.</p>
       </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x1f4c2;</span>
+        <h3>Visible Deliverables</h3>
+        <p>Contracts, source code, and tests live in your project tree &mdash; not buried in a dotfile. When a teammate clones the repo, they see <code>contracts/</code>, <code>src/</code>, and <code>tests/</code> immediately. Only internal pipeline state stays in <code>.pact/</code>.</p>
+      </div>
     </div>
   </div>
 </section>

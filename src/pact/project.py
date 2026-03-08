@@ -1,12 +1,21 @@
 """Project directory lifecycle — init, load, save, resume.
 
-The project directory is the unit of work:
+The project directory is the unit of work. Deliverables are visible in the
+project tree; internal state stays in .pact/:
+
   proj/
   ├── task.md
   ├── sops.md
   ├── pact.yaml
   ├── design.md
-  └── .pact/
+  ├── contracts/<component_id>/          # Visible: interface specs
+  │   ├── interface.json
+  │   └── interface.py (or .ts)
+  ├── src/<component_id>/                # Visible: implementations + glue
+  │   └── <component_id>.py (or .ts)
+  ├── tests/<component_id>/              # Visible: contract tests
+  │   └── contract_test.py (or .test.ts)
+  └── .pact/                             # Internal: pipeline state
       ├── state.json
       ├── audit.jsonl
       ├── budget.json
@@ -14,22 +23,17 @@ The project directory is the unit of work:
       │   ├── tree.json
       │   ├── decisions.json
       │   └── interview.json
-      ├── contracts/<component_id>/
-      │   ├── interface.json
-      │   ├── interface.py (or interface.ts for TypeScript)
+      ├── contracts/<component_id>/      # Internal: metadata + hidden tests
       │   ├── research.json
       │   ├── tests/contract_test_suite.json
-      │   ├── goodhart/goodhart_test.py (hidden acceptance criteria)
+      │   ├── goodhart/goodhart_test.py
       │   └── history/<timestamp>.json
-      ├── implementations/<component_id>/
-      │   ├── src/<component_id>.py (or .ts) + contract_test.py (or .test.ts)
+      ├── implementations/<component_id>/# Internal: research, plans, metadata
       │   ├── research.json
       │   ├── plan.json
       │   ├── metadata.json
       │   └── test_results.json
       ├── compositions/<parent_id>/
-      │   ├── glue.py
-      │   ├── composition_test.py
       │   └── test_results.json
       └── learnings/
           └── learnings.jsonl
@@ -68,6 +72,13 @@ class ProjectManager:
 
     def __init__(self, project_dir: str | Path) -> None:
         self.project_dir = Path(project_dir).resolve()
+
+        # Visible deliverables — in project tree
+        self._visible_contracts_dir = self.project_dir / "contracts"
+        self._visible_src_dir = self.project_dir / "src"
+        self._visible_tests_dir = self.project_dir / "tests"
+
+        # Internal state — in .pact/
         self._pact_dir = self.project_dir / PACT_DIR
         self._decomp_dir = self._pact_dir / "decomposition"
         self._contracts_dir = self._pact_dir / "contracts"
@@ -138,6 +149,13 @@ class ProjectManager:
     def init(self, budget: float = 10.00) -> None:
         """Scaffold a new project directory."""
         self.project_dir.mkdir(parents=True, exist_ok=True)
+
+        # Visible deliverable directories
+        self._visible_contracts_dir.mkdir(exist_ok=True)
+        self._visible_src_dir.mkdir(exist_ok=True)
+        self._visible_tests_dir.mkdir(exist_ok=True)
+
+        # Internal state directories
         self._pact_dir.mkdir(exist_ok=True)
         self._decomp_dir.mkdir(exist_ok=True)
         self._contracts_dir.mkdir(exist_ok=True)
@@ -225,8 +243,13 @@ class ProjectManager:
             created_at=datetime.now().isoformat(),
         )
 
-    def clear_state(self) -> None:
-        """Remove all run state. Preserves task.md, sops.md, config."""
+    def clear_state(self, include_deliverables: bool = False) -> None:
+        """Remove all run state. Preserves task.md, sops.md, config.
+
+        Args:
+            include_deliverables: If True, also remove visible deliverables
+                (contracts/, src/, tests/). Default False.
+        """
         if self._pact_dir.exists():
             shutil.rmtree(self._pact_dir)
         self._pact_dir.mkdir(exist_ok=True)
@@ -235,6 +258,12 @@ class ProjectManager:
         self._impl_dir.mkdir(exist_ok=True)
         self._comp_dir.mkdir(exist_ok=True)
         self._learnings_dir.mkdir(exist_ok=True)
+
+        if include_deliverables:
+            for d in (self._visible_contracts_dir, self._visible_src_dir, self._visible_tests_dir):
+                if d.exists():
+                    shutil.rmtree(d)
+                d.mkdir(exist_ok=True)
 
     # ── Audit ──────────────────────────────────────────────────────
 
@@ -287,37 +316,45 @@ class ProjectManager:
     # ── Contracts ──────────────────────────────────────────────────
 
     def contract_dir(self, component_id: str) -> Path:
+        """Visible contract directory: contracts/<component_id>/."""
+        d = self._visible_contracts_dir / component_id
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _internal_contract_dir(self, component_id: str) -> Path:
+        """Internal contract metadata: .pact/contracts/<component_id>/."""
         d = self._contracts_dir / component_id
         d.mkdir(parents=True, exist_ok=True)
         return d
 
     def save_contract(self, contract: ComponentContract) -> Path:
+        # Visible: interface.json + interface stub
         d = self.contract_dir(contract.component_id)
         path = d / "interface.json"
         path.write_text(contract.model_dump_json(indent=2))
-        # Save interface stub (the agent's mental model, code-shaped)
         from pact.interface_stub import render_stub
         stub_ext = ".ts" if self.language == "typescript" else ".py"
         stub_path = d / f"interface{stub_ext}"
         stub_path.write_text(render_stub(contract))
-        # Save to history
-        history = d / "history"
+        # Internal: history
+        internal = self._internal_contract_dir(contract.component_id)
+        history = internal / "history"
         history.mkdir(exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         (history / f"{ts}.json").write_text(contract.model_dump_json(indent=2))
         return path
 
     def load_contract(self, component_id: str) -> ComponentContract | None:
-        path = self._contracts_dir / component_id / "interface.json"
+        path = self._visible_contracts_dir / component_id / "interface.json"
         if not path.exists():
             return None
         return ComponentContract.model_validate_json(path.read_text())
 
     def load_all_contracts(self) -> dict[str, ComponentContract]:
         contracts = {}
-        if not self._contracts_dir.exists():
+        if not self._visible_contracts_dir.exists():
             return contracts
-        for d in self._contracts_dir.iterdir():
+        for d in self._visible_contracts_dir.iterdir():
             if d.is_dir():
                 c = self.load_contract(d.name)
                 if c:
@@ -327,15 +364,19 @@ class ProjectManager:
     # ── Test Suites ────────────────────────────────────────────────
 
     def save_test_suite(self, suite: ContractTestSuite) -> Path:
-        d = self.contract_dir(suite.component_id) / "tests"
-        d.mkdir(exist_ok=True)
-        json_path = d / "contract_test_suite.json"
+        # Internal: JSON metadata
+        internal = self._internal_contract_dir(suite.component_id)
+        tests_dir = internal / "tests"
+        tests_dir.mkdir(exist_ok=True)
+        json_path = tests_dir / "contract_test_suite.json"
         json_path.write_text(suite.model_dump_json(indent=2))
+        # Visible: test code
         if suite.generated_code:
             test_ext = ".test.ts" if self.language == "typescript" else ".py"
             test_filename = f"contract_test{test_ext}"
-            impl_src = self.impl_src_dir(suite.component_id)
-            code_path = impl_src / test_filename
+            visible_test_dir = self._visible_tests_dir / suite.component_id
+            visible_test_dir.mkdir(parents=True, exist_ok=True)
+            code_path = visible_test_dir / test_filename
             code_path.write_text(suite.generated_code)
         return json_path
 
@@ -358,12 +399,12 @@ class ProjectManager:
 
     def test_code_path(self, component_id: str) -> Path:
         test_ext = ".test.ts" if self.language == "typescript" else ".py"
-        return self._impl_dir / component_id / "src" / f"contract_test{test_ext}"
+        return self._visible_tests_dir / component_id / f"contract_test{test_ext}"
 
     # ── Goodhart (Hidden) Test Suites ─────────────────────────────
 
     def save_goodhart_suite(self, suite: ContractTestSuite) -> Path:
-        d = self.contract_dir(suite.component_id) / "goodhart"
+        d = self._internal_contract_dir(suite.component_id) / "goodhart"
         d.mkdir(exist_ok=True)
         json_path = d / "goodhart_test_suite.json"
         json_path.write_text(suite.model_dump_json(indent=2))
@@ -402,8 +443,9 @@ class ProjectManager:
         return d
 
     def impl_src_dir(self, component_id: str) -> Path:
-        d = self.impl_dir(component_id) / "src"
-        d.mkdir(exist_ok=True)
+        """Visible implementation source: src/<component_id>/."""
+        d = self._visible_src_dir / component_id
+        d.mkdir(parents=True, exist_ok=True)
         return d
 
     def save_impl_metadata(self, component_id: str, metadata: dict) -> None:
@@ -498,7 +540,7 @@ class ProjectManager:
 
         Returns the archive attempt_id, or None if no impl exists.
         """
-        main_src = self._impl_dir / component_id / "src"
+        main_src = self.impl_src_dir(component_id)
         if not main_src.exists() or not any(main_src.iterdir()):
             return None
 
@@ -555,6 +597,13 @@ class ProjectManager:
     # ── Compositions ───────────────────────────────────────────────
 
     def composition_dir(self, parent_id: str) -> Path:
+        """Visible composition source: src/<parent_id>/."""
+        d = self._visible_src_dir / parent_id
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _internal_composition_dir(self, parent_id: str) -> Path:
+        """Internal composition metadata: .pact/compositions/<parent_id>/."""
         d = self._comp_dir / parent_id
         d.mkdir(parents=True, exist_ok=True)
         return d
@@ -584,7 +633,7 @@ class ProjectManager:
     def save_research(self, component_id: str, phase: str, research: object) -> None:
         """Save research for a contract or implementation phase."""
         if phase == "contract":
-            d = self.contract_dir(component_id)
+            d = self._internal_contract_dir(component_id)
         else:
             d = self.impl_dir(component_id)
         path = d / "research.json"

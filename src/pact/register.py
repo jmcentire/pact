@@ -123,15 +123,14 @@ async def check_artifacts_for_drift(
         return []
 
     results: list[tuple[str, bool, float]] = []
-    impl_dir = project_dir / ".pact" / "implementations"
 
     for cid in component_ids:
         # Probabilistic sampling
         if random.random() >= check_rate:
             continue
 
-        # Read implementation source
-        src_dir = impl_dir / cid / "src"
+        # Read implementation source (visible src dir)
+        src_dir = project_dir / "src" / cid
         if not src_dir.exists():
             continue
 

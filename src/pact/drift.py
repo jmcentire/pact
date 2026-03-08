@@ -33,13 +33,12 @@ class ArtifactBaseline(BaseModel):
     @classmethod
     def from_component(cls, component_id: str, project_dir: Path) -> "ArtifactBaseline":
         """Capture current hashes for a component's artifacts."""
-        pact_dir = project_dir / ".pact"
-        
-        contract_hash = _hash_file(pact_dir / "contracts" / component_id / "interface.json")
-        test_hash = _hash_file(pact_dir / "implementations" / component_id / "src" / "contract_test.py")
-        
+        # Visible deliverables
+        contract_hash = _hash_file(project_dir / "contracts" / component_id / "interface.json")
+        test_hash = _hash_file(project_dir / "tests" / component_id / "contract_test.py")
+
         # Hash all implementation files concatenated (excluding test files)
-        impl_dir = pact_dir / "implementations" / component_id / "src"
+        impl_dir = project_dir / "src" / component_id
         impl_hash = _hash_directory(impl_dir, exclude_prefixes=("contract_test",)) if impl_dir.exists() else ""
         
         return cls(

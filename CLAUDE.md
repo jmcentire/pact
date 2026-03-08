@@ -195,23 +195,32 @@ src/pact/
 
 ## Per-Project Directory
 
+Deliverables are visible in the project tree; internal state stays in `.pact/`:
+
 ```
 <project>/
   task.md              # Task description
   sops.md              # Operating procedures
   pact.yaml            # Per-project config
   design.md            # Living design document
-  .pact/
+  contracts/<cid>/     # Visible: interface specs
+    interface.json
+    interface.py (or .ts)
+  src/<cid>/           # Visible: implementations + glue code
+    <cid>.py (or .ts)
+  tests/<cid>/         # Visible: contract tests
+    contract_test.py (or .test.ts)
+  .pact/               # Internal: pipeline state (gitignored)
     state.json         # Run lifecycle state
     audit.jsonl        # All actions + decisions
     decomposition/     # Tree + decisions
-    contracts/         # Per-component contracts + goodhart/
-    implementations/   # Per-component code + contract tests + attempts/
+    contracts/<cid>/   # Internal: research, history, goodhart tests
+    implementations/<cid>/ # Internal: research, plans, metadata, attempts
     standards.json     # Global standards (auto-generated after decomposition)
     tasks.json         # Phased task list (auto-generated after decomposition)
     analysis.json      # Cross-artifact analysis report
     checklist.json     # Requirements quality checklist
-    compositions/      # Integration glue
+    compositions/      # Internal: test results
     learnings/         # Accumulated learnings
     monitoring/        # Incidents, budget state, diagnostic reports
       incidents.json   # All incidents with lifecycle state
