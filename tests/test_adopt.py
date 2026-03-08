@@ -230,8 +230,8 @@ class TestLinkExistingImplementations:
 
         link_existing_implementations(project, analysis, tree)
 
-        # Check implementation was created
-        impl_src = tmp_path / ".pact" / "implementations" / "main" / "src" / "main.py"
+        # Check implementation was created (visible src dir)
+        impl_src = tmp_path / "src" / "main" / "main.py"
         assert impl_src.exists()
         assert "hello" in impl_src.read_text()
 

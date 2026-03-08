@@ -34,10 +34,15 @@ def _setup_project(tmp_path: Path, run_id: str = "test123"):
     return pact_dir
 
 
-def _add_contract(pact_dir: Path, component_id: str):
-    """Add a contract to the project."""
-    contract_dir = pact_dir / "contracts" / component_id
-    contract_dir.mkdir(parents=True)
+def _add_contract(project_or_pact_dir: Path, component_id: str):
+    """Add a contract to the project (visible contracts dir)."""
+    # If passed .pact dir, go up to project dir
+    if project_or_pact_dir.name == ".pact":
+        project_dir = project_or_pact_dir.parent
+    else:
+        project_dir = project_or_pact_dir
+    contract_dir = project_dir / "contracts" / component_id
+    contract_dir.mkdir(parents=True, exist_ok=True)
     contract = {
         "component_id": component_id,
         "name": f"Component {component_id}",

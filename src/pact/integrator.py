@@ -165,7 +165,10 @@ The glue code should:
 
         if response.composition_test:
             test_ext = ".test.ts" if is_ts else ".py"
-            test_path = comp_dir / f"composition_test{test_ext}"
+            # Save composition tests to visible tests dir
+            visible_test_dir = project._visible_tests_dir / parent_id
+            visible_test_dir.mkdir(parents=True, exist_ok=True)
+            test_path = visible_test_dir / f"composition_test{test_ext}"
             test_path.write_text(response.composition_test)
 
         project.append_audit(
@@ -190,8 +193,9 @@ The glue code should:
             project_dir=project.project_dir,
         )
 
-        # Save results
-        results_path = comp_dir / "test_results.json"
+        # Save results to internal composition dir
+        internal_comp = project._internal_composition_dir(parent_id)
+        results_path = internal_comp / "test_results.json"
         results_path.write_text(test_results.model_dump_json(indent=2))
 
         if test_results.all_passed:
@@ -539,8 +543,9 @@ Do NOT use sys.path manipulation. Just import children by their module name.
         project_dir=project.project_dir,
     )
 
-    # Save results
-    results_path = comp_dir / "test_results.json"
+    # Save results to internal composition dir
+    internal_comp = project._internal_composition_dir(parent_id)
+    results_path = internal_comp / "test_results.json"
     results_path.write_text(test_results.model_dump_json(indent=2))
 
     project.append_audit(

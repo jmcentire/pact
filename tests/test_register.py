@@ -462,7 +462,7 @@ class TestCheckArtifactsForDrift:
         from pact.register import _DriftCheckResponse, check_artifacts_for_drift
 
         # Set up fake implementation files
-        src_dir = tmp_path / ".pact" / "implementations" / "parser" / "src"
+        src_dir = tmp_path / "src" / "parser"
         src_dir.mkdir(parents=True)
         (src_dir / "module.py").write_text("def parse(x):\n    return x.strip()\n")
 
@@ -488,7 +488,7 @@ class TestCheckArtifactsForDrift:
         """With check_rate=0.0, nothing gets checked."""
         from pact.register import check_artifacts_for_drift
 
-        src_dir = tmp_path / ".pact" / "implementations" / "c1" / "src"
+        src_dir = tmp_path / "src" / "c1"
         src_dir.mkdir(parents=True)
         (src_dir / "module.py").write_text("x = 1\n")
 
@@ -504,7 +504,7 @@ class TestCheckArtifactsForDrift:
     async def test_drift_detected(self, tmp_path):
         from pact.register import _DriftCheckResponse, check_artifacts_for_drift
 
-        src_dir = tmp_path / ".pact" / "implementations" / "c1" / "src"
+        src_dir = tmp_path / "src" / "c1"
         src_dir.mkdir(parents=True)
         (src_dir / "module.py").write_text("# hacky prototype\npass\n")
 

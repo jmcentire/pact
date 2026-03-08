@@ -33,6 +33,11 @@ def tmp_project(tmp_path: Path) -> ProjectManager:
 class TestProjectInit:
     def test_creates_directories(self, tmp_project: ProjectManager):
         assert tmp_project.project_dir.exists()
+        # Visible deliverable directories
+        assert (tmp_project.project_dir / "contracts").exists()
+        assert (tmp_project.project_dir / "src").exists()
+        assert (tmp_project.project_dir / "tests").exists()
+        # Internal state directories
         assert (tmp_project.project_dir / ".pact").exists()
         assert (tmp_project.project_dir / ".pact" / "decomposition").exists()
         assert (tmp_project.project_dir / ".pact" / "contracts").exists()
@@ -322,7 +327,7 @@ class TestGoodhartSuites:
         visible_path = tmp_project.test_code_path("pricing")
         goodhart_path = tmp_project.goodhart_test_code_path("pricing")
         assert visible_path != goodhart_path
-        assert "implementations" in str(visible_path)
+        assert "tests" in str(visible_path)
         assert "goodhart" in str(goodhart_path)
 
 
@@ -334,7 +339,8 @@ class TestImplementations:
     def test_impl_src_dir(self, tmp_project: ProjectManager):
         d = tmp_project.impl_src_dir("pricing")
         assert d.exists()
-        assert d.name == "src"
+        assert d.name == "pricing"
+        assert d.parent.name == "src"
 
     def test_save_metadata(self, tmp_project: ProjectManager):
         tmp_project.save_impl_metadata("pricing", {"attempt": 1})

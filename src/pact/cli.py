@@ -593,7 +593,7 @@ def _show_component_detail(project: ProjectManager, component_id: str) -> None:
             print(f"  {a['attempt_id']} ({attempt_type})")
 
     # Implementation files
-    impl_src = project._impl_dir / component_id / "src"
+    impl_src = project.impl_src_dir(component_id)
     if impl_src.exists() and any(impl_src.iterdir()):
         files = list(impl_src.rglob("*"))
         source_files = [f for f in files if f.is_file()]
@@ -1601,10 +1601,10 @@ def cmd_clean(args: argparse.Namespace) -> None:
         return
 
     if args.attempts:
-        impl_dir = pact_dir / "implementations"
+        internal_impl_dir = pact_dir / "implementations"
         removed_count = 0
-        if impl_dir.exists():
-            for comp_dir in impl_dir.iterdir():
+        if internal_impl_dir.exists():
+            for comp_dir in internal_impl_dir.iterdir():
                 if not comp_dir.is_dir():
                     continue
                 attempts_dir = comp_dir / "attempts"
@@ -1688,9 +1688,9 @@ def cmd_diff(args: argparse.Namespace) -> None:
     component_id = args.component_id
 
     attempts = project.list_attempts(component_id)
-    main_src = project._impl_dir / component_id / "src"
+    main_src = project.impl_src_dir(component_id)
 
-    if not attempts and not main_src.exists():
+    if not attempts and (not main_src.exists() or not any(main_src.iterdir())):
         print(f"No implementations found for component: {component_id}")
         return
 

@@ -16,20 +16,22 @@ from pact.drift import (
 
 
 def _setup_component(tmp_path: Path, component_id: str = "comp_a"):
-    """Create minimal component file structure."""
-    pact = tmp_path / ".pact"
-    contracts = pact / "contracts" / component_id
-    impls = pact / "implementations" / component_id / "src"
-    baselines = pact / "baselines"
+    """Create minimal component file structure (visible deliverables)."""
+    # Visible dirs
+    contracts = tmp_path / "contracts" / component_id
+    tests = tmp_path / "tests" / component_id
+    src = tmp_path / "src" / component_id
+    # Internal dirs
+    baselines = tmp_path / ".pact" / "baselines"
 
-    for d in [contracts, impls, baselines]:
+    for d in [contracts, tests, src, baselines]:
         d.mkdir(parents=True, exist_ok=True)
 
     (contracts / "interface.json").write_text('{"component_id": "comp_a"}')
-    (impls / "contract_test.py").write_text("def test_one(): pass")
-    (impls / "main.py").write_text("def main(): return 42")
-    
-    return pact
+    (tests / "contract_test.py").write_text("def test_one(): pass")
+    (src / "main.py").write_text("def main(): return 42")
+
+    return tmp_path / ".pact"
 
 
 class TestHashFile:
@@ -69,7 +71,7 @@ class TestArtifactBaseline:
         assert baseline.captured_at != ""
 
     def test_from_component_missing_files(self, tmp_path):
-        (tmp_path / ".pact" / "contracts" / "comp_x").mkdir(parents=True)
+        (tmp_path / "contracts" / "comp_x").mkdir(parents=True)
         baseline = ArtifactBaseline.from_component("comp_x", tmp_path)
         assert baseline.contract_hash == ""
         assert baseline.test_hash == ""
@@ -108,8 +110,8 @@ class TestDetectDrift:
     def test_impl_drift_detected(self, tmp_path):
         _setup_component(tmp_path)
         baseline = capture_baseline("comp_a", tmp_path)
-        # Modify implementation
-        impl = tmp_path / ".pact" / "implementations" / "comp_a" / "src" / "main.py"
+        # Modify implementation (visible src dir)
+        impl = tmp_path / "src" / "comp_a" / "main.py"
         impl.write_text("def main(): return 99")
         drifts = detect_drift(baseline, tmp_path)
         assert len(drifts) >= 1
@@ -118,8 +120,8 @@ class TestDetectDrift:
     def test_contract_drift_without_test_update(self, tmp_path):
         _setup_component(tmp_path)
         baseline = capture_baseline("comp_a", tmp_path)
-        # Modify contract only
-        contract = tmp_path / ".pact" / "contracts" / "comp_a" / "interface.json"
+        # Modify contract only (visible contracts dir)
+        contract = tmp_path / "contracts" / "comp_a" / "interface.json"
         contract.write_text('{"component_id": "comp_a", "version": 2}')
         drifts = detect_drift(baseline, tmp_path)
         assert len(drifts) >= 1
@@ -129,10 +131,10 @@ class TestDetectDrift:
         """Updating both contract and tests is expected — no drift for that pair."""
         _setup_component(tmp_path)
         baseline = capture_baseline("comp_a", tmp_path)
-        # Modify both contract and tests
-        contract = tmp_path / ".pact" / "contracts" / "comp_a" / "interface.json"
+        # Modify both contract and tests (visible dirs)
+        contract = tmp_path / "contracts" / "comp_a" / "interface.json"
         contract.write_text('{"component_id": "comp_a", "version": 2}')
-        test = tmp_path / ".pact" / "implementations" / "comp_a" / "src" / "contract_test.py"
+        test = tmp_path / "tests" / "comp_a" / "contract_test.py"
         test.write_text("def test_updated(): pass")
         drifts = detect_drift(baseline, tmp_path)
         # Should report that impl needs updating since contract changed
