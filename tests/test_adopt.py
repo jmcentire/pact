@@ -286,7 +286,7 @@ class TestAdoptDryRun:
 
         # Check project state was created
         assert (tmp_path / ".pact" / "state.json").exists()
-        assert (tmp_path / ".pact" / "decomposition" / "tree.json").exists()
+        assert (tmp_path / "decomposition" / "tree.json").exists()
         assert (tmp_path / "task.md").exists()
 
     @pytest.mark.asyncio

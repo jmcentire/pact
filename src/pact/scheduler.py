@@ -655,7 +655,7 @@ class Scheduler:
                         self._standards_brief = render_standards_brief(standards)
                         # Persist for inspection
                         import json as _json
-                        standards_path = self.project._pact_dir / "standards.json"
+                        standards_path = self.project.standards_path
                         standards_path.write_text(_json.dumps(standards.to_dict(), indent=2))
                     except Exception as e:
                         logger.debug("Standards collection failed: %s", e)

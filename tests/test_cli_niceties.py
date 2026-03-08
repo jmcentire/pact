@@ -386,12 +386,14 @@ class TestCmdClean:
         )
         cmd_clean(args)
         captured = capsys.readouterr()
-        assert "Removed all .pact/ contents" in captured.out
+        assert "Removed all run state and project artifacts" in captured.out
         # state.json should be gone
         assert not project.state_path.exists()
-        # But subdirs should be recreated
-        assert project._decomp_dir.exists()
+        # Ephemeral subdirs should be recreated
         assert project._contracts_dir.exists()
+        # Visible dirs should be recreated
+        assert project._decomp_dir.exists()
+        assert project._visible_contracts_dir.exists()
 
     def test_clean_interactive(self, tmp_path: Path, capsys):
         from pact.cli import cmd_clean

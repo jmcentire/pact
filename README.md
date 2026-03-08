@@ -271,7 +271,7 @@ Available backends: `anthropic`, `openai`, `gemini`, `claude_code`, `claude_code
 
 ## Project Structure
 
-Deliverables are visible in the project tree. Internal pipeline state stays in `.pact/`:
+All project knowledge is visible in the project tree. Only ephemeral per-run state lives in `.pact/`:
 
 ```
 my-project/
@@ -279,21 +279,24 @@ my-project/
   sops.md              # How to build it (standards, stack, preferences)
   pact.yaml            # Budget and execution config
   design.md            # Auto-maintained design document
-  contracts/<cid>/     # Interface specs (interface.json + interface.py)
+  design.json          # Structured design document
+  standards.json       # Global standards
+  tasks.json           # Task list
+  decomposition/       # Decomposition tree, decisions, interview, pitch
+  contracts/<cid>/     # Interface specs + version history
   src/<cid>/           # Implementation source + glue code
-  tests/<cid>/         # Contract tests (executable, visible)
-  .pact/               # Internal pipeline state (gitignored)
+  tests/<cid>/         # Contract tests + Goodhart tests
+  learnings/           # Accumulated learnings
+  .pact/               # Ephemeral run state only (gitignored)
     state.json         # Run lifecycle
     audit.jsonl        # Full audit trail
-    decomposition/     # Tree + decisions
-    contracts/         # Research, history, Goodhart tests (hidden)
+    contracts/         # Research (ephemeral)
     implementations/   # Plans, metadata, attempt archives
     compositions/      # Integration test results
-    learnings/         # Accumulated learnings
     monitoring/        # Incidents, budget state, diagnostic reports
 ```
 
-When a teammate checks out the repo, they see contracts, source, and tests immediately -- not a dotfile directory. Goodhart tests and internal metadata stay hidden where they belong.
+When a teammate checks out the repo, they see everything -- contracts, source, tests, decomposition tree, Goodhart tests, standards, learnings. The `.pact/` directory contains only ephemeral per-run state that gets regenerated.
 
 ## Validation & Quality Gates
 

@@ -232,7 +232,7 @@ class TestProjectPitchIO:
         """pitch_path is in decomposition directory."""
         from pact.project import ProjectManager
         pm = ProjectManager(tmp_path)
-        assert pm.pitch_path == tmp_path / ".pact" / "decomposition" / "pitch.json"
+        assert pm.pitch_path == tmp_path / "decomposition" / "pitch.json"
 
 
 # ── Pitch Utils Tests ────────────────────────────────────────────────

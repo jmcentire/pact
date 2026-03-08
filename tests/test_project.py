@@ -33,17 +33,17 @@ def tmp_project(tmp_path: Path) -> ProjectManager:
 class TestProjectInit:
     def test_creates_directories(self, tmp_project: ProjectManager):
         assert tmp_project.project_dir.exists()
-        # Visible deliverable directories
+        # Visible project directories
         assert (tmp_project.project_dir / "contracts").exists()
         assert (tmp_project.project_dir / "src").exists()
         assert (tmp_project.project_dir / "tests").exists()
-        # Internal state directories
+        assert (tmp_project.project_dir / "decomposition").exists()
+        assert (tmp_project.project_dir / "learnings").exists()
+        # Ephemeral run state directories
         assert (tmp_project.project_dir / ".pact").exists()
-        assert (tmp_project.project_dir / ".pact" / "decomposition").exists()
         assert (tmp_project.project_dir / ".pact" / "contracts").exists()
         assert (tmp_project.project_dir / ".pact" / "implementations").exists()
         assert (tmp_project.project_dir / ".pact" / "compositions").exists()
-        assert (tmp_project.project_dir / ".pact" / "learnings").exists()
 
     def test_creates_task_template(self, tmp_project: ProjectManager):
         assert tmp_project.task_path.exists()
@@ -166,7 +166,7 @@ class TestDecomposition:
     def test_save_decisions(self, tmp_project: ProjectManager):
         decisions = [{"ambiguity": "auth", "decision": "JWT", "rationale": "simpler"}]
         tmp_project.save_decisions(decisions)
-        path = tmp_project.project_dir / ".pact" / "decomposition" / "decisions.json"
+        path = tmp_project.project_dir / "decomposition" / "decisions.json"
         assert path.exists()
 
 
@@ -196,7 +196,7 @@ class TestContracts:
             description="d",
         )
         tmp_project.save_contract(contract)
-        history_dir = tmp_project.project_dir / ".pact" / "contracts" / "pricing" / "history"
+        history_dir = tmp_project.project_dir / "contracts" / "pricing" / "history"
         assert any(history_dir.iterdir())
 
     def test_load_all_contracts(self, tmp_project: ProjectManager):
@@ -282,11 +282,11 @@ class TestGoodhartSuites:
             generated_code="def test_goodhart_it(): pass",
         )
         tmp_project.save_goodhart_suite(suite)
-        # Goodhart goes to goodhart/ not tests/
-        goodhart_dir = tmp_project.project_dir / ".pact" / "contracts" / "pricing" / "goodhart"
-        tests_dir = tmp_project.project_dir / ".pact" / "contracts" / "pricing" / "tests"
+        # Goodhart goes to tests/<cid>/goodhart/
+        goodhart_dir = tmp_project.project_dir / "tests" / "pricing" / "goodhart"
         assert goodhart_dir.exists()
-        assert not tests_dir.exists()  # No visible tests created
+        # Goodhart suite JSON is separate from visible contract_test_suite.json
+        assert not (tmp_project.project_dir / "tests" / "pricing" / "contract_test_suite.json").exists()
 
     def test_isolation_load_all_test_suites_excludes_goodhart(self, tmp_project: ProjectManager):
         """Critical: load_all_test_suites must NOT include Goodhart suites."""
