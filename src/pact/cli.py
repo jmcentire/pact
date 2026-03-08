@@ -1561,6 +1561,7 @@ def cmd_clean(args: argparse.Namespace) -> None:
     """Clean up project artifacts."""
     from pathlib import Path
     import shutil
+    from pact.project import ProjectManager
 
     project_dir = Path(args.project_dir).resolve()
     pact_dir = project_dir / ".pact"
@@ -1570,21 +1571,9 @@ def cmd_clean(args: argparse.Namespace) -> None:
         return
 
     if args.clean_all:
-        # Remove all .pact/ state (keeps task.md, sops.md, pact.yaml)
-        removed = []
-        for item in pact_dir.iterdir():
-            if item.is_dir():
-                shutil.rmtree(item)
-            else:
-                item.unlink()
-            removed.append(item.name)
-        print(f"Removed all .pact/ contents: {', '.join(removed)}")
-        # Recreate empty subdirs
-        (pact_dir / "decomposition").mkdir(exist_ok=True)
-        (pact_dir / "contracts").mkdir(exist_ok=True)
-        (pact_dir / "implementations").mkdir(exist_ok=True)
-        (pact_dir / "compositions").mkdir(exist_ok=True)
-        (pact_dir / "learnings").mkdir(exist_ok=True)
+        project = ProjectManager(project_dir)
+        project.clear_state(include_deliverables=True)
+        print("Removed all run state and project artifacts.")
         return
 
     if args.stale:
@@ -2218,7 +2207,7 @@ def cmd_handoff(args: argparse.Namespace) -> None:
 
     # Load learnings
     learnings = ""
-    learnings_path = project.pact_dir / "learnings" / "learnings.jsonl"
+    learnings_path = project._learnings_dir / "learnings.jsonl"
     if learnings_path.exists():
         entries = []
         for line in learnings_path.read_text().splitlines():
@@ -2233,7 +2222,7 @@ def cmd_handoff(args: argparse.Namespace) -> None:
 
     # Load standards
     standards_brief = ""
-    standards_path = project.pact_dir / "standards.json"
+    standards_path = project.standards_path
     if standards_path.exists():
         try:
             from pact.standards import render_standards_brief

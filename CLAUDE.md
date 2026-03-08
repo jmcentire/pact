@@ -76,7 +76,7 @@ After decomposition, pact automatically collects shared conventions from contrac
 - Package requirements
 - Coding conventions from SOPs
 
-Standards are injected into every agent's handoff brief and persisted at `.pact/standards.json`.
+Standards are injected into every agent's handoff brief and persisted at `standards.json` in the project root.
 
 ### Processing Register
 
@@ -115,7 +115,7 @@ Opt-in (`monitoring_enabled: true`). Pact-generated code embeds `PACT:<project_h
 
 During the Test phase, Pact generates two test suites per component: **visible tests** (shown to the implementation agent) and **Goodhart tests** (hidden, never shared with agents). This counters Goodhart's Law: when agents can see all tests, they optimize for passing those specific inputs rather than truly satisfying the contract.
 
-Goodhart tests are adversarial — they probe for hardcoded returns, boundary-adjacent inputs, invariant generalization, and postcondition universality. They live in `.pact/contracts/<cid>/goodhart/` and are never loaded by `load_all_test_suites()` or `render_handoff_brief()`.
+Goodhart tests are adversarial — they probe for hardcoded returns, boundary-adjacent inputs, invariant generalization, and postcondition universality. They live in `tests/<cid>/goodhart/` and are never loaded by `load_all_test_suites()` or `render_handoff_brief()`. Agent isolation is enforced by the orchestrator (what gets fed to agents), not by filesystem hiding.
 
 During the **polish phase**, Goodhart tests run against all implementations. Failures trigger **graduated-disclosure remediation**: the component is re-implemented with behavioral hints (not exact errors) that get more specific on each attempt (max 2 by default). The agent never sees the actual test code.
 
@@ -195,37 +195,47 @@ src/pact/
 
 ## Per-Project Directory
 
-Deliverables are visible in the project tree; internal state stays in `.pact/`:
+All project knowledge is visible in the project tree. Only ephemeral per-run state lives in `.pact/`:
 
 ```
 <project>/
   task.md              # Task description
   sops.md              # Operating procedures
   pact.yaml            # Per-project config
-  design.md            # Living design document
-  contracts/<cid>/     # Visible: interface specs
+  design.md            # Living design document (markdown)
+  design.json          # Structured design document
+  standards.json       # Global standards (auto-generated after decomposition)
+  tasks.json           # Phased task list (auto-generated after decomposition)
+  analysis.json        # Cross-artifact analysis report
+  checklist.json       # Requirements quality checklist
+  TASKS.md             # Rendered task list
+  decomposition/       # Decomposition artifacts
+    tree.json
+    decisions.json
+    interview.json
+    pitch.json
+  contracts/<cid>/     # Interface specs + history
     interface.json
     interface.py (or .ts)
-  src/<cid>/           # Visible: implementations + glue code
+    history/           # Contract version history
+  src/<cid>/           # Implementations + glue code
     <cid>.py (or .ts)
-  tests/<cid>/         # Visible: contract tests
+  tests/<cid>/         # Contract tests + Goodhart tests
     contract_test.py (or .test.ts)
-  .pact/               # Internal: pipeline state (gitignored)
+    contract_test_suite.json
+    goodhart/          # Adversarial acceptance tests
+      goodhart_test_suite.json
+      goodhart_test.py (or .test.ts)
+  learnings/           # Accumulated learnings
+    learnings.jsonl
+  .pact/               # Ephemeral run state only (gitignored)
     state.json         # Run lifecycle state
     audit.jsonl        # All actions + decisions
-    decomposition/     # Tree + decisions
-    contracts/<cid>/   # Internal: research, history, goodhart tests
-    implementations/<cid>/ # Internal: research, plans, metadata, attempts
-    standards.json     # Global standards (auto-generated after decomposition)
-    tasks.json         # Phased task list (auto-generated after decomposition)
-    analysis.json      # Cross-artifact analysis report
-    checklist.json     # Requirements quality checklist
-    compositions/      # Internal: test results
-    learnings/         # Accumulated learnings
+    contracts/<cid>/   # Contract research (ephemeral)
+      research.json
+    implementations/<cid>/ # Research, plans, metadata, attempts
+    compositions/      # Integration test results
     monitoring/        # Incidents, budget state, diagnostic reports
-      incidents.json   # All incidents with lifecycle state
-      budget.json      # Running budget totals per window
-      reports/         # Per-incident diagnostic reports (markdown)
 ```
 
 ## Key Schemas

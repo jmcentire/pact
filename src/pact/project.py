@@ -1,42 +1,52 @@
 """Project directory lifecycle — init, load, save, resume.
 
-The project directory is the unit of work. Deliverables are visible in the
-project tree; internal state stays in .pact/:
+The project directory is the unit of work. All project knowledge is visible
+in the project tree. Only ephemeral per-run state lives in .pact/:
 
   proj/
   ├── task.md
   ├── sops.md
   ├── pact.yaml
   ├── design.md
-  ├── contracts/<component_id>/          # Visible: interface specs
+  ├── design.json                        # Structured design document
+  ├── standards.json                     # Global standards
+  ├── tasks.json                         # Task list
+  ├── analysis.json                      # Cross-artifact analysis
+  ├── checklist.json                     # Requirements checklist
+  ├── TASKS.md                           # Rendered task list
+  ├── decomposition/                     # Decomposition artifacts
+  │   ├── tree.json
+  │   ├── decisions.json
+  │   ├── interview.json
+  │   └── pitch.json
+  ├── contracts/<component_id>/          # Interface specs + history
   │   ├── interface.json
-  │   └── interface.py (or .ts)
-  ├── src/<component_id>/                # Visible: implementations + glue
+  │   ├── interface.py (or .ts)
+  │   └── history/<timestamp>.json
+  ├── src/<component_id>/                # Implementations + glue
   │   └── <component_id>.py (or .ts)
-  ├── tests/<component_id>/              # Visible: contract tests
-  │   └── contract_test.py (or .test.ts)
-  └── .pact/                             # Internal: pipeline state
+  ├── tests/<component_id>/              # Contract tests + Goodhart tests
+  │   ├── contract_test.py (or .test.ts)
+  │   ├── contract_test_suite.json
+  │   └── goodhart/
+  │       ├── goodhart_test_suite.json
+  │       └── goodhart_test.py (or .test.ts)
+  ├── learnings/                         # Accumulated learnings
+  │   └── learnings.jsonl
+  └── .pact/                             # Ephemeral run state only
       ├── state.json
       ├── audit.jsonl
       ├── budget.json
-      ├── decomposition/
-      │   ├── tree.json
-      │   ├── decisions.json
-      │   └── interview.json
-      ├── contracts/<component_id>/      # Internal: metadata + hidden tests
-      │   ├── research.json
-      │   ├── tests/contract_test_suite.json
-      │   ├── goodhart/goodhart_test.py
-      │   └── history/<timestamp>.json
-      ├── implementations/<component_id>/# Internal: research, plans, metadata
+      ├── contracts/<component_id>/
+      │   └── research.json
+      ├── implementations/<component_id>/
       │   ├── research.json
       │   ├── plan.json
       │   ├── metadata.json
-      │   └── test_results.json
-      ├── compositions/<parent_id>/
-      │   └── test_results.json
-      └── learnings/
-          └── learnings.jsonl
+      │   ├── test_results.json
+      │   └── attempts/
+      └── compositions/<parent_id>/
+          └── test_results.json
 """
 
 from __future__ import annotations
@@ -73,18 +83,18 @@ class ProjectManager:
     def __init__(self, project_dir: str | Path) -> None:
         self.project_dir = Path(project_dir).resolve()
 
-        # Visible deliverables — in project tree
+        # Visible project knowledge — in project tree
         self._visible_contracts_dir = self.project_dir / "contracts"
         self._visible_src_dir = self.project_dir / "src"
         self._visible_tests_dir = self.project_dir / "tests"
+        self._decomp_dir = self.project_dir / "decomposition"
+        self._learnings_dir = self.project_dir / "learnings"
 
-        # Internal state — in .pact/
+        # Ephemeral run state — in .pact/
         self._pact_dir = self.project_dir / PACT_DIR
-        self._decomp_dir = self._pact_dir / "decomposition"
         self._contracts_dir = self._pact_dir / "contracts"
         self._impl_dir = self._pact_dir / "implementations"
         self._comp_dir = self._pact_dir / "compositions"
-        self._learnings_dir = self._pact_dir / "learnings"
 
     # ── Language ───────────────────────────────────────────────────
 
@@ -130,7 +140,7 @@ class ProjectManager:
 
     @property
     def tasks_json_path(self) -> Path:
-        return self._pact_dir / "tasks.json"
+        return self.project_dir / "tasks.json"
 
     @property
     def tasks_md_path(self) -> Path:
@@ -138,11 +148,15 @@ class ProjectManager:
 
     @property
     def analysis_path(self) -> Path:
-        return self._pact_dir / "analysis.json"
+        return self.project_dir / "analysis.json"
 
     @property
     def checklist_path(self) -> Path:
-        return self._pact_dir / "checklist.json"
+        return self.project_dir / "checklist.json"
+
+    @property
+    def standards_path(self) -> Path:
+        return self.project_dir / "standards.json"
 
     # ── Init ───────────────────────────────────────────────────────
 
@@ -150,18 +164,18 @@ class ProjectManager:
         """Scaffold a new project directory."""
         self.project_dir.mkdir(parents=True, exist_ok=True)
 
-        # Visible deliverable directories
+        # Visible project directories
         self._visible_contracts_dir.mkdir(exist_ok=True)
         self._visible_src_dir.mkdir(exist_ok=True)
         self._visible_tests_dir.mkdir(exist_ok=True)
-
-        # Internal state directories
-        self._pact_dir.mkdir(exist_ok=True)
         self._decomp_dir.mkdir(exist_ok=True)
+        self._learnings_dir.mkdir(exist_ok=True)
+
+        # Ephemeral run state directories
+        self._pact_dir.mkdir(exist_ok=True)
         self._contracts_dir.mkdir(exist_ok=True)
         self._impl_dir.mkdir(exist_ok=True)
         self._comp_dir.mkdir(exist_ok=True)
-        self._learnings_dir.mkdir(exist_ok=True)
 
         if not self.task_path.exists():
             self.task_path.write_text(
@@ -247,23 +261,33 @@ class ProjectManager:
         """Remove all run state. Preserves task.md, sops.md, config.
 
         Args:
-            include_deliverables: If True, also remove visible deliverables
-                (contracts/, src/, tests/). Default False.
+            include_deliverables: If True, also remove all project knowledge
+                (contracts/, src/, tests/, decomposition/, learnings/,
+                standards.json, tasks.json, analysis.json, checklist.json,
+                design.json). Default False.
         """
         if self._pact_dir.exists():
             shutil.rmtree(self._pact_dir)
         self._pact_dir.mkdir(exist_ok=True)
-        self._decomp_dir.mkdir(exist_ok=True)
         self._contracts_dir.mkdir(exist_ok=True)
         self._impl_dir.mkdir(exist_ok=True)
         self._comp_dir.mkdir(exist_ok=True)
-        self._learnings_dir.mkdir(exist_ok=True)
 
         if include_deliverables:
-            for d in (self._visible_contracts_dir, self._visible_src_dir, self._visible_tests_dir):
+            for d in (
+                self._visible_contracts_dir, self._visible_src_dir,
+                self._visible_tests_dir, self._decomp_dir, self._learnings_dir,
+            ):
                 if d.exists():
                     shutil.rmtree(d)
                 d.mkdir(exist_ok=True)
+            # Remove visible JSON files
+            for f in (
+                self.tasks_json_path, self.analysis_path, self.checklist_path,
+                self.standards_path, self.project_dir / "design.json",
+            ):
+                if f.exists():
+                    f.unlink()
 
     # ── Audit ──────────────────────────────────────────────────────
 
@@ -322,13 +346,12 @@ class ProjectManager:
         return d
 
     def _internal_contract_dir(self, component_id: str) -> Path:
-        """Internal contract metadata: .pact/contracts/<component_id>/."""
+        """Ephemeral contract research: .pact/contracts/<component_id>/."""
         d = self._contracts_dir / component_id
         d.mkdir(parents=True, exist_ok=True)
         return d
 
     def save_contract(self, contract: ComponentContract) -> Path:
-        # Visible: interface.json + interface stub
         d = self.contract_dir(contract.component_id)
         path = d / "interface.json"
         path.write_text(contract.model_dump_json(indent=2))
@@ -336,9 +359,8 @@ class ProjectManager:
         stub_ext = ".ts" if self.language == "typescript" else ".py"
         stub_path = d / f"interface{stub_ext}"
         stub_path.write_text(render_stub(contract))
-        # Internal: history
-        internal = self._internal_contract_dir(contract.component_id)
-        history = internal / "history"
+        # History alongside contract
+        history = d / "history"
         history.mkdir(exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         (history / f"{ts}.json").write_text(contract.model_dump_json(indent=2))
@@ -364,33 +386,30 @@ class ProjectManager:
     # ── Test Suites ────────────────────────────────────────────────
 
     def save_test_suite(self, suite: ContractTestSuite) -> Path:
-        # Internal: JSON metadata
-        internal = self._internal_contract_dir(suite.component_id)
-        tests_dir = internal / "tests"
-        tests_dir.mkdir(exist_ok=True)
-        json_path = tests_dir / "contract_test_suite.json"
+        visible_test_dir = self._visible_tests_dir / suite.component_id
+        visible_test_dir.mkdir(parents=True, exist_ok=True)
+        # JSON metadata alongside test code
+        json_path = visible_test_dir / "contract_test_suite.json"
         json_path.write_text(suite.model_dump_json(indent=2))
-        # Visible: test code
+        # Test code
         if suite.generated_code:
             test_ext = ".test.ts" if self.language == "typescript" else ".py"
             test_filename = f"contract_test{test_ext}"
-            visible_test_dir = self._visible_tests_dir / suite.component_id
-            visible_test_dir.mkdir(parents=True, exist_ok=True)
             code_path = visible_test_dir / test_filename
             code_path.write_text(suite.generated_code)
         return json_path
 
     def load_test_suite(self, component_id: str) -> ContractTestSuite | None:
-        path = self._contracts_dir / component_id / "tests" / "contract_test_suite.json"
+        path = self._visible_tests_dir / component_id / "contract_test_suite.json"
         if not path.exists():
             return None
         return ContractTestSuite.model_validate_json(path.read_text())
 
     def load_all_test_suites(self) -> dict[str, ContractTestSuite]:
         suites = {}
-        if not self._contracts_dir.exists():
+        if not self._visible_tests_dir.exists():
             return suites
-        for d in self._contracts_dir.iterdir():
+        for d in self._visible_tests_dir.iterdir():
             if d.is_dir():
                 s = self.load_test_suite(d.name)
                 if s:
@@ -404,8 +423,8 @@ class ProjectManager:
     # ── Goodhart (Hidden) Test Suites ─────────────────────────────
 
     def save_goodhart_suite(self, suite: ContractTestSuite) -> Path:
-        d = self._internal_contract_dir(suite.component_id) / "goodhart"
-        d.mkdir(exist_ok=True)
+        d = self._visible_tests_dir / suite.component_id / "goodhart"
+        d.mkdir(parents=True, exist_ok=True)
         json_path = d / "goodhart_test_suite.json"
         json_path.write_text(suite.model_dump_json(indent=2))
         if suite.generated_code:
@@ -415,16 +434,16 @@ class ProjectManager:
         return json_path
 
     def load_goodhart_suite(self, component_id: str) -> ContractTestSuite | None:
-        path = self._contracts_dir / component_id / "goodhart" / "goodhart_test_suite.json"
+        path = self._visible_tests_dir / component_id / "goodhart" / "goodhart_test_suite.json"
         if not path.exists():
             return None
         return ContractTestSuite.model_validate_json(path.read_text())
 
     def load_all_goodhart_suites(self) -> dict[str, ContractTestSuite]:
         suites = {}
-        if not self._contracts_dir.exists():
+        if not self._visible_tests_dir.exists():
             return suites
-        for d in self._contracts_dir.iterdir():
+        for d in self._visible_tests_dir.iterdir():
             if d.is_dir():
                 s = self.load_goodhart_suite(d.name)
                 if s:
@@ -433,7 +452,7 @@ class ProjectManager:
 
     def goodhart_test_code_path(self, component_id: str) -> Path:
         test_ext = ".test.ts" if self.language == "typescript" else ".py"
-        return self._contracts_dir / component_id / "goodhart" / f"goodhart_test{test_ext}"
+        return self._visible_tests_dir / component_id / "goodhart" / f"goodhart_test{test_ext}"
 
     # ── Implementations ────────────────────────────────────────────
 
@@ -645,8 +664,7 @@ class ProjectManager:
     # ── Task List ──────────────────────────────────────────────────
 
     def save_task_list(self, task_list: object) -> None:
-        """Save a TaskList to .pact/tasks.json and TASKS.md."""
-        self._pact_dir.mkdir(parents=True, exist_ok=True)
+        """Save a TaskList to tasks.json and TASKS.md."""
         if hasattr(task_list, "model_dump_json"):
             self.tasks_json_path.write_text(task_list.model_dump_json(indent=2))
         else:
@@ -658,7 +676,7 @@ class ProjectManager:
         self.tasks_md_path.write_text(md)
 
     def load_task_list(self) -> object | None:
-        """Load a TaskList from .pact/tasks.json."""
+        """Load a TaskList from tasks.json."""
         if not self.tasks_json_path.exists():
             return None
         from pact.schemas_tasks import TaskList
@@ -667,15 +685,14 @@ class ProjectManager:
     # ── Analysis ──────────────────────────────────────────────────
 
     def save_analysis(self, report: object) -> None:
-        """Save an AnalysisReport to .pact/analysis.json."""
-        self._pact_dir.mkdir(parents=True, exist_ok=True)
+        """Save an AnalysisReport to analysis.json."""
         if hasattr(report, "model_dump_json"):
             self.analysis_path.write_text(report.model_dump_json(indent=2))
         else:
             self.analysis_path.write_text(json.dumps(report, indent=2, default=str))
 
     def load_analysis(self) -> object | None:
-        """Load an AnalysisReport from .pact/analysis.json."""
+        """Load an AnalysisReport from analysis.json."""
         if not self.analysis_path.exists():
             return None
         from pact.schemas_tasks import AnalysisReport
@@ -684,15 +701,14 @@ class ProjectManager:
     # ── Checklist ─────────────────────────────────────────────────
 
     def save_checklist(self, checklist: object) -> None:
-        """Save a RequirementsChecklist to .pact/checklist.json."""
-        self._pact_dir.mkdir(parents=True, exist_ok=True)
+        """Save a RequirementsChecklist to checklist.json."""
         if hasattr(checklist, "model_dump_json"):
             self.checklist_path.write_text(checklist.model_dump_json(indent=2))
         else:
             self.checklist_path.write_text(json.dumps(checklist, indent=2, default=str))
 
     def load_checklist(self) -> object | None:
-        """Load a RequirementsChecklist from .pact/checklist.json."""
+        """Load a RequirementsChecklist from checklist.json."""
         if not self.checklist_path.exists():
             return None
         from pact.schemas_tasks import RequirementsChecklist
@@ -705,7 +721,7 @@ class ProjectManager:
         return self._decomp_dir / "pitch.json"
 
     def save_pitch(self, pitch: object) -> None:
-        """Save a ShapingPitch to decomposition/pitch.json."""
+        """Save a ShapingPitch."""
         self._decomp_dir.mkdir(parents=True, exist_ok=True)
         if hasattr(pitch, "model_dump_json"):
             self.pitch_path.write_text(pitch.model_dump_json(indent=2))
@@ -726,12 +742,11 @@ class ProjectManager:
     # ── Design Document ────────────────────────────────────────────
 
     def save_design_doc(self, doc: DesignDocument) -> None:
-        self._pact_dir.mkdir(parents=True, exist_ok=True)
-        # Save structured version
-        (self._pact_dir / "design.json").write_text(doc.model_dump_json(indent=2))
+        path = self.project_dir / "design.json"
+        path.write_text(doc.model_dump_json(indent=2))
 
     def load_design_doc(self) -> DesignDocument | None:
-        path = self._pact_dir / "design.json"
+        path = self.project_dir / "design.json"
         if not path.exists():
             return None
         return DesignDocument.model_validate_json(path.read_text())
