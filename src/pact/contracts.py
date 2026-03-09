@@ -601,6 +601,7 @@ def validate_north_star(
     task_text: str,
     tree: DecompositionTree,
     contracts: dict[str, ComponentContract],
+    acceptance_criteria: list[str] | None = None,
 ) -> list[str]:
     """Validate that decomposed components can plausibly fulfill the original task.
 
@@ -613,6 +614,7 @@ def validate_north_star(
        contract function (keyword overlap heuristic)
     2. The root component should have functions covering the top-level verbs
     3. Leaf components without functions are dead weight
+    4. Acceptance criteria keywords should appear somewhere in contracts
 
     Returns list of warning strings (advisory, not blocking).
     """
@@ -680,6 +682,38 @@ def validate_north_star(
                     f"Leaf component '{node_id}' has no functions. "
                     f"It contributes nothing to the composed system."
                 )
+
+    # Check 4: Acceptance criteria coverage
+    if acceptance_criteria:
+        # Build a searchable corpus from all contract content
+        corpus = " ".join(
+            f"{c.name} {c.description} " + " ".join(
+                f"{f.name} {f.description}" for f in c.functions
+            ) + " ".join(
+                f"{t.name} {t.description}" for t in c.types
+            ) + " ".join(c.invariants)
+            for c in contracts.values()
+        ).lower()
+
+        uncovered = []
+        for criterion in acceptance_criteria:
+            # Extract significant words (3+ chars, not stopwords)
+            stopwords = {"the", "and", "for", "are", "but", "not", "you",
+                         "all", "can", "has", "her", "was", "one", "our",
+                         "out", "had", "this", "that", "with", "from",
+                         "they", "been", "have", "its", "will", "each",
+                         "make", "when", "must", "should", "shall"}
+            words = {w for w in criterion.lower().split() if len(w) >= 3 and w not in stopwords}
+            # Check if at least some criterion keywords appear in contracts
+            matched = sum(1 for w in words if w in corpus)
+            if words and matched / len(words) < 0.3:
+                uncovered.append(criterion[:100])
+
+        if uncovered:
+            warnings.append(
+                f"{len(uncovered)} acceptance criteria have low coverage in contracts: "
+                + "; ".join(uncovered)
+            )
 
     return warnings
 

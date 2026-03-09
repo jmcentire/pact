@@ -1082,7 +1082,9 @@ class Scheduler:
             task_text = self.project.load_task()
             if task_text:
                 from pact.contracts import validate_north_star
-                ns_warnings = validate_north_star(task_text, tree, contracts)
+                interview = self.project.load_interview()
+                ac = interview.acceptance_criteria if interview else None
+                ns_warnings = validate_north_star(task_text, tree, contracts, acceptance_criteria=ac)
                 for w in ns_warnings:
                     logger.warning("North-star: %s", w)
                     warnings.append(f"[north-star] {w}")

@@ -220,11 +220,12 @@ class AuditedAnswer(BaseModel):
 
 
 class InterviewResult(BaseModel):
-    """Output of the interview phase — risks, ambiguities, questions."""
+    """Output of the interview phase — risks, ambiguities, questions, acceptance criteria."""
     risks: list[str] = []
     ambiguities: list[str] = []
     questions: list[str] = []
     assumptions: list[str] = []
+    acceptance_criteria: list[str] = []
     user_answers: dict[str, str] = {}
     approved: bool = False
     audited_answers: list[AuditedAnswer] = []

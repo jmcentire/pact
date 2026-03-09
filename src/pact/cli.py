@@ -904,6 +904,10 @@ async def cmd_interview(args: argparse.Namespace) -> None:
                 print(f"  {i}. {q}")
             print(f"\nRisks: {', '.join(result.risks)}")
             print(f"Assumptions: {', '.join(result.assumptions)}")
+            if result.acceptance_criteria:
+                print(f"\nAcceptance criteria (done when):")
+                for i, ac in enumerate(result.acceptance_criteria, 1):
+                    print(f"  {i}. {ac}")
             print(f"\nAnswer with: pact answer {args.project_dir}")
         else:
             print("No questions — ready to decompose.")
