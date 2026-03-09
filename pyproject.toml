@@ -32,6 +32,7 @@ Documentation = "https://jmcentire.github.io/pact/"
 
 [project.scripts]
 pact = "pact.cli:main"
+pact-mcp = "pact.mcp_server:main"
 
 [project.optional-dependencies]
 llm = [
@@ -42,6 +43,9 @@ openai = [
 ]
 gemini = [
     "google-genai>=1.0",
+]
+mcp = [
+    "mcp>=1.0",
 ]
 all-backends = [
     "anthropic>=0.40",

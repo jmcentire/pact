@@ -26,6 +26,8 @@ Commands:
   pact report <project-dir> <error>    Manually report a production error
   pact incidents <project-dir>         List active/recent incidents
   pact incident <project-dir> <id>     Show incident details + diagnostic report
+  pact ci <project-dir>               Generate GitHub Actions CI workflow
+  pact deploy <project-dir>           Generate baton.yaml topology config
 """
 
 from __future__ import annotations
@@ -265,6 +267,23 @@ def main() -> None:
     p_wizard.add_argument("--config", default=None, metavar="FILE", help="JSON/YAML config file for non-interactive mode")
     p_wizard.add_argument("--budget", type=float, default=None, help="Override budget (skips budget question)")
 
+    # ci
+    p_ci = subparsers.add_parser("ci", help="Generate GitHub Actions CI workflow for a pact-managed project")
+    p_ci.add_argument("project_dir", help="Project directory path")
+    p_ci.add_argument("--output", default=None, help="Override output path (default: .github/workflows/pact-verify.yml)")
+
+    # deploy
+    p_deploy = subparsers.add_parser("deploy", help="Generate baton.yaml topology config for a pact-managed project")
+
+    # mcp-server
+    p_mcp = subparsers.add_parser("mcp-server", help="Run MCP server (stdio transport)")
+    p_mcp.add_argument("--project-dir", default=None, help="Project directory (default: auto-detect)")
+    p_deploy.add_argument("project_dir", help="Project directory path")
+    p_deploy.add_argument("--output", default=None, help="Override output path (default: baton.yaml in project root)")
+    p_deploy.add_argument("--sink", default="jsonl", choices=["jsonl", "otel"], help="Observability sink (default: jsonl)")
+    p_deploy.add_argument("--error-rate", type=float, default=5.0, help="Canary error rate threshold percent (default: 5.0)")
+    p_deploy.add_argument("--p95-ms", type=float, default=500.0, help="Canary p95 latency threshold in ms (default: 500)")
+
     args = parser.parse_args()
 
     if args.verbose:
@@ -350,6 +369,21 @@ def main() -> None:
         cmd_handoff(args)
     elif args.command == "wizard":
         cmd_wizard(args)
+    elif args.command == "ci":
+        cmd_ci(args)
+    elif args.command == "deploy":
+        cmd_deploy(args)
+    elif args.command == "mcp-server":
+        cmd_mcp_server(args)
+
+
+def cmd_mcp_server(args: argparse.Namespace) -> None:
+    """Run the Pact MCP server (stdio transport)."""
+    import os
+    if args.project_dir:
+        os.environ["PACT_PROJECT_DIR"] = str(args.project_dir)
+    from pact.mcp_server import main as mcp_main
+    mcp_main()
 
 
 def cmd_wizard(args: argparse.Namespace) -> None:
@@ -2407,6 +2441,26 @@ def cmd_health(args: argparse.Namespace) -> None:
                 print(f"  [{r.kind}] {r.description}")
                 if r.fifo_hint:
                     print(f"    pact signal {args.project_dir} --directive '{r.fifo_hint}'")
+
+def cmd_ci(args: argparse.Namespace) -> None:
+    """Generate a GitHub Actions CI workflow for a pact-managed project."""
+    from pact.ci import generate_ci_workflow
+
+    generate_ci_workflow(args.project_dir, output_path=args.output)
+
+
+def cmd_deploy(args: argparse.Namespace) -> None:
+    """Generate a baton.yaml topology config for a pact-managed project."""
+    from pact.deploy import generate_baton_yaml
+
+    generate_baton_yaml(
+        args.project_dir,
+        output_path=args.output,
+        sink=args.sink,
+        error_rate_threshold=args.error_rate,
+        p95_ms_threshold=args.p95_ms,
+    )
+
 
 if __name__ == "__main__":
     main()

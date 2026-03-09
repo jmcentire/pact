@@ -182,6 +182,7 @@ pact build my-project sync_tracker --competitive --agents 3
 | `pact adopt <project>` | Adopt existing codebase under pact governance |
 | `pact handoff <project> <id>` | Render/validate handoff brief for a component |
 | `pact pricing` | Show model pricing table (`--export` to override) |
+| `pact mcp-server` | Run MCP server (stdio transport) |
 
 ## Configuration
 
@@ -310,7 +311,48 @@ Beyond contract validation, Pact includes structural checks that catch problems 
 
 - **Smoke Test Generation** -- `pact adopt` generates mechanical smoke tests from AST analysis -- no LLM required. Extracts all public module-level function signatures (filtering out methods, private functions, and nested functions via indentation check) and produces import + callable check tests in `tests/smoke/`.
 
-## Claude Code Integration
+## MCP Server
+
+Pact includes an MCP (Model Context Protocol) server for integration with Claude Code and other MCP clients. Inspect project state, validate contracts, and manage runs without leaving your editor.
+
+```bash
+# Install with MCP support
+pip install pact-agents[mcp]
+
+# Run the MCP server (stdio transport)
+pact-mcp
+# Or via CLI
+pact mcp-server --project-dir ./my-project
+```
+
+**7 tools** available via MCP:
+
+| Tool | Description |
+|------|-------------|
+| `pact_status` | Run status with component breakdown |
+| `pact_contracts` | List all component contracts |
+| `pact_contract` | Full contract for a specific component |
+| `pact_budget` | Budget and spend summary |
+| `pact_retrospective` | Latest run retrospective |
+| `pact_validate` | Run contract validation gate |
+| `pact_resume` | Resume a failed/paused run |
+
+**Claude Code configuration** (add to `.claude/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "pact": {
+      "command": "pact-mcp",
+      "env": { "PACT_PROJECT_DIR": "/path/to/your/project" }
+    }
+  }
+}
+```
+
+Project detection: set `PACT_PROJECT_DIR`, pass `project_dir` to any tool, or let the server auto-detect from the working directory.
+
+## Claude Code Slash Command
 
 Pact ships with a Claude Code custom slash command for crafting optimal task specifications:
 

@@ -3,6 +3,9 @@
 Provides structured read access to Pact project state for external tools.
 Resources are read-only. Tools may modify state with confirmation.
 
+Run with: pact-mcp (stdio transport, for Claude Code integration)
+Or:       pact mcp-server [--project-dir <dir>]
+
 MCP resources:
   pact://status          -> RunState summary
   pact://contracts       -> list of contracts with summaries
@@ -20,6 +23,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -287,3 +292,184 @@ class PactMCPServer:
             {"name": "pact_status", "description": "Detailed status with component breakdown"},
             {"name": "pact_resume", "description": "Resume a failed/paused run"},
         ]
+
+
+# ── FastMCP transport layer ──────────────────────────────────────────
+
+def _find_project_dir() -> Path | None:
+    """Find a Pact project directory.
+
+    Checks PACT_PROJECT_DIR env var first, then walks up from CWD
+    looking for pact.yaml or .pact/.
+    """
+    env = os.environ.get("PACT_PROJECT_DIR")
+    if env:
+        p = Path(env).resolve()
+        if p.exists():
+            return p
+
+    cwd = Path.cwd()
+    for d in [cwd, *cwd.parents]:
+        if (d / "pact.yaml").exists() or (d / ".pact").exists():
+            return d
+    return None
+
+
+def _json_str(obj: Any) -> str:
+    """JSON-serialize with safe defaults."""
+    return json.dumps(obj, indent=2, default=str)
+
+
+def _create_mcp_app():
+    """Create and configure the FastMCP application.
+
+    Separated from module-level code so import doesn't fail
+    when the mcp package isn't installed (tests only need PactMCPServer).
+    """
+    from mcp.server.fastmcp import FastMCP
+
+    app = FastMCP(
+        "pact",
+        instructions=(
+            "Pact is a contract-first multi-agent software engineering framework. "
+            "Use these tools to inspect project state, validate contracts, and manage runs.\n\n"
+            "## Available tools\n"
+            "- `pact_status`: Get run status with component breakdown\n"
+            "- `pact_contracts`: List all component contracts\n"
+            "- `pact_contract`: Get full contract for a specific component\n"
+            "- `pact_budget`: Get budget and spend summary\n"
+            "- `pact_retrospective`: Get the latest run retrospective\n"
+            "- `pact_validate`: Run contract validation gate\n"
+            "- `pact_resume`: Resume a failed or paused run\n\n"
+            "## Project detection\n"
+            "Set PACT_PROJECT_DIR env var, or the server auto-detects from CWD.\n"
+            "Pass project_dir to any tool to override."
+        ),
+    )
+
+    def _server(project_dir: str | None = None) -> PactMCPServer:
+        """Resolve project dir and return a PactMCPServer instance."""
+        if project_dir:
+            return PactMCPServer(project_dir)
+        found = _find_project_dir()
+        return PactMCPServer(found)
+
+    # ── Tools ────────────────────────────────────────────────────
+
+    @app.tool()
+    def pact_status(project_dir: str | None = None) -> str:
+        """Get detailed run status with component breakdown.
+
+        Shows run ID, phase, cost, tokens, and per-component status.
+        """
+        s = _server(project_dir)
+        return _json_str(s.tool_status())
+
+    @app.tool()
+    def pact_contracts(project_dir: str | None = None) -> str:
+        """List all component contracts with summaries.
+
+        Returns contract names, descriptions, function/type counts, and dependencies.
+        """
+        s = _server(project_dir)
+        return _json_str(s.resource_contracts())
+
+    @app.tool()
+    def pact_contract(component_id: str, project_dir: str | None = None) -> str:
+        """Get the full contract for a specific component.
+
+        Args:
+            component_id: The component ID to look up.
+        """
+        s = _server(project_dir)
+        return _json_str(s.resource_contract(component_id))
+
+    @app.tool()
+    def pact_budget(project_dir: str | None = None) -> str:
+        """Get budget and spend summary.
+
+        Shows budget cap, amount spent, remaining, percentage used, and token count.
+        """
+        s = _server(project_dir)
+        return _json_str(s.resource_budget())
+
+    @app.tool()
+    def pact_retrospective(project_dir: str | None = None) -> str:
+        """Get the latest run retrospective.
+
+        Returns the most recent retrospective analysis from the project.
+        """
+        s = _server(project_dir)
+        return _json_str(s.resource_retrospective())
+
+    @app.tool()
+    def pact_validate(project_dir: str | None = None) -> str:
+        """Run contract validation gate.
+
+        Checks all contracts for structural correctness: refs resolve,
+        no cycles, test code parses, cross-component interfaces match.
+        """
+        s = _server(project_dir)
+        return _json_str(s.tool_validate())
+
+    @app.tool()
+    def pact_resume(from_phase: str = "", project_dir: str | None = None) -> str:
+        """Resume a failed or paused pipeline run.
+
+        Args:
+            from_phase: Optional phase to resume from (e.g. 'implement', 'integrate').
+                        If empty, resumes from where it left off.
+        """
+        s = _server(project_dir)
+        return _json_str(s.tool_resume(from_phase=from_phase))
+
+    # ── Resources ────────────────────────────────────────────────
+
+    @app.resource("pact://status")
+    def resource_status() -> str:
+        """Current run state summary."""
+        s = _server()
+        return _json_str(s.resource_status())
+
+    @app.resource("pact://contracts")
+    def resource_contracts() -> str:
+        """List all component contracts."""
+        s = _server()
+        return _json_str(s.resource_contracts())
+
+    @app.resource("pact://contract/{component_id}")
+    def resource_contract(component_id: str) -> str:
+        """Full contract for a specific component."""
+        s = _server()
+        return _json_str(s.resource_contract(component_id))
+
+    @app.resource("pact://budget")
+    def resource_budget() -> str:
+        """Budget and spend summary."""
+        s = _server()
+        return _json_str(s.resource_budget())
+
+    @app.resource("pact://retrospective")
+    def resource_retrospective() -> str:
+        """Latest run retrospective."""
+        s = _server()
+        return _json_str(s.resource_retrospective())
+
+    return app
+
+
+# ── Entry point ──────────────────────────────────────────────────────
+
+
+def main():
+    """Run the Pact MCP server (stdio transport)."""
+    try:
+        app = _create_mcp_app()
+    except ImportError:
+        print(
+            "Error: the 'mcp' package is not installed.\n"
+            "Install with: pip install pact-agents[mcp]\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    app.run()
