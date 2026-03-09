@@ -621,13 +621,16 @@ class Scheduler:
                 except Exception:
                     pass  # Health recording never blocks
 
-                # Set up component tasks
+                # Set up component tasks (preserve existing status on resume)
                 tree = self.project.load_tree()
                 if tree:
+                    existing = {t.component_id: t for t in state.component_tasks}
                     state.component_tasks = [
-                        ComponentTask(component_id=cid)
+                        existing.get(cid, ComponentTask(component_id=cid))
                         for cid in tree.topological_order()
                     ]
+                    # Persist immediately so component tasks survive crashes/failures
+                    self.project.save_state(state)
 
                     # Auto-generate task list
                     try:
