@@ -54,6 +54,15 @@ logger = logging.getLogger(__name__)
 PLANNING_PHASES = {"interview", "shape", "decompose", "diagnose"}
 GENERATION_PHASES = {"implement", "integrate"}
 
+# Maps tree node implementation_status -> ComponentTask status
+_IMPL_STATUS_TO_TASK: dict[str, str] = {
+    "pending": "pending",
+    "contracted": "contracting",
+    "implemented": "implementing",
+    "tested": "completed",
+    "failed": "failed",
+}
+
 
 def detect_cascade(tree: "DecompositionTree", failed_set: set[str]) -> int:
     """Detect cascade events from the tree structure.
@@ -401,6 +410,11 @@ class Scheduler:
                 detail="completed",
             ))
 
+        # Sync component_tasks status from tree node implementation_status.
+        # Tree nodes are the source of truth; component_tasks mirrors them
+        # for summary display.
+        self._sync_component_tasks(state)
+
         # Emit phase_complete if we advanced
         if state.phase != phase and state.status == "active":
             await self.event_bus.emit(PactEvent(
@@ -680,6 +694,28 @@ class Scheduler:
             await agent.close()
 
         return state
+
+    # ── Component task sync ────────────────────────────────────────────
+
+    def _sync_component_tasks(self, state: RunState) -> None:
+        """Sync component_tasks status from tree node implementation_status.
+
+        Tree nodes are the authoritative source for component progress.
+        This keeps the summary-level component_tasks in sync so that
+        format_run_summary() reports accurate counts.
+        """
+        if not state.component_tasks:
+            return
+        tree = self.project.load_tree()
+        if not tree:
+            return
+        for task in state.component_tasks:
+            node = tree.nodes.get(task.component_id)
+            if node:
+                mapped = _IMPL_STATUS_TO_TASK.get(
+                    node.implementation_status, task.status,
+                )
+                task.status = mapped
 
     def _make_agent_factory(self, role: str):
         """Create a factory that produces fresh agents for parallel/competitive modes."""
