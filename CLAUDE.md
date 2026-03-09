@@ -18,11 +18,13 @@ pact checklist <project-dir>       # Requirements quality checklist
 pact export-tasks <project-dir>    # Export TASKS.md
 pact handoff <project-dir> <id>    # Render/validate handoff brief
 pact directive <project-dir> <json> # Send structured directive to daemon
+pact mcp-server [--project-dir <dir>] # Run MCP server (stdio)
+pact-mcp                              # MCP server entry point
 ```
 
-**Entry point**: `pact = "pact.cli:main"` (pyproject.toml)
+**Entry point**: `pact = "pact.cli:main"`, `pact-mcp = "pact.mcp_server:main"` (pyproject.toml)
 
-**Python**: >=3.12 | **Dependencies**: pydantic>=2.0, pyyaml>=6.0 | **Optional**: anthropic>=0.40
+**Python**: >=3.12 | **Dependencies**: pydantic>=2.0, pyyaml>=6.0 | **Optional**: anthropic>=0.40, mcp>=1.0
 
 ## Architecture Overview
 
@@ -156,6 +158,7 @@ src/pact/
   interface_stub.py    # Interface stub generation + log key preamble
   standards.py         # Global standards collection + rendering
   cli.py               # CLI entry points
+  mcp_server.py        # MCP server (FastMCP transport + PactMCPServer handlers)
 
   # Spec-kit capabilities (task list, analysis, checklist)
   schemas_tasks.py     # Task list, analysis, checklist Pydantic models
