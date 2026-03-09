@@ -304,6 +304,21 @@ make test          # 1886 tests, ~7s
 make test-quick    # Stop on first failure
 ```
 
+## Release Checklist
+
+When asked to release, follow these steps exactly. Do NOT install twine or attempt manual PyPI upload — it's fully automated.
+
+1. Run full test suite: `python3 -m pytest tests/ -v`
+2. Bump version in `pyproject.toml` and `src/pact/__init__.py`
+3. Commit version bump and all changes
+4. Push to main: `git push origin main`
+5. Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`
+6. Create GitHub release: `gh release create vX.Y.Z --title "..." --notes "..." -R jmcentire/pact`
+7. Watch the workflow: `gh run watch <id> -R jmcentire/pact` -- publish job must pass
+8. Verify on PyPI: `pip index versions pact-agents 2>/dev/null | head -1` or check https://pypi.org/project/pact-agents/
+
+**Definition of done:** The release is complete when (a) the publish workflow is green, (b) the new version appears on PyPI, and (c) `pip install pact-agents==X.Y.Z` succeeds. If the workflow fails, fix the issue, bump to a new patch version, and repeat from step 1 -- do not re-tag or force-push an existing tag.
+
 ## Kindex Knowledge Graph
 
 A persistent knowledge graph (`kin`) indexes conversations, projects, and intellectual work across all repos. It hooks into Claude Code automatically (SessionStart, PreCompact). Docs: https://jmcentire.github.io/kindex/
