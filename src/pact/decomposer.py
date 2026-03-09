@@ -121,6 +121,11 @@ Identify:
 2. Ambiguities: What aspects are unclear or underspecified?
 3. Questions: Specific questions for the product owner
 4. Assumptions: What assumptions will you make if not clarified?
+5. Acceptance criteria: What specific, testable conditions must be true
+   for this task to be considered DONE? These should be concrete and
+   verifiable — not vague qualities but observable outcomes. If the task
+   spec already states acceptance criteria, extract them. If it doesn't,
+   propose what "done" should mean based on the task description.
 
 Be specific and actionable. Focus on issues that would cause
 different engineers to implement incompatible solutions."""
@@ -199,11 +204,14 @@ async def run_decomposition(
             for q in interview.questions
         )
         assumptions = "\n".join(f"  - {a}" for a in interview.assumptions)
+        acceptance = "\n".join(f"  - {a}" for a in interview.acceptance_criteria) if interview.acceptance_criteria else ""
         interview_context = (
             f"\nInterview results:\n"
             f"Answers:\n{answers}\n"
             f"Assumptions:\n{assumptions}"
         )
+        if acceptance:
+            interview_context += f"\nAcceptance criteria (definition of done):\n{acceptance}"
 
     shaping_section = ""
     if pitch_context:
