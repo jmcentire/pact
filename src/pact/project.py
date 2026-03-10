@@ -76,6 +76,38 @@ PACT_DIR = ".pact"
 STATE_FILE = "state.json"
 AUDIT_FILE = "audit.jsonl"
 
+_GITATTRIBUTES_CONTENT = """\
+# Pact-generated artifacts — collapsed in GitHub PRs
+# Human inputs: task.md, sops.md, pact.yaml, design.md
+# Human deliverables: src/**
+
+# Decomposition artifacts
+decomposition/*.json linguist-generated=true
+
+# Contracts and interface stubs
+contracts/**/interface.json linguist-generated=true
+contracts/**/interface.py linguist-generated=true
+contracts/**/interface.ts linguist-generated=true
+contracts/**/history/*.json linguist-generated=true
+
+# Test suites (generated from contracts)
+tests/**/contract_test_suite.json linguist-generated=true
+tests/**/contract_test.py linguist-generated=true
+tests/**/contract_test.test.ts linguist-generated=true
+tests/**/goodhart/goodhart_test_suite.json linguist-generated=true
+tests/**/goodhart/goodhart_test.py linguist-generated=true
+tests/**/goodhart/goodhart_test.test.ts linguist-generated=true
+tests/smoke/test_*.py linguist-generated=true
+
+# Project metadata (auto-generated after decomposition)
+standards.json linguist-generated=true
+tasks.json linguist-generated=true
+TASKS.md linguist-generated=true
+design.json linguist-generated=true
+analysis.json linguist-generated=true
+checklist.json linguist-generated=true
+"""
+
 
 class ProjectManager:
     """Manages project directory lifecycle."""
@@ -216,6 +248,10 @@ class ProjectManager:
                 "*Auto-maintained by pact. Do not edit manually.*\n\n"
                 "## Status: Not started\n"
             )
+
+        gitattributes = self.project_dir / ".gitattributes"
+        if not gitattributes.exists():
+            gitattributes.write_text(_GITATTRIBUTES_CONTENT)
 
         logger.info("Initialized project: %s", self.project_dir)
 
