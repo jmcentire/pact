@@ -36,7 +36,11 @@ that verifies implementations against their contracts. Tests verify
 behavior at boundaries, not internals. Cover happy paths, edge cases,
 error cases, and invariants. Mock dependencies with vi.mock(). Use
 describe/it blocks with expect() assertions.
-- Include clear assertions with helpful failure messages"""
+- Include clear assertions with helpful failure messages
+- Effect v3 CRITICAL: Data.tagged is curried. WRONG: Data.tagged('Tag', {fields}).
+  CORRECT: Data.tagged('Tag')({fields}) or Data.TaggedError('Tag')({fields}).
+  The second positional argument is silently ignored — this is the #1 Effect v3 mistake.
+  Similarly, Layer.fail() takes a value, not a constructor — pass the constructed error."""
 
 TEST_SYSTEM_JS = """You are starting fresh on this test suite with no prior context.
 
@@ -55,7 +59,11 @@ Key principles:
 - Use only vitest — no external dependencies beyond vitest
 - Do NOT use TypeScript annotations — no type annotations, no interfaces
 - Use descriptive test names that explain the scenario
-- Include clear assertions with helpful failure messages"""
+- Include clear assertions with helpful failure messages
+- Effect v3 CRITICAL: Data.tagged is curried. WRONG: Data.tagged('Tag', {fields}).
+  CORRECT: Data.tagged('Tag')({fields}) or Data.TaggedError('Tag')({fields}).
+  The second positional argument is silently ignored — this is the #1 Effect v3 mistake.
+  Similarly, Layer.fail() takes a value, not a constructor — pass the constructed error."""
 
 
 def _render_focused_contract(contract: ComponentContract) -> str:
@@ -390,7 +398,10 @@ Key principles:
   NOT the specific assertion. These descriptions become graduated hints during remediation.
 - Dependencies must be mocked — tests verify one component in isolation
 - Generated code must be syntactically valid TypeScript for Vitest
-- Do NOT duplicate coverage already in the visible tests — find gaps"""
+- Do NOT duplicate coverage already in the visible tests — find gaps
+- Effect v3 CRITICAL: Data.tagged is curried. WRONG: Data.tagged('Tag', {fields}).
+  CORRECT: Data.tagged('Tag')({fields}) or Data.TaggedError('Tag')({fields}).
+  The second positional argument is silently ignored. Layer.fail() takes a value, not a constructor."""
 
 
 async def author_goodhart_tests(

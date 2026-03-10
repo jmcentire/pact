@@ -42,7 +42,11 @@ function, and error class names must match the contract stub exactly. Check
 the REQUIRED EXPORTS list — tests import these names directly. Standalone
 functions are module-level named exports. Use strict mode, unknown instead
 of any. Error classes extend Error. Named exports only, no defaults.
-All log statements include the PACT log key."""
+All log statements include the PACT log key.
+Effect v3 CRITICAL: Data.tagged is curried. WRONG: Data.tagged('Tag', {fields}).
+CORRECT: Data.tagged('Tag')({fields}) or Data.TaggedError('Tag')({fields}).
+The second positional argument is silently ignored — this is the #1 Effect v3 mistake.
+Similarly, Layer.fail() takes a value, not a constructor — pass the constructed error."""
 
 CODE_SYSTEM_JS = """You are starting fresh on this implementation with no prior context.
 
@@ -51,7 +55,11 @@ function and error class names must match the contract stub exactly. Check
 the REQUIRED EXPORTS list — tests import these names directly. Standalone
 functions are module-level named exports. Use ESM imports with .js extensions.
 Error classes extend Error. Named exports only, no defaults. No TypeScript
-syntax. JSDoc for documentation. All log statements include the PACT log key."""
+syntax. JSDoc for documentation. All log statements include the PACT log key.
+Effect v3 CRITICAL: Data.tagged is curried. WRONG: Data.tagged('Tag', {fields}).
+CORRECT: Data.tagged('Tag')({fields}) or Data.TaggedError('Tag')({fields}).
+The second positional argument is silently ignored — this is the #1 Effect v3 mistake.
+Similarly, Layer.fail() takes a value, not a constructor — pass the constructed error."""
 
 
 class ImplementationResult:
