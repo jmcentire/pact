@@ -105,6 +105,36 @@ class FunctionContract(BaseModel):
     performance_budget: PerformanceBudget | None = None
 
 
+class DataAccessSideEffect(BaseModel):
+    """A specific side effect with classification context."""
+    type: str                        # database_read, external_call, file_write, etc.
+    classification: str = ""         # PII, PUBLIC, INTERNAL, etc.
+    fields: list[str] = []           # ["user.email", "user.created_at"]
+    rationale: str = ""
+
+
+class DataAccessDeclaration(BaseModel):
+    """Declares what data tiers a component reads/writes and why."""
+    reads: list[str] = []            # classification tiers this component reads
+    writes: list[str] = []           # classification tiers this component writes
+    rationale: str = ""              # REQUIRED non-empty, must be specific
+    side_effects: list[DataAccessSideEffect] = []
+
+
+class AuthorityDeclaration(BaseModel):
+    """Declares what data domains a component owns."""
+    domains: list[str] = []          # data domain patterns (empty for non-authoritative)
+    rationale: str | None = None     # required string if domains is non-empty
+
+
+class ConstrainContext(BaseModel):
+    """Artifacts loaded from a Constrain output directory."""
+    prompt: str = ""
+    constraints: dict = {}
+    component_map: dict = {}
+    trust_policy: dict = {}
+
+
 class ComponentContract(BaseModel):
     """The interface contract for a single component — the artifact."""
     component_id: str
@@ -118,6 +148,8 @@ class ComponentContract(BaseModel):
     invariants: list[str] = []
     requires: list[str] = []
     processing_register: str = ""
+    data_access: DataAccessDeclaration = DataAccessDeclaration()
+    authority: AuthorityDeclaration = AuthorityDeclaration()
 
 
 # ── Test Models ──────────────────────────────────────────────────────
@@ -510,7 +542,7 @@ class RunState(BaseModel):
     status: Literal["active", "paused", "completed", "failed", "budget_exceeded"] = "active"
     phase: Literal[
         "interview", "shape", "decompose", "contract", "implement",
-        "integrate", "polish", "diagnose", "complete"
+        "integrate", "arbiter", "polish", "diagnose", "complete"
     ] = "interview"
     component_tasks: list[ComponentTask] = []
     interview_result: InterviewResult | None = None
@@ -523,6 +555,9 @@ class RunState(BaseModel):
     phase_cycles: int = 0
     health_snapshot: dict = {}  # Serialized HealthMetrics, accumulates across phases
     processing_register: str = ""
+    audit_commit: str = ""  # Last synced audit repo commit hash
+    arbiter_response: dict = {}  # Persisted Arbiter gate result
+    constrain_context: dict = {}  # Loaded Constrain artifacts (serialized)
 
     def record_tokens(self, input_tokens: int, output_tokens: int, cost: float) -> None:
         self.total_tokens += input_tokens + output_tokens
@@ -605,3 +640,39 @@ class SpecAuditResult(BaseModel):
     gap_count: int = 0
     total_count: int = 0
     summary: str = Field(default="", description="Human-readable summary")
+
+
+# ── Certification ────────────────────────────────────────────────────
+
+
+class CertificationArtifact(BaseModel):
+    """Tamper-evident proof that an implementation satisfies all contracts and tests.
+
+    Produced by the orchestrator after running visible + Goodhart tests from the
+    audit repo against implementations in the code repo. The self_hash field
+    provides integrity: zero it, serialize, SHA-256 the JSON, compare.
+    """
+    version: str = "1.0"
+    project_id: str = ""
+    timestamp: str = ""
+    verdict: Literal["pass", "fail", "partial"] = "fail"
+
+    # Artifact hashes (SHA-256 of file contents)
+    tree_hash: str = ""
+    contract_hashes: dict[str, str] = {}       # cid -> sha256
+    test_hashes: dict[str, str] = {}           # cid -> sha256 of contract_test_suite.json
+    goodhart_hashes: dict[str, str] = {}       # cid -> sha256 of goodhart_test_suite.json
+
+    # Test result summaries
+    visible_results: dict[str, dict] = {}      # cid -> {total, passed, failed}
+    goodhart_results: dict[str, dict] = {}     # cid -> {total, passed, failed}
+
+    # Provenance
+    audit_repo_url: str = ""
+    audit_commit: str = ""
+    code_commit: str = ""
+    components: list[str] = []
+    summary: str = ""
+
+    # Self-integrity: SHA-256 of this artifact with self_hash=""
+    self_hash: str = ""

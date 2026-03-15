@@ -17,6 +17,7 @@ from pact.contracts import (
 from pact.schemas import (
     ComponentContract,
     ContractTestSuite,
+    DataAccessDeclaration,
     DecompositionNode,
     DecompositionTree,
     ErrorCase,
@@ -48,6 +49,10 @@ def _make_contract(
             ),
         ],
         dependencies=dependencies or [],
+        data_access=DataAccessDeclaration(
+            reads=["PUBLIC"],
+            rationale="Reads public input data for string transformation, no persistence",
+        ),
     )
 
 

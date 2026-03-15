@@ -39,3 +39,5 @@ Thumbs.db
 
 # User-local pricing overrides
 model_pricing.json
+.envrc
+.direnv/

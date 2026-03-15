@@ -400,7 +400,7 @@
     <div class="links">
       <a href="#how-it-works">How It Works</a>
       <a href="#features">Features</a>
-      <a href="#sentinel">Sentinel</a>
+      <a href="#stack">Stack</a>
       <a href="#quickstart">Quick Start</a>
       <a href="https://github.com/jmcentire/pact" class="btn btn-outline">GitHub</a>
     </div>
@@ -480,8 +480,12 @@
         <span class="phase-label">Implement<br>&amp; Integrate</span>
       </div>
       <div class="phase">
+        <div class="phase-dot">8.5</div>
+        <span class="phase-label">Arbiter<br>Gate</span>
+      </div>
+      <div class="phase">
         <div class="phase-dot">9</div>
-        <span class="phase-label">Diagnose</span>
+        <span class="phase-label">Polish &amp;<br>Certify</span>
       </div>
     </div>
   </div>
@@ -666,32 +670,36 @@
   </div>
 </section>
 
-<section class="sentinel" id="sentinel">
+<section class="sentinel" id="stack">
   <div class="container">
     <div class="sentinel-grid">
       <div>
-        <h2>If AI writes the code, who debugs it at 3am?</h2>
+        <h2>One piece of a larger stack</h2>
         <p>
-          Agents do. The <strong>Sentinel</strong> watches production logs, detects errors, and
-          attributes them to the right component via embedded PACT log keys.
+          Pact is the contract-first build system. It integrates with four companion tools &mdash;
+          all optional, all additive.
         </p>
         <p>
-          It spawns a knowledge-flashed fixer agent loaded with the full contract and test context,
-          adds a reproducer test, rebuilds the module, and verifies all tests pass.
-          The contract ensures no regressions.
+          <strong>Constrain</strong> seeds decomposition with policies and component maps.
+          <strong>Arbiter</strong> gates deployments with blast radius analysis and trust scoring.
+          <strong>Ledger</strong> injects field-level audit assertions into test suites.
+          <strong>Sentinel</strong> watches production, attributes errors via PACT keys, and pushes
+          tightened contracts back.
         </p>
         <p>
-          You review the <em>contract change</em> in the morning. Not the code.
+          Every implementation emits structured events with classification metadata.
+          The <strong>access_graph.json</strong> artifact captures what each component reads, writes,
+          and owns &mdash; consumed by Arbiter at phase 8.5 before code ships.
         </p>
       </div>
       <div class="sentinel-flow">
-        <div class="step"><span class="arrow">&#9656;</span> <span>Error detected in production logs</span></div>
-        <div class="step"><span class="arrow">&#9656;</span> <span><span class="label">PACT:a3f2:auth_module</span> <span class="dim">// attributed</span></span></div>
-        <div class="step"><span class="arrow">&#9656;</span> <span>Fixer agent spawned with contract context</span></div>
-        <div class="step"><span class="arrow">&#9656;</span> <span>Reproducer test added to contract</span></div>
-        <div class="step"><span class="arrow">&#9656;</span> <span>Implementation rebuilt from scratch</span></div>
-        <div class="step"><span class="arrow">&#9656;</span> <span><span class="label">1,886 tests pass</span> <span class="dim">// verified</span></span></div>
-        <div class="step"><span class="arrow">&#9656;</span> <span>Contract got stricter. Bug can't recur.</span></div>
+        <div class="step"><span class="arrow">&#9656;</span> <span><span class="label">Constrain</span> <span class="dim">// policies, component maps, trust</span></span></div>
+        <div class="step"><span class="arrow">&#9656;</span> <span>Pact decomposes, contracts, builds</span></div>
+        <div class="step"><span class="arrow">&#9656;</span> <span>access_graph.json emitted</span></div>
+        <div class="step"><span class="arrow">&#9656;</span> <span><span class="label">Arbiter</span> <span class="dim">// blast radius + trust gate</span></span></div>
+        <div class="step"><span class="arrow">&#9656;</span> <span><span class="label">Ledger</span> <span class="dim">// field-level audit assertions</span></span></div>
+        <div class="step"><span class="arrow">&#9656;</span> <span>Certification artifact produced</span></div>
+        <div class="step"><span class="arrow">&#9656;</span> <span><span class="label">Sentinel</span> <span class="dim">// production monitoring + contract tightening</span></span></div>
       </div>
     </div>
   </div>

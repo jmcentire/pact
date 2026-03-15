@@ -72,6 +72,9 @@ def main() -> None:
     p_run.add_argument("project_dir", help="Project directory path")
     p_run.add_argument("--once", action="store_true", help="Run one burst only")
     p_run.add_argument("--force-new", action="store_true", help="Clear state and start fresh")
+    p_run.add_argument("--constrain-dir", default="", help="Constrain output directory")
+    p_run.add_argument("--ledger-dir", default="", help="Ledger assertion exports directory")
+    p_run.add_argument("--skip-arbiter", action="store_true", help="Skip Arbiter gate phase")
 
     # daemon (FIFO-based, event-driven)
     p_daemon = subparsers.add_parser("daemon", help="Run event-driven daemon (recommended)")
@@ -170,25 +173,7 @@ def main() -> None:
     p_diff.add_argument("project_dir", help="Project directory path")
     p_diff.add_argument("component_id", help="Component ID to diff")
 
-    # watch (monitoring)
-    p_watch = subparsers.add_parser("watch", help="Start the Sentinel production monitor")
-    p_watch.add_argument("project_dirs", nargs="+", help="Project directories to monitor")
 
-    # report (manual error report)
-    p_report = subparsers.add_parser("report", help="Manually report a production error")
-    p_report.add_argument("project_dir", help="Project directory path")
-    p_report.add_argument("error_text", help="Error description text")
-
-    # incidents (list)
-    p_incidents = subparsers.add_parser("incidents", help="List active/recent incidents")
-    p_incidents.add_argument("project_dir", help="Project directory path")
-    p_incidents.add_argument("--all", action="store_true", dest="show_all", help="Include resolved/escalated")
-    p_incidents.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
-
-    # incident (detail)
-    p_incident = subparsers.add_parser("incident", help="Show incident details + diagnostic report")
-    p_incident.add_argument("project_dir", help="Project directory path")
-    p_incident.add_argument("incident_id", help="Incident ID")
 
     # tasks
     p_tasks = subparsers.add_parser("tasks", help="Generate/display task list")
@@ -278,11 +263,40 @@ def main() -> None:
     # mcp-server
     p_mcp = subparsers.add_parser("mcp-server", help="Run MCP server (stdio transport)")
     p_mcp.add_argument("--project-dir", default=None, help="Project directory (default: auto-detect)")
+
+    # Audit separation (two-repo model)
+    p_audit_init = subparsers.add_parser("audit-init", help="Initialize audit repo for separation of privilege")
+    p_audit_init.add_argument("project_dir", help="Project directory path (code repo)")
+    p_audit_init.add_argument("--audit-dir", required=True, help="Path to audit repo directory")
+    p_audit_init.add_argument("--audit-repo", default="", help="Git URL of audit repo (optional)")
+
+    p_sync = subparsers.add_parser("sync", help="Sync visible tests from audit repo to code repo")
+    p_sync.add_argument("project_dir", help="Project directory path (code repo)")
+
+    p_certify = subparsers.add_parser("certify", help="Run certification (all tests against code repo)")
+    p_certify.add_argument("project_dir", help="Project directory path")
+    p_certify.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
+    p_certify.add_argument("--verify-only", action="store_true", help="Only verify existing certification")
     p_deploy.add_argument("project_dir", help="Project directory path")
     p_deploy.add_argument("--output", default=None, help="Override output path (default: baton.yaml in project root)")
     p_deploy.add_argument("--sink", default="jsonl", choices=["jsonl", "otel"], help="Observability sink (default: jsonl)")
     p_deploy.add_argument("--error-rate", type=float, default=5.0, help="Canary error rate threshold percent (default: 5.0)")
     p_deploy.add_argument("--p95-ms", type=float, default=500.0, help="Canary p95 latency threshold in ms (default: 500)")
+
+    # Sentinel integration subcommands
+    p_sentinel = subparsers.add_parser("sentinel", help="Sentinel integration commands")
+    sentinel_sub = p_sentinel.add_subparsers(dest="sentinel_command")
+
+    p_sentinel_status = sentinel_sub.add_parser("status", help="Show Sentinel connection config")
+    p_sentinel_status.add_argument("project_dir", help="Project directory path")
+
+    p_sentinel_push = sentinel_sub.add_parser("push-contract", help="Accept tightened contract from Sentinel")
+    p_sentinel_push.add_argument("project_dir", help="Project directory path")
+    p_sentinel_push.add_argument("component_id", help="Component ID")
+    p_sentinel_push.add_argument("contract_file", help="Path to tightened contract JSON")
+
+    p_sentinel_keys = sentinel_sub.add_parser("list-keys", help="List all PACT keys in project")
+    p_sentinel_keys.add_argument("project_dir", help="Project directory path")
 
     args = parser.parse_args()
 
@@ -337,14 +351,6 @@ def main() -> None:
         cmd_resume(args)
     elif args.command == "diff":
         cmd_diff(args)
-    elif args.command == "watch":
-        asyncio.run(cmd_watch(args))
-    elif args.command == "report":
-        asyncio.run(cmd_report(args))
-    elif args.command == "incidents":
-        cmd_incidents(args)
-    elif args.command == "incident":
-        cmd_incident(args)
     elif args.command == "tasks":
         cmd_tasks(args)
     elif args.command == "analyze":
@@ -375,6 +381,14 @@ def main() -> None:
         cmd_deploy(args)
     elif args.command == "mcp-server":
         cmd_mcp_server(args)
+    elif args.command == "audit-init":
+        cmd_audit_init(args)
+    elif args.command == "sync":
+        asyncio.run(cmd_sync(args))
+    elif args.command == "certify":
+        asyncio.run(cmd_certify(args))
+    elif args.command == "sentinel":
+        cmd_sentinel(args)
 
 
 def cmd_mcp_server(args: argparse.Namespace) -> None:
@@ -1790,186 +1804,6 @@ def cmd_diff(args: argparse.Namespace) -> None:
                 print(line, end="")
 
 
-async def cmd_watch(args: argparse.Namespace) -> None:
-    """Start the Sentinel production monitor."""
-    from pathlib import Path
-    from pact.schemas_monitoring import MonitoringTarget
-    from pact.sentinel import Sentinel
-
-    global_config = load_global_config()
-
-    if not global_config.monitoring_enabled:
-        print("Monitoring is disabled. Set monitoring_enabled: true in config.yaml")
-        return
-
-    targets: list[MonitoringTarget] = []
-    for project_dir in args.project_dirs:
-        project_config = load_project_config(project_dir)
-        target = MonitoringTarget(
-            project_dir=str(Path(project_dir).resolve()),
-            label=Path(project_dir).name,
-            log_files=project_config.monitoring_log_files,
-            process_patterns=project_config.monitoring_process_patterns,
-            webhook_port=project_config.monitoring_webhook_port,
-            error_patterns=project_config.monitoring_error_patterns,
-        )
-        targets.append(target)
-
-    if not targets:
-        print("No projects to watch.")
-        return
-
-    # Use the first project's .pact dir for state
-    state_dir = Path(args.project_dirs[0]).resolve() / ".pact"
-    state_dir.mkdir(parents=True, exist_ok=True)
-
-    sentinel = Sentinel(
-        config=global_config,
-        targets=targets,
-        state_dir=state_dir,
-    )
-
-    print(f"Sentinel starting: watching {len(targets)} project(s)")
-    for t in targets:
-        print(f"  {t.label or t.project_dir}")
-        if t.log_files:
-            print(f"    Log files: {', '.join(t.log_files)}")
-        if t.process_patterns:
-            print(f"    Processes: {', '.join(t.process_patterns)}")
-        if t.webhook_port:
-            print(f"    Webhook port: {t.webhook_port}")
-    print(f"\nAuto-remediate: {global_config.monitoring_auto_remediate}")
-    print("Press Ctrl+C to stop.\n")
-
-    # Write PID file
-    pid_path = state_dir / "sentinel.pid"
-    import os
-    pid_path.write_text(str(os.getpid()))
-
-    try:
-        await sentinel.run()
-    except KeyboardInterrupt:
-        sentinel.stop()
-    finally:
-        if pid_path.exists():
-            pid_path.unlink()
-
-
-async def cmd_report(args: argparse.Namespace) -> None:
-    """Manually report a production error."""
-    from pathlib import Path
-    from pact.incidents import IncidentManager
-    from pact.schemas_monitoring import MonitoringBudget, Signal
-
-    project_dir = str(Path(args.project_dir).resolve())
-    state_dir = Path(args.project_dir).resolve() / ".pact"
-    state_dir.mkdir(parents=True, exist_ok=True)
-
-    from datetime import datetime
-    budget = MonitoringBudget()
-    mgr = IncidentManager(state_dir, budget)
-
-    signal = Signal(
-        source="manual",
-        raw_text=args.error_text,
-        timestamp=datetime.now().isoformat(),
-    )
-    incident = mgr.create_incident(signal, project_dir)
-    print(f"Incident created: {incident.id}")
-    print(f"  Status: {incident.status}")
-    print(f"  Project: {project_dir}")
-    print(f"  Error: {args.error_text[:100]}")
-
-
-def cmd_incidents(args: argparse.Namespace) -> None:
-    """List active/recent incidents."""
-    from pathlib import Path
-    from pact.incidents import IncidentManager
-    from pact.schemas_monitoring import MonitoringBudget
-
-    state_dir = Path(args.project_dir).resolve() / ".pact"
-    if not (state_dir / "monitoring" / "incidents.json").exists():
-        print("No incidents found.")
-        return
-
-    budget = MonitoringBudget()
-    mgr = IncidentManager(state_dir, budget)
-
-    if getattr(args, "show_all", False):
-        incidents = mgr.get_recent_incidents(50)
-    else:
-        incidents = mgr.get_active_incidents()
-
-    if not incidents:
-        print("No active incidents.")
-        return
-
-    if getattr(args, "json_output", False):
-        print(json.dumps([i.model_dump() for i in incidents], indent=2, default=str))
-        return
-
-    print(f"{'ID':<14s} {'Status':<14s} {'Component':<20s} {'Spend':<10s} {'Error'}")
-    print("-" * 80)
-    for inc in incidents:
-        error_preview = ""
-        if inc.signals:
-            error_preview = inc.signals[0].raw_text[:30]
-        print(
-            f"{inc.id:<14s} {inc.status:<14s} "
-            f"{inc.component_id or 'unknown':<20s} "
-            f"${inc.spend_usd:<9.2f} {error_preview}"
-        )
-
-
-def cmd_incident(args: argparse.Namespace) -> None:
-    """Show incident details and diagnostic report."""
-    from pathlib import Path
-    from pact.incidents import IncidentManager
-    from pact.schemas_monitoring import MonitoringBudget
-
-    state_dir = Path(args.project_dir).resolve() / ".pact"
-    if not (state_dir / "monitoring" / "incidents.json").exists():
-        print("No incidents found.")
-        return
-
-    budget = MonitoringBudget()
-    mgr = IncidentManager(state_dir, budget)
-
-    incident = mgr.get_incident(args.incident_id)
-    if not incident:
-        print(f"Incident not found: {args.incident_id}")
-        return
-
-    print(f"Incident: {incident.id}")
-    print(f"  Status: {incident.status}")
-    print(f"  Component: {incident.component_id or 'unknown'}")
-    print(f"  Project: {incident.project_dir}")
-    print(f"  Created: {incident.created_at}")
-    print(f"  Updated: {incident.updated_at}")
-    print(f"  Spend: ${incident.spend_usd:.2f}")
-    print(f"  Remediation attempts: {incident.remediation_attempts}")
-    print(f"  Resolution: {incident.resolution or 'pending'}")
-
-    if incident.signals:
-        print(f"\nSignals ({len(incident.signals)}):")
-        for s in incident.signals[:10]:
-            print(f"  [{s.source}] {s.raw_text[:100]}")
-
-    if incident.diagnostic_report:
-        print(f"\n{'=' * 60}")
-        print("DIAGNOSTIC REPORT")
-        print(f"{'=' * 60}")
-        print(incident.diagnostic_report)
-
-    # Check for report file
-    report_path = state_dir / "monitoring" / "reports" / f"{incident.id}.md"
-    if report_path.exists() and not incident.diagnostic_report:
-        print(f"\n{'=' * 60}")
-        print("DIAGNOSTIC REPORT (from file)")
-        print(f"{'=' * 60}")
-        print(report_path.read_text())
-
-
 def cmd_tasks(args: argparse.Namespace) -> None:
     """Generate/display task list."""
     from pact.schemas_tasks import TaskPhase
@@ -2464,6 +2298,235 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         error_rate_threshold=args.error_rate,
         p95_ms_threshold=args.p95_ms,
     )
+
+
+def cmd_audit_init(args: argparse.Namespace) -> None:
+    """Initialize audit repo separation for a project."""
+    import shutil
+
+    import yaml
+
+    audit_dir = Path(args.audit_dir).resolve()
+    project_dir = Path(args.project_dir).resolve()
+
+    project = ProjectManager(project_dir, audit_dir=audit_dir)
+    project.init()
+
+    # Migrate existing contracts/tests/decomposition to audit dir
+    for subdir in ("contracts", "tests", "decomposition"):
+        src = project_dir / subdir
+        dst = audit_dir / subdir
+        if src.exists() and src != dst:
+            if dst.exists():
+                print(f"  {subdir}/ already exists in audit dir, skipping migration")
+            else:
+                shutil.copytree(src, dst)
+                print(f"  Migrated {subdir}/ to audit dir")
+
+    # Migrate analysis/checklist/standards/design.json
+    for fname in ("standards.json", "analysis.json", "checklist.json", "design.json"):
+        src = project_dir / fname
+        dst = audit_dir / fname
+        if src.exists() and src != dst and not dst.exists():
+            shutil.copy2(src, dst)
+            print(f"  Migrated {fname} to audit dir")
+
+    # Update pact.yaml with audit config
+    config_path = project_dir / "pact.yaml"
+    if config_path.exists():
+        with open(config_path) as f:
+            raw = yaml.safe_load(f) or {}
+    else:
+        raw = {}
+
+    raw["audit_dir"] = str(audit_dir)
+    if args.audit_repo:
+        raw["audit_repo"] = args.audit_repo
+
+    with open(config_path, "w") as f:
+        yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
+
+    # Run initial sync
+    from pact.sync import sync_visible_tests
+
+    results = sync_visible_tests(project)
+
+    print(f"\nAudit repo initialized at: {audit_dir}")
+    print(f"Synced {len(results)} component test suites to code repo")
+    print("\nNext steps:")
+    print("  1. Initialize git in the audit dir (if not already a repo)")
+    print("  2. Set audit_mode in pact.yaml:")
+    print('     - "audit" for the auditing agent')
+    print('     - "code" for the coding agent')
+
+
+async def cmd_sync(args: argparse.Namespace) -> None:
+    """Sync visible tests from audit repo to code repo."""
+    from pact.config import load_project_config
+    from pact.sync import clone_or_pull_audit_repo, sync_visible_tests
+
+    project_dir = Path(args.project_dir).resolve()
+    config = load_project_config(project_dir)
+
+    audit_dir = None
+    if config.audit_dir:
+        audit_dir = Path(config.audit_dir).resolve()
+    elif config.audit_repo:
+        audit_dir = await clone_or_pull_audit_repo(project_dir, config.audit_repo)
+    else:
+        print("No audit_dir or audit_repo configured in pact.yaml")
+        return
+
+    project = ProjectManager(project_dir, audit_dir=audit_dir)
+    results = sync_visible_tests(project)
+
+    if not results:
+        print("No tests to sync")
+        return
+
+    for cid, status in sorted(results.items()):
+        print(f"  {cid}: {status}")
+    print(f"\nSynced {sum(1 for s in results.values() if s == 'synced')} component(s)")
+
+
+async def cmd_certify(args: argparse.Namespace) -> None:
+    """Run certification or verify existing."""
+    from pact.config import load_project_config
+
+    project_dir = Path(args.project_dir).resolve()
+    config = load_project_config(project_dir)
+
+    audit_dir = None
+    if config.audit_dir:
+        audit_dir = Path(config.audit_dir).resolve()
+    elif config.audit_repo:
+        from pact.sync import clone_or_pull_audit_repo
+        audit_dir = await clone_or_pull_audit_repo(project_dir, config.audit_repo)
+
+    project = ProjectManager(project_dir, audit_dir=audit_dir)
+
+    if getattr(args, "verify_only", False):
+        from pact.certification import verify_artifact_hashes, verify_certification
+
+        cert = project.load_certification()
+        if cert is None:
+            print("No certification found")
+            return
+
+        valid, issues = verify_certification(cert)
+        if not valid:
+            print("Certification INVALID:")
+            for issue in issues:
+                print(f"  - {issue}")
+            return
+
+        mismatches = verify_artifact_hashes(cert, project)
+        if mismatches:
+            print("Artifact hash mismatches:")
+            for m in mismatches:
+                print(f"  - {m}")
+            return
+
+        print(f"Certification VALID (verdict: {cert.verdict})")
+        print(f"  Timestamp: {cert.timestamp}")
+        print(f"  Components: {len(cert.components)}")
+        print(f"  Summary: {cert.summary}")
+        return
+
+    # Full certification run
+    from pact.certification import certify
+
+    print("Running certification...")
+    cert = await certify(project)
+
+    # Save
+    path = project.save_certification(cert)
+
+    if getattr(args, "json_output", False):
+        print(cert.model_dump_json(indent=2))
+    else:
+        icon = "PASS" if cert.verdict == "pass" else "PARTIAL" if cert.verdict == "partial" else "FAIL"
+        print(f"\nCertification: {icon}")
+        print(f"  Verdict: {cert.verdict}")
+        print(f"  Components: {len(cert.components)}")
+        print(f"  Summary: {cert.summary}")
+
+        if cert.visible_results:
+            total_v = sum(r.get("passed", 0) for r in cert.visible_results.values())
+            total_vt = sum(r.get("total", 0) for r in cert.visible_results.values())
+            print(f"  Visible tests: {total_v}/{total_vt} passed")
+
+        if cert.goodhart_results:
+            total_g = sum(r.get("passed", 0) for r in cert.goodhart_results.values())
+            total_gt = sum(r.get("total", 0) for r in cert.goodhart_results.values())
+            print(f"  Goodhart tests: {total_g}/{total_gt} passed")
+
+        print(f"  Saved to: {path}")
+
+
+def cmd_sentinel(args: argparse.Namespace) -> None:
+    """Dispatch sentinel subcommands."""
+    sub = getattr(args, "sentinel_command", None)
+    if not sub:
+        print("Usage: pact sentinel {status|push-contract|list-keys}")
+        return
+
+    if sub == "status":
+        cmd_sentinel_status(args)
+    elif sub == "push-contract":
+        cmd_sentinel_push_contract(args)
+    elif sub == "list-keys":
+        cmd_sentinel_list_keys(args)
+
+
+def cmd_sentinel_status(args: argparse.Namespace) -> None:
+    """Show Sentinel/Arbiter connection configuration."""
+    config = load_project_config(args.project_dir)
+    from pact.arbiter import resolve_arbiter_endpoint
+
+    endpoint = resolve_arbiter_endpoint(config.arbiter_endpoint)
+    print(f"Arbiter endpoint: {endpoint or '(not configured)'}")
+    print(f"Skip arbiter: {config.skip_arbiter}")
+    print(f"Constrain dir: {config.constrain_dir or '(not configured)'}")
+    print(f"Ledger dir: {config.ledger_dir or '(not configured)'}")
+
+
+def cmd_sentinel_push_contract(args: argparse.Namespace) -> None:
+    """Accept a tightened contract from Sentinel and trigger rebuild."""
+    from pact.schemas import ComponentContract
+
+    contract_path = Path(args.contract_file)
+    if not contract_path.exists():
+        print(f"Contract file not found: {contract_path}")
+        return
+
+    contract = ComponentContract.model_validate_json(contract_path.read_text())
+    project = ProjectManager(args.project_dir)
+
+    # Save the tightened contract
+    project.save_contract(contract)
+    print(f"Contract updated for {args.component_id}")
+    print(f"  Version: {contract.version}")
+    print(f"  Functions: {len(contract.functions)}")
+    print(f"\nTo rebuild this component: pact build {args.project_dir} {args.component_id}")
+
+
+def cmd_sentinel_list_keys(args: argparse.Namespace) -> None:
+    """List all PACT keys in a project."""
+    from pact.interface_stub import project_id_hash
+
+    project = ProjectManager(args.project_dir)
+    contracts = project.load_all_contracts()
+
+    if not contracts:
+        print("No contracts found.")
+        return
+
+    for cid, contract in sorted(contracts.items()):
+        pid = project_id_hash(cid)
+        print(f"  PACT:{pid}:{cid}")
+        for func in contract.functions:
+            print(f"    PACT:{cid}:{func.name}")
 
 
 if __name__ == "__main__":
