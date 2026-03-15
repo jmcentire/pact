@@ -86,19 +86,18 @@ Interview --> Shape (opt) --> Decompose --> Contract --> Test
                                     Certify (tamper-evident proof)
 ```
 
-**Eleven phases, all mechanical gates:**
+**Nine phases** (plus diagnose as a recovery state):
 
 1. **Interview** -- Establish processing register, then identify risks, ambiguities, ask clarifying questions
 2. **Shape** -- (Optional) Produce a Shape Up pitch: appetite, breadboard, rabbit holes, no-gos
-3. **Decompose** -- Task into 2-7 component tree, guided by shaping context if present
-4. **Contract** -- Each component gets a typed interface contract with data_access and authority declarations
-5. **Test** -- Each contract gets executable tests plus hidden Goodhart tests, plus emission compliance tests
-6. **Validate** -- Mechanical gate: refs resolve, no cycles, tests parse, rationale quality
-7. **Implement** -- Each component built independently by a code agent with structured event emission
-8. **Integrate** -- Parent components composed via glue code
-8.5. **Arbiter Gate** -- Generate access_graph.json, register with Arbiter for blast radius analysis
-9. **Polish** -- Cross-component regression check + Goodhart test evaluation with graduated-disclosure remediation
-10. **Diagnose** -- On failure: I/O tracing, root cause, recovery
+3. **Decompose** -- Task into 2-7 component tree, guided by shaping context if present. Contract generation, test authoring (including emission compliance tests), and Goodhart adversarial tests all happen here.
+4. **Implement** -- Each component built independently by a code agent with structured event emission
+5. **Integrate** -- Parent components composed via glue code
+6. **Arbiter** -- Generate access_graph.json, register with Arbiter for blast radius analysis. HUMAN_GATE pauses pipeline.
+7. **Polish** -- Cross-component regression check + Goodhart test evaluation with graduated-disclosure remediation
+8. **Complete** -- Certification with tamper-evident proof (SHA-256 hashes)
+
+**Diagnose** is not a numbered phase — it's a recovery state. On failure at any phase, the system enters diagnose for I/O tracing, root cause analysis, and recovery routing back to implement.
 
 ## Stack Integration
 
@@ -161,7 +160,7 @@ self._emit({
 })
 ```
 
-PACT keys are string literals (not computed) so Sentinel can discover them via static analysis. Emission compliance tests are auto-generated from the contract interface.
+PACT keys are string literals (not computed) so Sentinel can discover them via static analysis. Emission compliance tests are auto-generated from the contract interface. See [PACT_KEY_STANDARD.md](PACT_KEY_STANDARD.md) for the canonical format specification.
 
 ## Health Monitoring
 

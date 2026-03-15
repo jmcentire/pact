@@ -553,6 +553,21 @@ class ProjectManager:
         test_ext = ".test.ts" if self.language == "typescript" else ".py"
         return self._visible_tests_dir / component_id / "goodhart" / f"goodhart_test{test_ext}"
 
+    # ── Emission Compliance Tests ─────────────────────────────────
+
+    def save_emission_test(self, component_id: str, code: str) -> Path:
+        """Save a generated emission compliance test for a component."""
+        d = self._visible_tests_dir / component_id
+        d.mkdir(parents=True, exist_ok=True)
+        test_ext = ".test.ts" if self.language == "typescript" else ".py"
+        path = d / f"emission_test{test_ext}"
+        path.write_text(code)
+        return path
+
+    def emission_test_path(self, component_id: str) -> Path:
+        test_ext = ".test.ts" if self.language == "typescript" else ".py"
+        return self._visible_tests_dir / component_id / f"emission_test{test_ext}"
+
     # ── Implementations ────────────────────────────────────────────
 
     def impl_dir(self, component_id: str) -> Path:
