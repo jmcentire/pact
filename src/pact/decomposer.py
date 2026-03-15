@@ -17,7 +17,11 @@ from pydantic import BaseModel
 
 from pact.agents.base import AgentBase
 from pact.agents.contract_author import author_contract
-from pact.agents.test_author import author_goodhart_tests, author_tests
+from pact.agents.test_author import (
+    author_goodhart_tests,
+    author_tests,
+    generate_emission_compliance_test,
+)
 from pact.contracts import validate_all_contracts, validate_decomposition_coverage
 from pact.project import ProjectManager
 from pact.schemas import (
@@ -504,6 +508,16 @@ async def decompose_and_contract(
                     "goodhart_tests",
                     f"{component_id}: {len(goodhart_suite.test_cases)} hidden cases",
                 )
+
+            # Generate emission compliance test (mechanical, no LLM)
+            emission_code = generate_emission_compliance_test(
+                contract, language=project.language,
+            )
+            project.save_emission_test(component_id, emission_code)
+            project.append_audit(
+                "emission_tests",
+                f"{component_id}: emission compliance test generated",
+            )
         else:
             logger.info("Skipping tests for %s — already exist", component_id)
 
