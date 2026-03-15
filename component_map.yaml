@@ -1,0 +1,111 @@
+version: "1"
+project: pact
+components:
+  - id: cli
+    role: ingress
+    protocol: cli
+    authority: user_commands
+    data_access:
+      PUBLIC: read_write
+
+  - id: daemon
+    role: service
+    authority: pipeline_orchestration
+    data_access:
+      PUBLIC: read_write
+
+  - id: decomposer
+    role: library
+    authority: task_decomposition
+    data_access:
+      PUBLIC: read_write
+
+  - id: contractor
+    role: library
+    authority: contract_generation
+    data_access:
+      PUBLIC: read_write
+
+  - id: test_author
+    role: library
+    authority: test_generation
+    data_access:
+      PUBLIC: read_write
+
+  - id: code_author
+    role: library
+    authority: implementation
+    data_access:
+      PUBLIC: read_write
+
+  - id: validator
+    role: library
+    authority: mechanical_verification
+    data_access:
+      PUBLIC: read
+
+  - id: integrator
+    role: library
+    authority: composition_wiring
+    data_access:
+      PUBLIC: read_write
+
+  - id: diagnoser
+    role: library
+    authority: failure_analysis
+    data_access:
+      PUBLIC: read
+
+  - id: state_manager
+    role: library
+    authority: pipeline_state
+    data_access:
+      PUBLIC: read_write
+
+  - id: mcp_server
+    role: service
+    protocol: mcp
+    authority: external_query
+    data_access:
+      PUBLIC: read
+
+  - id: wizard
+    role: library
+    authority: task_creation
+    data_access:
+      PUBLIC: read_write
+
+edges:
+  - from: cli
+    to: daemon
+    tier: internal
+  - from: daemon
+    to: decomposer
+    tier: internal
+  - from: daemon
+    to: contractor
+    tier: internal
+  - from: daemon
+    to: test_author
+    tier: internal
+  - from: daemon
+    to: code_author
+    tier: internal
+  - from: daemon
+    to: validator
+    tier: internal
+  - from: daemon
+    to: integrator
+    tier: internal
+  - from: daemon
+    to: diagnoser
+    tier: internal
+  - from: daemon
+    to: state_manager
+    tier: internal
+  - from: mcp_server
+    to: state_manager
+    tier: internal
+  - from: wizard
+    to: cli
+    tier: internal
