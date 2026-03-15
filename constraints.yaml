@@ -1,0 +1,72 @@
+version: "1"
+project: pact
+constraints:
+  - id: C001
+    name: contracts_before_code
+    description: Contract and test generation must complete before any implementation begins
+    severity: must
+    classification: null
+    rationale: Code without contracts cannot be verified against intent
+
+  - id: C002
+    name: mechanical_validation
+    description: Validation gates must be mechanical (no LLM) — ref resolution, cycle detection, test parsing
+    severity: must
+    classification: null
+    rationale: LLM-based validation is non-deterministic and can be gamed
+
+  - id: C003
+    name: goodhart_tests
+    description: Every contract test suite must include hidden Goodhart tests that catch gaming
+    severity: must
+    classification: null
+    rationale: Implementations will optimize for visible tests; Goodhart tests catch this
+
+  - id: C004
+    name: black_box_verification
+    description: Component tests must verify behavior through I/O, never inspect implementation internals
+    severity: must
+    classification: null
+    rationale: Black-box tests survive implementation changes; white-box tests are fragile
+
+  - id: C005
+    name: agent_interchangeability
+    description: Agents must be replaceable without changing contracts or tests
+    severity: should
+    classification: null
+    rationale: Lock-in to a specific agent model defeats the contract-first approach
+
+  - id: C006
+    name: research_before_execute
+    description: Every agent must complete research and planning phases before execution
+    severity: must
+    classification: null
+    rationale: Agents that skip research produce lower quality and miss context
+
+  - id: C007
+    name: event_driven_pipeline
+    description: Pipeline progression must be event-driven via daemon, not sequential script
+    severity: must
+    classification: null
+    rationale: Event-driven enables parallel execution and recovery from failures
+
+  - id: C008
+    name: state_persistence
+    description: Pipeline state must persist across daemon restarts and process crashes
+    severity: must
+    classification: null
+    rationale: Long-running builds must survive interruption
+
+  - id: C009
+    name: budget_enforcement
+    description: LLM spending must be tracked and enforced against configured budget
+    severity: must
+    classification: FINANCIAL
+    rationale: Uncontrolled API spending on decomposition/implementation is costly
+
+  - id: C010
+    name: adopt_nondestructive
+    description: pact adopt must generate tests without modifying existing source code
+    severity: must
+    classification: null
+    rationale: Adoption must be safe for production codebases

@@ -1,0 +1,48 @@
+name: pact
+audience: public
+description: >
+  Contract-first multi-agent software engineering framework. Decomposition
+  produces contracts and tests, not code. Black-box implementations verified
+  by functional tests at boundaries. Recursive composition.
+
+domains:
+  - contract-first-engineering
+  - multi-agent-orchestration
+  - test-driven-decomposition
+  - code-generation
+  - software-architecture
+
+voice:
+  tone: precise, contractual, verification-first
+  principles:
+    - Contracts precede code — tests exist before implementation
+    - Decomposition is the architecture — the tree IS the design
+    - Goodhart tests catch implementations that game visible tests
+    - Agents are interchangeable — contracts are the stable interface
+    - Adoption meets projects where they are (pact adopt)
+  anti-patterns:
+    - Generating code before contracts are validated
+    - Coupling agents to specific implementations
+    - Skipping Goodhart tests (gaming visible tests is the default failure mode)
+    - Manual decomposition when auto mode suffices
+
+standards:
+  code_review:
+    - Type annotations on all public functions
+    - Pydantic v2 for all structured data
+    - Event-driven pipeline (daemon pattern)
+    - Mechanical validation gates (no LLM in validation)
+  documentation:
+    - Pipeline phases documented with entry/exit criteria
+    - Agent roles documented with tool access and constraints
+  communication:
+    - Lead with contract status and test results
+
+connects_to:
+  - constrain
+  - arbiter
+  - baton
+  - sentinel
+  - ledger
+  - cartographer
+  - kindex

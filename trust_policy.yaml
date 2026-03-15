@@ -1,0 +1,31 @@
+version: "1"
+project: pact
+classification_tiers:
+  - name: PUBLIC
+    soak_duration_hours: 0
+    human_gate: false
+
+authority_map:
+  daemon:
+    domain: pipeline_orchestration
+    trust_score: 0.95
+  decomposer:
+    domain: task_decomposition
+    trust_score: 0.8
+  contractor:
+    domain: contract_generation
+    trust_score: 0.85
+  test_author:
+    domain: test_generation
+    trust_score: 0.8
+  code_author:
+    domain: implementation
+    trust_score: 0.7
+  validator:
+    domain: mechanical_verification
+    trust_score: 1.0
+  state_manager:
+    domain: pipeline_state
+    trust_score: 0.95
+
+canary_eligible: [code_author]

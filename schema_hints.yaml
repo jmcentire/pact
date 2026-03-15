@@ -1,0 +1,24 @@
+version: "1"
+project: pact
+storage_backends:
+  - type: filesystem
+    purpose: pipeline_state
+    path: .pact/
+    format: mixed
+    fields:
+      - name: state
+        file: state.json
+        classification: PUBLIC
+      - name: audit_log
+        file: audit.jsonl
+        classification: PUBLIC
+        annotation: append_only
+      - name: contracts
+        path: contracts/
+        classification: PUBLIC
+      - name: implementations
+        path: implementations/
+        classification: PUBLIC
+      - name: compositions
+        path: compositions/
+        classification: PUBLIC
