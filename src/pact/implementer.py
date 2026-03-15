@@ -678,7 +678,7 @@ async def implement_component(
                 )
 
         # Run contract tests
-        test_file = project.test_code_path(component_id)
+        test_file = project.dev_test_code_path(component_id)
         if not test_file.exists() and test_suite.generated_code:
             test_file.parent.mkdir(parents=True, exist_ok=True)
             test_file.write_text(test_suite.generated_code)
@@ -800,7 +800,7 @@ async def implement_component_iterative(
     )
 
     # Write test file so the agent can run it
-    test_file = project.test_code_path(component_id)
+    test_file = project.dev_test_code_path(component_id)
     if not test_file.exists() and test_suite.generated_code:
         test_file.parent.mkdir(parents=True, exist_ok=True)
         test_file.write_text(test_suite.generated_code)
@@ -999,7 +999,7 @@ async def implement_component_interactive(
     )
 
     # Write test file so the agent can run it
-    test_file = project.test_code_path(component_id)
+    test_file = project.dev_test_code_path(component_id)
     if not test_file.exists() and test_suite.generated_code:
         test_file.parent.mkdir(parents=True, exist_ok=True)
         test_file.write_text(test_suite.generated_code)
@@ -1151,7 +1151,7 @@ async def _run_one_competitor(
         validate_and_fix_exports(src_dir, contract, language=language)
 
         # Run contract tests against this attempt's src
-        test_file = project.test_code_path(component_id)
+        test_file = project.dev_test_code_path(component_id)
         if not test_file.exists() and test_suite.generated_code:
             test_file.parent.mkdir(parents=True, exist_ok=True)
             test_file.write_text(test_suite.generated_code)

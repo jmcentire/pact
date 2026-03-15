@@ -17,8 +17,13 @@ logger = logging.getLogger(__name__)
 class GitManager:
     """Manages git branches and PRs for pact runs."""
 
-    def __init__(self, repo_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        repo_path: Path | None = None,
+        audit_repo_path: Path | None = None,
+    ) -> None:
         self._repo_path = repo_path
+        self._audit_repo_path = audit_repo_path
 
     async def _run(self, *args: str) -> tuple[str, str, int]:
         """Run a git command and return (stdout, stderr, returncode)."""
@@ -212,3 +217,40 @@ class GitManager:
             }
             for pr in data
         ]
+
+    # ── Audit Repo Operations ────────────────────────────────────
+
+    async def _run_audit(self, *args: str) -> tuple[str, str, int]:
+        """Run a git command in the audit repo."""
+        if not self._audit_repo_path:
+            return "", "No audit repo configured", 1
+        proc = await asyncio.create_subprocess_exec(
+            "git", *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(self._audit_repo_path),
+        )
+        stdout, stderr = await proc.communicate()
+        return stdout.decode(), stderr.decode(), proc.returncode
+
+    async def commit_audit(self, message: str, files: list[str] | None = None) -> bool:
+        """Stage files and commit in the audit repo."""
+        if not self._audit_repo_path:
+            return False
+        if files:
+            for f in files:
+                await self._run_audit("add", f)
+        else:
+            await self._run_audit("add", "-A")
+        _, _, rc = await self._run_audit("commit", "-m", message)
+        return rc == 0
+
+    async def audit_head_commit(self) -> str:
+        """Get the HEAD commit hash of the audit repo."""
+        stdout, _, rc = await self._run_audit("rev-parse", "HEAD")
+        return stdout.strip() if rc == 0 else ""
+
+    async def code_head_commit(self) -> str:
+        """Get the HEAD commit hash of the code repo."""
+        stdout, _, _ = await self._run("rev-parse", "HEAD")
+        return stdout.strip()

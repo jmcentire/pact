@@ -47,7 +47,7 @@ def advance_phase(state: RunState, skip_phases: set[str] | None = None) -> str:
     """
     phase_order = [
         "interview", "shape", "decompose", "contract",
-        "implement", "integrate", "polish", "complete",
+        "implement", "integrate", "arbiter", "polish", "complete",
     ]
     try:
         idx = phase_order.index(state.phase)

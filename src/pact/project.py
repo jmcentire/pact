@@ -62,6 +62,7 @@ import yaml
 
 from pact.config import ProjectConfig, load_project_config
 from pact.schemas import (
+    CertificationArtifact,
     ComponentContract,
     ContractTestSuite,
     DecompositionTree,
@@ -112,17 +113,24 @@ checklist.json linguist-generated=true
 class ProjectManager:
     """Manages project directory lifecycle."""
 
-    def __init__(self, project_dir: str | Path) -> None:
+    def __init__(self, project_dir: str | Path, audit_dir: str | Path | None = None) -> None:
         self.project_dir = Path(project_dir).resolve()
+        self._audit_dir = Path(audit_dir).resolve() if audit_dir else None
 
-        # Visible project knowledge — in project tree
-        self._visible_contracts_dir = self.project_dir / "contracts"
+        # Audit-owned artifacts redirect to audit_dir when set
+        audit_root = self._audit_dir or self.project_dir
+        self._visible_contracts_dir = audit_root / "contracts"
+        self._visible_tests_dir = audit_root / "tests"
+        self._decomp_dir = audit_root / "decomposition"
+
+        # Code-owned artifacts — always in project_dir
         self._visible_src_dir = self.project_dir / "src"
-        self._visible_tests_dir = self.project_dir / "tests"
-        self._decomp_dir = self.project_dir / "decomposition"
         self._learnings_dir = self.project_dir / "learnings"
 
-        # Ephemeral run state — in .pact/
+        # Synced tests: read-only copy of visible tests in code repo
+        self._synced_tests_dir = self.project_dir / "tests" if self._audit_dir else None
+
+        # Ephemeral run state — always in project_dir
         self._pact_dir = self.project_dir / PACT_DIR
         self._contracts_dir = self._pact_dir / "contracts"
         self._impl_dir = self._pact_dir / "implementations"
@@ -135,6 +143,51 @@ class ProjectManager:
         """Project language from pact.yaml config. Defaults to 'python'."""
         cfg = self.load_config()
         return cfg.language
+
+    # ── Audit Separation ──────────────────────────────────────────
+
+    @property
+    def audit_root(self) -> Path:
+        """Root for audit-owned artifacts. Falls back to project_dir."""
+        return self._audit_dir or self.project_dir
+
+    @property
+    def has_audit_repo(self) -> bool:
+        """Whether this project uses a separate audit repo."""
+        return self._audit_dir is not None
+
+    @property
+    def synced_tests_dir(self) -> Path | None:
+        """Read-only test copy in code repo. None if no audit separation."""
+        return self._synced_tests_dir
+
+    def dev_test_code_path(self, component_id: str) -> Path:
+        """Test path for development use by coding agent.
+
+        In audit-separated mode: returns synced copy in code repo.
+        In single-repo mode: returns the canonical test path.
+        """
+        if self._synced_tests_dir:
+            ext = ".test.ts" if self.language in ("typescript", "javascript") else ".py"
+            return self._synced_tests_dir / component_id / f"contract_test{ext}"
+        return self.test_code_path(component_id)
+
+    @property
+    def certification_dir(self) -> Path:
+        d = self.audit_root / "certification"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def save_certification(self, cert: CertificationArtifact) -> Path:
+        path = self.certification_dir / "certification.json"
+        path.write_text(cert.model_dump_json(indent=2))
+        return path
+
+    def load_certification(self) -> CertificationArtifact | None:
+        path = self.certification_dir / "certification.json"
+        if not path.exists():
+            return None
+        return CertificationArtifact.model_validate_json(path.read_text())
 
     # ── Paths ──────────────────────────────────────────────────────
 
@@ -180,15 +233,15 @@ class ProjectManager:
 
     @property
     def analysis_path(self) -> Path:
-        return self.project_dir / "analysis.json"
+        return self.audit_root / "analysis.json"
 
     @property
     def checklist_path(self) -> Path:
-        return self.project_dir / "checklist.json"
+        return self.audit_root / "checklist.json"
 
     @property
     def standards_path(self) -> Path:
-        return self.project_dir / "standards.json"
+        return self.audit_root / "standards.json"
 
     # ── Init ───────────────────────────────────────────────────────
 
@@ -196,12 +249,22 @@ class ProjectManager:
         """Scaffold a new project directory."""
         self.project_dir.mkdir(parents=True, exist_ok=True)
 
-        # Visible project directories
-        self._visible_contracts_dir.mkdir(exist_ok=True)
+        # Audit-owned directories (in audit_dir when separated, else project_dir)
+        self._visible_contracts_dir.mkdir(parents=True, exist_ok=True)
+        self._visible_tests_dir.mkdir(parents=True, exist_ok=True)
+        self._decomp_dir.mkdir(parents=True, exist_ok=True)
+
+        # Code-owned directories — always in project_dir
         self._visible_src_dir.mkdir(exist_ok=True)
-        self._visible_tests_dir.mkdir(exist_ok=True)
-        self._decomp_dir.mkdir(exist_ok=True)
         self._learnings_dir.mkdir(exist_ok=True)
+
+        # Synced tests directory in code repo (when audit-separated)
+        if self._synced_tests_dir:
+            self._synced_tests_dir.mkdir(exist_ok=True)
+
+        # Certification directory (in audit root)
+        if self._audit_dir:
+            (self._audit_dir / "certification").mkdir(parents=True, exist_ok=True)
 
         # Ephemeral run state directories
         self._pact_dir.mkdir(exist_ok=True)
@@ -778,11 +841,11 @@ class ProjectManager:
     # ── Design Document ────────────────────────────────────────────
 
     def save_design_doc(self, doc: DesignDocument) -> None:
-        path = self.project_dir / "design.json"
+        path = self.audit_root / "design.json"
         path.write_text(doc.model_dump_json(indent=2))
 
     def load_design_doc(self) -> DesignDocument | None:
-        path = self.project_dir / "design.json"
+        path = self.audit_root / "design.json"
         if not path.exists():
             return None
         return DesignDocument.model_validate_json(path.read_text())

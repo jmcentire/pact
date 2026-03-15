@@ -208,38 +208,6 @@ def test_cmd_diff_is_callable():
     assert fn is not None, "'cmd_diff' not found in pact.cli"
     assert callable(fn)
 
-def test_cmd_watch_is_callable():
-    """Function cmd_watch exists and is callable."""
-    import importlib
-    mod = importlib.import_module("pact.cli")
-    fn = getattr(mod, "cmd_watch", None)
-    assert fn is not None, "'cmd_watch' not found in pact.cli"
-    assert callable(fn)
-
-def test_cmd_report_is_callable():
-    """Function cmd_report exists and is callable."""
-    import importlib
-    mod = importlib.import_module("pact.cli")
-    fn = getattr(mod, "cmd_report", None)
-    assert fn is not None, "'cmd_report' not found in pact.cli"
-    assert callable(fn)
-
-def test_cmd_incidents_is_callable():
-    """Function cmd_incidents exists and is callable."""
-    import importlib
-    mod = importlib.import_module("pact.cli")
-    fn = getattr(mod, "cmd_incidents", None)
-    assert fn is not None, "'cmd_incidents' not found in pact.cli"
-    assert callable(fn)
-
-def test_cmd_incident_is_callable():
-    """Function cmd_incident exists and is callable."""
-    import importlib
-    mod = importlib.import_module("pact.cli")
-    fn = getattr(mod, "cmd_incident", None)
-    assert fn is not None, "'cmd_incident' not found in pact.cli"
-    assert callable(fn)
-
 def test_cmd_tasks_is_callable():
     """Function cmd_tasks exists and is callable."""
     import importlib

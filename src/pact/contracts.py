@@ -182,6 +182,56 @@ def validate_dependency_graph(tree: DecompositionTree) -> list[str]:
     return errors
 
 
+_VAGUE_RATIONALE_PATTERNS = [
+    "handles data", "manages stuff", "processes information",
+    "for various purposes", "as needed", "general use",
+    "handles all", "manages all", "processes all",
+    "data handling", "data management", "data processing",
+    "needed for functionality", "required for operation",
+    "used internally", "for internal use",
+]
+
+
+def validate_rationale_quality(text: str, field_path: str) -> list[str]:
+    """Check a rationale string for vague/cliche content.
+
+    Returns list of rejection reasons.
+    """
+    if not text:
+        return [f"{field_path}: rationale is empty"]
+
+    if len(text) < 20:
+        return [f"{field_path}: rationale too short ({len(text)} chars, minimum 20)"]
+
+    errors = []
+    lower = text.lower()
+    for pattern in _VAGUE_RATIONALE_PATTERNS:
+        if pattern in lower:
+            errors.append(
+                f"{field_path}: rationale contains vague phrase '{pattern}' — "
+                f"be specific about what data is accessed and why"
+            )
+    return errors
+
+
+def validate_authority_overlap(
+    contracts: dict[str, "ComponentContract"],
+) -> list[str]:
+    """Check that no two components claim authority over overlapping domains."""
+    domain_owners: dict[str, str] = {}
+    warnings = []
+    for cid, contract in contracts.items():
+        for domain in contract.authority.domains:
+            if domain in domain_owners:
+                warnings.append(
+                    f"Domain '{domain}' claimed by both '{domain_owners[domain]}' "
+                    f"and '{cid}'"
+                )
+            else:
+                domain_owners[domain] = cid
+    return warnings
+
+
 def validate_contract_completeness(contract: ComponentContract) -> list[str]:
     """Check that a contract is minimally complete."""
     errors = []
@@ -196,6 +246,30 @@ def validate_contract_completeness(contract: ComponentContract) -> list[str]:
             errors.append(f"Function in '{contract.component_id}' missing name")
         if not func.output_type:
             errors.append(f"Function '{func.name}' in '{contract.component_id}' missing output_type")
+
+    # data_access validation — only enforced when data_access has been populated
+    # (default empty DataAccessDeclaration is accepted for backward compat)
+    cid = contract.component_id or "unknown"
+    da = contract.data_access
+    if da.reads or da.writes or da.side_effects:
+        # data_access was populated — rationale is required
+        if not da.rationale:
+            errors.append(f"Contract '{cid}' missing data_access.rationale")
+        else:
+            errors.extend(validate_rationale_quality(
+                da.rationale, f"Contract '{cid}' data_access.rationale",
+            ))
+
+    # authority validation
+    if contract.authority.domains and contract.authority.rationale is None:
+        errors.append(
+            f"Contract '{cid}' has authority.domains but missing authority.rationale"
+        )
+    if contract.authority.domains and contract.authority.rationale:
+        errors.extend(validate_rationale_quality(
+            contract.authority.rationale, f"Contract '{cid}' authority.rationale",
+        ))
+
     return errors
 
 
@@ -300,6 +374,10 @@ def validate_all_contracts(
         quality_warnings = audit_contract_specificity(contract)
         for w in quality_warnings:
             logger.warning("Quality: %s", w)
+
+    # Check authority domain overlap across all contracts
+    overlap_warnings = validate_authority_overlap(contracts)
+    all_errors.extend(overlap_warnings)
 
     # Check dependency contracts — distinguish internal vs external
     tree_component_ids = set(tree.nodes.keys()) if tree else set()

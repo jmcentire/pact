@@ -44,8 +44,6 @@ When a module fails in production, the response isn't "debug the implementation.
 
 This inverts the traditional relationship between code and tests. Code is cheap (agents generate it in minutes). Contracts are expensive (they encode hard-won understanding of what the system actually needs to do). Pact makes that inversion explicit: you spend your time on contracts, agents spend their time on code.
 
-The practical upside: when someone asks "who's debugging this at 3am?" -- agents are. The Sentinel watches production logs, detects errors, attributes them to the right component via embedded PACT log keys, spawns a knowledge-flashed fixer agent loaded with the full contract/test context, adds a reproducer test, rebuilds the module, and verifies all tests pass. The contract ensures they can't introduce regressions. The human reviews the *contract change* in the morning, not the code.
-
 ## Quick Start
 
 ```bash
@@ -70,40 +68,104 @@ pact --help
 Task
   |
   v
-Interview -----> Shape (opt) -----> Decompose -----> Contract -----> Test
-                    |                   |                 |              |
-                    v                   v                 v              v
-              Pitch: appetite,    Component Tree    Interfaces     Executable Tests
-              breadboard, risks                                        |
-                                                                       v
-                                         Implement (parallel, competitive)
-                                                                       |
-                                                                       v
-                                         Integrate (glue + parent tests)
-                                                                       |
-                                                                       v
-                                         Polish (Goodhart tests + regression check)
-                                                                       |
-                                                                       v
-                                                                 Diagnose (on failure)
+Interview --> Shape (opt) --> Decompose --> Contract --> Test
+                                                          |
+                                                          v
+                                    Implement (parallel, competitive)
+                                                          |
+                                                          v
+                                    Integrate (glue + parent tests)
+                                                          |
+                                                          v
+                                    Arbiter Gate (access graph + trust)
+                                                          |
+                                                          v
+                                    Polish (Goodhart tests + regression)
+                                                          |
+                                                          v
+                                    Certify (tamper-evident proof)
 ```
 
-**Ten phases, all mechanical gates:**
+**Eleven phases, all mechanical gates:**
 
 1. **Interview** -- Establish processing register, then identify risks, ambiguities, ask clarifying questions
 2. **Shape** -- (Optional) Produce a Shape Up pitch: appetite, breadboard, rabbit holes, no-gos
 3. **Decompose** -- Task into 2-7 component tree, guided by shaping context if present
-4. **Contract** -- Each component gets a typed interface contract
-5. **Test** -- Each contract gets executable tests plus hidden Goodhart tests (adversarial acceptance criteria the implementation agent never sees)
-6. **Validate** -- Mechanical gate: refs resolve, no cycles, tests parse
-7. **Implement** -- Each component built independently by a code agent
+4. **Contract** -- Each component gets a typed interface contract with data_access and authority declarations
+5. **Test** -- Each contract gets executable tests plus hidden Goodhart tests, plus emission compliance tests
+6. **Validate** -- Mechanical gate: refs resolve, no cycles, tests parse, rationale quality
+7. **Implement** -- Each component built independently by a code agent with structured event emission
 8. **Integrate** -- Parent components composed via glue code
+8.5. **Arbiter Gate** -- Generate access_graph.json, register with Arbiter for blast radius analysis
 9. **Polish** -- Cross-component regression check + Goodhart test evaluation with graduated-disclosure remediation
 10. **Diagnose** -- On failure: I/O tracing, root cause, recovery
 
+## Stack Integration
+
+Pact is the contract-first build system in a larger stack:
+
+| Tool | Role | Pact's Relationship |
+|------|------|-------------------|
+| **Constrain** | Upstream policy | `--constrain-dir` seeds decomposition with constraints, component maps, trust policies |
+| **Arbiter** | Trust gate | Phase 8.5 POSTs `access_graph.json` for blast radius analysis. HUMAN_GATE pauses pipeline |
+| **Ledger** | Field-level audit | `--ledger-dir` loads assertions into contract test suites as hard requirements |
+| **Sentinel** | Production monitoring | Separate package. Pact embeds PACT keys for attribution. `pact sentinel push-contract` accepts tightened contracts |
+
+All integrations are optional. Without them, Pact operates as a standalone build system.
+
+## Contract Schema
+
+Every contract includes:
+
+```yaml
+data_access:
+  reads: [PUBLIC, PII]
+  writes: [PUBLIC]
+  rationale: "Reads user.email for personalization, writes public analytics events"
+  side_effects:
+    - type: database_read
+      classification: PII
+      fields: ["user.email", "user.created_at"]
+      rationale: "Fetch user profile for display"
+
+authority:
+  domains: ["user_profile"]
+  rationale: "Authoritative source for user profile data within this service"
+```
+
+Anti-cliche enforcement rejects vague rationale strings ("handles data", "manages stuff"). Rationale must describe the specific data accessed and why.
+
+## Audit Repo Separation
+
+Pact supports a two-repo separation-of-privilege model where the coding agent and auditing agent operate in different repositories:
+
+```bash
+pact audit-init ./my-project --audit-dir ./my-project-audit
+pact sync ./my-project          # Sync visible tests (never Goodhart) to code repo
+pact certify ./my-project       # Tamper-evident certification proof
+```
+
+The coding agent cannot modify the tests that judge its work. The certification artifact includes SHA-256 hashes of all contracts, tests, and implementations with a self-integrity hash.
+
+## Structured Event Emission
+
+All implementations accept optional `event_handler` and `log_handler`. Every public method emits structured events:
+
+```python
+self._emit({
+    "pact_key": "PACT:auth_module:validate_token",
+    "event": "completed",
+    "output_classification": ["PII"],
+    "side_effects": ["database_read"],
+    "ts": time.time_ns()
+})
+```
+
+PACT keys are string literals (not computed) so Sentinel can discover them via static analysis. Emission compliance tests are auto-generated from the contract interface.
+
 ## Health Monitoring
 
-Pact monitors its own coordination health — detecting the specific failure modes of agentic pipelines before they consume the budget.
+Pact monitors its own coordination health -- detecting the specific failure modes of agentic pipelines before they consume the budget.
 
 | Metric | What It Detects |
 |--------|-----------------|
@@ -114,21 +176,8 @@ Pact monitors its own coordination health — detecting the specific failure mod
 | **Cascade detection** | One component's failure propagating through the tree |
 | **Register drift** | Agent departing from established processing mode mid-task |
 
-When critical conditions fire, Pact pauses and proposes remedies via FIFO — the user decides whether to apply them. The system never silently modifies its own configuration.
-
 ```bash
-pact health my-project                    # View health metrics
-pact signal my-project --directive \
-  '{"type":"apply_remedy","remedy":"max_plan_revisions","value":1}'
-```
-
-Per-project thresholds in `pact.yaml`:
-
-```yaml
-health_thresholds:
-  output_planning_ratio_warning: 0.3
-  rejection_rate_critical: 0.9
-  cascade_critical: 10
+pact health my-project
 ```
 
 ## Two Execution Levers
@@ -140,16 +189,6 @@ health_thresholds:
 
 Either, neither, or both. Defaults: both off (sequential, single-attempt).
 
-## Plan-Only Mode
-
-Set `plan_only: true` to stop after contracts and tests are generated. Then target specific components:
-
-```bash
-pact components my-project              # See what was decomposed
-pact build my-project sync_tracker      # Build one component
-pact build my-project sync_tracker --competitive --agents 3
-```
-
 ## CLI Commands
 
 | Command | Purpose |
@@ -157,62 +196,26 @@ pact build my-project sync_tracker --competitive --agents 3
 | `pact init <project>` | Scaffold a new project |
 | `pact run <project>` | Run the pipeline |
 | `pact daemon <project>` | Event-driven mode (recommended) |
-| `pact status <project> [component]` | Show project or component status |
+| `pact status <project>` | Show project or component status |
 | `pact components <project>` | List components with status |
 | `pact build <project> <id>` | Build/rebuild a specific component |
-| `pact interview <project>` | Run interview phase only |
-| `pact answer <project>` | Answer interview questions |
-| `pact approve <project>` | Approve with defaults |
 | `pact validate <project>` | Re-run contract validation |
-| `pact design <project>` | Regenerate design.md |
-| `pact stop <project>` | Gracefully stop a running daemon |
-| `pact log <project>` | Show audit trail (`--tail N`, `--json`) |
-| `pact ping` | Test API connection and show pricing |
-| `pact signal <project>` | Resume a paused daemon |
-| `pact watch <project>...` | Start Sentinel production monitor (Ctrl+C to stop) |
-| `pact report <project> <error>` | Manually report a production error |
-| `pact health <project>` | Show health metrics, findings, and proposed remedies |
-| `pact incidents <project>` | List active/recent incidents |
-| `pact incident <project> <id>` | Show incident details + diagnostic report |
-| `pact audit <project>` | Spec-compliance audit (compare task.md vs implementations) |
+| `pact audit <project>` | Spec-compliance audit |
+| `pact certify <project>` | Run certification (all tests, tamper-evident proof) |
+| `pact audit-init <project>` | Initialize audit repo separation |
+| `pact sync <project>` | Sync visible tests from audit repo |
+| `pact sentinel status` | Show Sentinel/Arbiter connection config |
+| `pact sentinel push-contract <id> <file>` | Accept tightened contract from Sentinel |
+| `pact sentinel list-keys` | List all PACT keys in project |
+| `pact health <project>` | Show health metrics and proposed remedies |
 | `pact tasks <project>` | List phase tasks with status |
-| `pact analyze <project>` | Run cross-artifact analysis |
-| `pact checklist <project>` | Generate requirements checklist |
-| `pact test-gen <project>` | Generate tests + security audit for any codebase |
+| `pact handoff <project> <id>` | Render/validate handoff brief |
 | `pact adopt <project>` | Adopt existing codebase under pact governance |
-| `pact handoff <project> <id>` | Render/validate handoff brief for a component |
-| `pact pricing` | Show model pricing table (`--export` to override) |
 | `pact mcp-server` | Run MCP server (stdio transport) |
 
+Run flags: `--constrain-dir`, `--ledger-dir`, `--skip-arbiter`.
+
 ## Configuration
-
-**Global** (`config.yaml` at repo root):
-
-```yaml
-model: claude-opus-4-6
-default_budget: 10.00
-parallel_components: false
-competitive_implementations: false
-competitive_agents: 2
-max_concurrent_agents: 4
-plan_only: false
-
-# Override token pricing (per million tokens: [input, output])
-model_pricing:
-  claude-opus-4-6: [5.00, 25.00]
-  claude-sonnet-4-5-20250929: [3.00, 15.00]
-  claude-haiku-4-5-20251001: [0.80, 4.00]
-
-# Production monitoring (opt-in)
-monitoring_enabled: false
-monitoring_auto_remediate: true
-monitoring_budget:
-  per_incident_cap: 5.00
-  hourly_cap: 10.00
-  daily_cap: 25.00
-  weekly_cap: 100.00
-  monthly_cap: 300.00
-```
 
 **Per-project** (`pact.yaml` in project directory):
 
@@ -220,158 +223,79 @@ monitoring_budget:
 budget: 25.00
 parallel_components: true
 competitive_implementations: true
-competitive_agents: 3
 
-# Shaping (Shape Up methodology)
-shaping: true               # Enable shaping phase (default: false)
-shaping_depth: standard      # light | standard | thorough
-shaping_rigor: moderate      # relaxed | moderate | strict
-shaping_budget_pct: 0.15    # Max budget fraction for shaping
+# Stack integration (all optional)
+constrain_dir: ./constrain-output/
+ledger_dir: ./ledger-export/
+arbiter_endpoint: http://localhost:8080
+skip_arbiter: false
 
-# Production monitoring (per-project)
-monitoring_log_files:
-  - "/var/log/myapp/app.log"
-  - "/var/log/myapp/error.log"
-monitoring_process_patterns:
-  - "myapp-server"
-monitoring_webhook_port: 9876
-monitoring_error_patterns:
-  - "ERROR"
-  - "CRITICAL"
-  - "Traceback"
+# Audit repo separation
+audit_dir: ../my-project-audit
+audit_mode: code    # "audit" | "code" | ""
 
-# Health thresholds (override defaults)
+# Shaping
+shaping: true
+shaping_depth: standard
+
+# Health thresholds
 health_thresholds:
   output_planning_ratio_warning: 0.3
   rejection_rate_critical: 0.9
 ```
-
-Project config overrides global. Both are optional.
 
 ### Multi-Provider Configuration
 
 Route different roles to different providers for cost optimization:
 
 ```yaml
-budget: 50.00
-
 role_models:
-  decomposer: claude-opus-4-6        # Strong reasoning for architecture
-  contract_author: claude-opus-4-6    # Precision for interfaces
-  test_author: claude-sonnet-4-5-20250929  # Fast test generation
-  code_author: gpt-4o                # Cost-effective implementation
+  decomposer: claude-opus-4-6
+  contract_author: claude-opus-4-6
+  test_author: claude-sonnet-4-5-20250929
+  code_author: gpt-4o
 
 role_backends:
   decomposer: anthropic
-  contract_author: anthropic
-  test_author: anthropic
-  code_author: openai                # Mix providers per role
+  code_author: openai
 ```
 
 Available backends: `anthropic`, `openai`, `gemini`, `claude_code`, `claude_code_team`.
 
 ## Project Structure
 
-All project knowledge is visible in the project tree. Only ephemeral per-run state lives in `.pact/`:
-
 ```
 my-project/
   task.md              # What to build
-  sops.md              # How to build it (standards, stack, preferences)
-  pact.yaml            # Budget and execution config
-  design.md            # Auto-maintained design document
-  design.json          # Structured design document
-  standards.json       # Global standards
-  tasks.json           # Task list
-  decomposition/       # Decomposition tree, decisions, interview, pitch
-  contracts/<cid>/     # Interface specs + version history
+  sops.md              # How to build it
+  pact.yaml            # Budget and config
+  access_graph.json    # Data access graph (consumed by Arbiter)
+  decomposition/       # Decomposition tree, decisions, interview
+  contracts/<cid>/     # Interface specs with data_access + authority
   src/<cid>/           # Implementation source + glue code
   tests/<cid>/         # Contract tests + Goodhart tests
-  learnings/           # Accumulated learnings
-  .pact/               # Ephemeral run state only (gitignored)
-    state.json         # Run lifecycle
-    audit.jsonl        # Full audit trail
-    contracts/         # Research (ephemeral)
-    implementations/   # Plans, metadata, attempt archives
-    compositions/      # Integration test results
-    monitoring/        # Incidents, budget state, diagnostic reports
+  certification/       # Tamper-evident certification proof
+  .pact/               # Ephemeral run state (gitignored)
 ```
-
-When a teammate checks out the repo, they see everything -- contracts, source, tests, decomposition tree, Goodhart tests, standards, learnings. The `.pact/` directory contains only ephemeral per-run state that gets regenerated.
-
-## Validation & Quality Gates
-
-Beyond contract validation, Pact includes structural checks that catch problems early:
-
-- **North-Star Validation** -- After implementation, checks that composed contracts plausibly fulfill the original task. Extracts action verbs from `task.md` and verifies they appear in contract function names/descriptions. Catches the "9 components pass 796 tests but the service can't actually do anything" failure mode.
-
-- **Early Decomposition Validation** -- Runs after decomposition but before spending LLM calls on contract generation. Checks for orphan nodes, empty descriptions, duplicate descriptions, and task keyword coverage. Saves cost on structurally broken decompositions.
-
-- **Handoff Brief Validation** -- `pact handoff <project> <component-id> --validate` checks context fence presence, primer ordering, natural format, token budget, and dependency coverage. Useful for debugging agent coordination issues.
-
-- **Smoke Test Generation** -- `pact adopt` generates mechanical smoke tests from AST analysis -- no LLM required. Extracts all public module-level function signatures (filtering out methods, private functions, and nested functions via indentation check) and produces import + callable check tests in `tests/smoke/`.
 
 ## MCP Server
 
-Pact includes an MCP (Model Context Protocol) server for integration with Claude Code and other MCP clients. Inspect project state, validate contracts, and manage runs without leaving your editor.
-
 ```bash
-# Install with MCP support
 pip install pact-agents[mcp]
-
-# Run the MCP server (stdio transport)
 pact-mcp
-# Or via CLI
-pact mcp-server --project-dir ./my-project
 ```
 
-**7 tools** available via MCP:
-
-| Tool | Description |
-|------|-------------|
-| `pact_status` | Run status with component breakdown |
-| `pact_contracts` | List all component contracts |
-| `pact_contract` | Full contract for a specific component |
-| `pact_budget` | Budget and spend summary |
-| `pact_retrospective` | Latest run retrospective |
-| `pact_validate` | Run contract validation gate |
-| `pact_resume` | Resume a failed/paused run |
-
-**Claude Code configuration** (add to `.claude/settings.json`):
-
-```json
-{
-  "mcpServers": {
-    "pact": {
-      "command": "pact-mcp",
-      "env": { "PACT_PROJECT_DIR": "/path/to/your/project" }
-    }
-  }
-}
-```
-
-Project detection: set `PACT_PROJECT_DIR`, pass `project_dir` to any tool, or let the server auto-detect from the working directory.
-
-## Claude Code Slash Command
-
-Pact ships with a Claude Code custom slash command for crafting optimal task specifications:
-
-```
-/project:craft-task
-```
-
-This interactive command interviews you about your project and generates research-backed `task.md`, `sops.md`, and `pact.yaml` files optimized for Pact's decomposition pipeline.
+7 tools for Claude Code integration: status, contracts, budget, validate, resume.
 
 ## Development
 
 ```bash
 make dev          # Install with LLM backend support
-make test         # Run full test suite (1886 tests)
+make test         # Run full test suite (1766 tests)
 make test-quick   # Stop on first failure
-make clean        # Remove venv and caches
 ```
 
-Requires Python 3.12+. Core has two dependencies: `pydantic` and `pyyaml`. LLM backends require `anthropic`.
+Requires Python 3.12+. Core dependencies: `pydantic` and `pyyaml`.
 
 ## Architecture
 
@@ -381,12 +305,11 @@ See [CLAUDE.md](CLAUDE.md) for the full technical reference.
 
 Pact is one of three systems (alongside Emergence and Apprentice) built to test
 the ideas in [Beyond Code: Context, Constraints, and the New Craft of Software](https://www.amazon.com/dp/B0GNLTXVC7).
-The book covers the coordination, verification, and specification problems that
-motivated Pact's design.
 
-## Related: Baton
+## Related
 
-[Baton](https://jmcentire.github.io/baton/) is a circuit orchestration platform that manages service topologies through a circuit-first design. Pact produces contracted components; Baton wires them into a running topology with mock collapse, A/B routing, health monitoring, and self-healing. Together they cover the full lifecycle: Pact builds the pieces with provable interfaces, Baton runs them in production.
+- [Baton](https://jmcentire.github.io/baton/) -- Circuit orchestration for contract-first components
+- [Sentinel](https://github.com/jmcentire/sentinel) -- Production attribution and contract tightening
 
 ## License
 

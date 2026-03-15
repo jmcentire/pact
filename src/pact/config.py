@@ -108,10 +108,7 @@ class GlobalConfig:
     # Build mode
     build_mode: str = "auto"  # unary | auto | hierarchy
 
-    # Monitoring
-    monitoring_enabled: bool = False
-    monitoring_auto_remediate: bool = True
-    monitoring_budget: dict = field(default_factory=dict)
+    # PACT log key prefix (embedded in generated code for production traceability)
     monitoring_log_key_prefix: str = "PACT"
 
 
@@ -182,14 +179,20 @@ class ProjectConfig:
     #     rejection_rate_critical: 0.9
     health_thresholds: dict[str, float] = field(default_factory=dict)
 
-    # Monitoring (per-project overrides)
-    monitoring_log_files: list[str] = field(default_factory=list)
-    monitoring_process_patterns: list[str] = field(default_factory=list)
-    monitoring_webhook_port: int = 0
-    monitoring_error_patterns: list[str] = field(
-        default_factory=lambda: ["ERROR", "CRITICAL", "Traceback"],
-    )
-    monitoring_auto_remediate: bool | None = None
+    # Audit repo (separation of privilege)
+    audit_repo: str = ""     # Git URL of audit repo
+    audit_dir: str = ""      # Local path to audit repo (overrides clone)
+    audit_mode: str = ""     # "audit" | "code" | "" (which agent role this instance plays)
+
+    # Constrain integration
+    constrain_dir: str = ""  # Path to Constrain output directory
+
+    # Ledger integration
+    ledger_dir: str = ""     # Path to Ledger assertion exports
+
+    # Arbiter integration
+    arbiter_endpoint: str = ""  # HTTP endpoint (or ARBITER_ENDPOINT env var)
+    skip_arbiter: bool = False  # Skip Arbiter gate phase
 
 
 def load_global_config(config_path: str | Path | None = None) -> GlobalConfig:
@@ -240,9 +243,6 @@ def load_global_config(config_path: str | Path | None = None) -> GlobalConfig:
         impatience=raw.get("impatience", "normal"),
         role_timeouts=raw.get("role_timeouts", {}),
         build_mode=raw.get("build_mode", "auto"),
-        monitoring_enabled=raw.get("monitoring_enabled", False),
-        monitoring_auto_remediate=raw.get("monitoring_auto_remediate", True),
-        monitoring_budget=raw.get("monitoring_budget", {}),
         monitoring_log_key_prefix=raw.get("monitoring_log_key_prefix", "PACT"),
     )
 
@@ -325,15 +325,14 @@ def load_project_config(project_dir: str | Path) -> ProjectConfig:
         register_check_rate=raw.get("register_check_rate", 0.1),
         language=raw.get("language", "python"),
         test_framework=raw.get("test_framework", ""),
-        monitoring_log_files=raw.get("monitoring_log_files", []),
-        monitoring_process_patterns=raw.get("monitoring_process_patterns", []),
-        monitoring_webhook_port=raw.get("monitoring_webhook_port", 0),
-        monitoring_error_patterns=raw.get(
-            "monitoring_error_patterns",
-            ["ERROR", "CRITICAL", "Traceback"],
-        ),
-        monitoring_auto_remediate=raw.get("monitoring_auto_remediate"),
         health_thresholds=raw.get("health_thresholds", {}),
+        audit_repo=raw.get("audit_repo", ""),
+        audit_dir=raw.get("audit_dir", ""),
+        audit_mode=raw.get("audit_mode", ""),
+        constrain_dir=raw.get("constrain_dir", ""),
+        ledger_dir=raw.get("ledger_dir", ""),
+        arbiter_endpoint=raw.get("arbiter_endpoint", ""),
+        skip_arbiter=raw.get("skip_arbiter", False),
     )
 
     model_tiers_raw = raw.get("model_tiers", {})

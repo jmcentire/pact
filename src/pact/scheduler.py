@@ -337,8 +337,23 @@ class Scheduler:
                 return state
             await asyncio.sleep(self.check_interval)
 
+    # Phase ownership in two-repo mode
+    _AUDIT_PHASES = {"interview", "shape", "decompose", "contract", "test", "validate"}
+    _CODE_PHASES = {"implement", "integrate"}
+
     async def _do_burst(self, state: RunState) -> RunState:
         """Execute one phase of work."""
+        # Enforce phase ownership in audit-separated mode
+        audit_mode = self.project_config.audit_mode
+        if audit_mode:
+            phase = state.phase
+            if audit_mode == "code" and phase in self._AUDIT_PHASES:
+                state.pause(f"Phase '{phase}' is owned by the audit agent")
+                return state
+            if audit_mode == "audit" and phase in self._CODE_PHASES:
+                state.pause(f"Phase '{phase}' is owned by the coding agent")
+                return state
+
         sops = self.project.load_sops()
         phase = state.phase
 
@@ -398,6 +413,8 @@ class Scheduler:
                 external_context=external_context,
                 learnings=learnings_str,
             )
+        elif phase == "arbiter":
+            state = await self._phase_arbiter(state)
         elif phase == "polish":
             state = await self._phase_polish(state)
         elif phase == "diagnose":
@@ -1002,6 +1019,77 @@ class Scheduler:
         else:
             advance_phase(state)  # -> polish
 
+        return state
+
+    async def _phase_arbiter(self, state: RunState) -> RunState:
+        """Arbiter gate phase — generate access_graph.json and register with Arbiter.
+
+        1. Generate access_graph.json from contracts
+        2. If Arbiter configured: POST to /register, handle HUMAN_GATE
+        3. If not configured or --skip-arbiter: skip with warning
+        4. If Ledger configured: validate contracts against ledger assertions
+        """
+        from pact.access_graph import generate_access_graph, save_access_graph
+        from pact.arbiter import ArbiterResponse, register_with_arbiter, resolve_arbiter_endpoint
+        from pact.lifecycle import advance_phase
+
+        # Generate access_graph.json
+        trust_policy = state.constrain_context.get("trust_policy") if state.constrain_context else None
+        graph = generate_access_graph(self.project, trust_policy=trust_policy)
+        save_access_graph(self.project, graph)
+
+        self.project.append_audit(
+            "access_graph_generated",
+            f"{len(graph.get('components', []))} components, {len(graph.get('edges', []))} edges",
+        )
+
+        # Ledger validation (if configured)
+        ledger_dir = self.project_config.ledger_dir
+        if ledger_dir:
+            from pact.ledger import load_all_ledger_assertions, validate_contract_against_ledger
+
+            all_assertions = load_all_ledger_assertions(ledger_dir)
+            contracts = self.project.load_all_contracts()
+            all_violations: list[str] = []
+
+            for cid, assertions in all_assertions.items():
+                if cid in contracts:
+                    violations = validate_contract_against_ledger(contracts[cid], assertions)
+                    all_violations.extend(violations)
+
+            if all_violations:
+                state.pause(
+                    f"Ledger violations: {'; '.join(all_violations[:3])}"
+                    + (f" (+{len(all_violations) - 3} more)" if len(all_violations) > 3 else "")
+                )
+                return state
+
+        # Arbiter registration
+        endpoint = resolve_arbiter_endpoint(self.project_config.arbiter_endpoint)
+
+        if self.project_config.skip_arbiter or not endpoint:
+            if not endpoint:
+                logger.warning("Arbiter not configured — skipping phase 8.5")
+            else:
+                logger.info("Arbiter gate skipped (--skip-arbiter)")
+            advance_phase(state)
+            return state
+
+        response = await register_with_arbiter(endpoint, graph)
+        state.arbiter_response = response.raw
+
+        if response.human_gate_required:
+            # Write gate file and pause
+            gate_path = self.project.project_dir / "arbiter_gate.json"
+            import json
+            gate_path.write_text(json.dumps(response.raw, indent=2))
+            state.pause("Arbiter requires human review — see arbiter_gate.json")
+            return state
+
+        if response.soak_requirements:
+            state.arbiter_response["soak"] = response.soak_requirements
+
+        advance_phase(state)
         return state
 
     async def _phase_polish(self, state: RunState) -> RunState:

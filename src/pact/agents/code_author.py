@@ -33,7 +33,18 @@ Check the REQUIRED EXPORTS list at the bottom of the stub — tests import these
 names directly. Standalone functions are module-level, not class methods.
 Enum member names match variant names exactly (no UPPERCASE conversion).
 All log statements include the PACT log key. If using Pydantic, use v2 API
-(model_validator, field_validator, model_dump, ConfigDict)."""
+(model_validator, field_validator, model_dump, ConfigDict).
+
+Every class must accept optional event_handler and log_handler kwargs:
+  def __init__(self, ..., event_handler=None, log_handler=None):
+      self._emit = event_handler or (lambda event: None)
+      self._log = log_handler or (lambda level, msg, ctx: None)
+Call self._emit() at start and end of every public method with:
+  {"pact_key": "PACT:<component_id>:<method_name>", "event": "invoked"|"completed",
+   "input_classification": [...], "output_classification": [...],
+   "side_effects": [...], "ts": time.time_ns()}
+The PACT key must be a string literal in the source. When no handler is provided,
+emission must be a silent no-op — no stdout, no errors."""
 
 CODE_SYSTEM_TS = """You are starting fresh on this implementation with no prior context.
 
@@ -46,7 +57,10 @@ All log statements include the PACT log key.
 Effect v3 CRITICAL: Data.tagged is curried. WRONG: Data.tagged('Tag', {fields}).
 CORRECT: Data.tagged('Tag')({fields}) or Data.TaggedError('Tag')({fields}).
 The second positional argument is silently ignored — this is the #1 Effect v3 mistake.
-Similarly, Layer.fail() takes a value, not a constructor — pass the constructed error."""
+Similarly, Layer.fail() takes a value, not a constructor — pass the constructed error.
+Every class must accept optional eventHandler in the constructor.
+Emit structured events at start/end of each public method with pact_key, event type,
+classification arrays, and side_effects. Null handler must be a silent no-op."""
 
 CODE_SYSTEM_JS = """You are starting fresh on this implementation with no prior context.
 
@@ -56,6 +70,9 @@ the REQUIRED EXPORTS list — tests import these names directly. Standalone
 functions are module-level named exports. Use ESM imports with .js extensions.
 Error classes extend Error. Named exports only, no defaults. No TypeScript
 syntax. JSDoc for documentation. All log statements include the PACT log key.
+Every class must accept optional eventHandler in the constructor.
+Emit structured events at start/end of each public method with pact_key, event type,
+classification arrays, and side_effects. Null handler must be a silent no-op.
 Effect v3 CRITICAL: Data.tagged is curried. WRONG: Data.tagged('Tag', {fields}).
 CORRECT: Data.tagged('Tag')({fields}) or Data.TaggedError('Tag')({fields}).
 The second positional argument is silently ignored — this is the #1 Effect v3 mistake.

@@ -25,7 +25,16 @@ CONTRACT_SYSTEM = """You are starting fresh on this contract with no prior conte
 You are a contract author defining precise, machine-checkable interface contracts.
 Types must be complete, error cases exhaustive, pre/postconditions verifiable,
 dependencies explicit. Functions with side effects declare structured_side_effects.
-Include performance_budget for performance-sensitive functions."""
+Include performance_budget for performance-sensitive functions.
+
+Every contract MUST include:
+- data_access: declare reads/writes classification tiers (e.g. PUBLIC, PII, INTERNAL),
+  a specific rationale explaining what data is accessed and why (not vague phrases like
+  "handles data"), and side_effects listing each external interaction with its
+  classification and affected fields.
+- authority: declare data domain patterns this component owns (empty list if none).
+  If domains is non-empty, rationale is required explaining why this component is
+  authoritative for those domains."""
 
 
 async def author_contract(
@@ -156,7 +165,12 @@ Requirements:
 - List all dependencies by component_id
 - All type references must resolve to types defined in this contract or primitives (str, int, float, bool, None, bytes, dict, list, any)
 - Declare structured_side_effects for each function (use kind='none' for pure functions)
-- Set performance_budget on functions with latency or memory constraints"""
+- Set performance_budget on functions with latency or memory constraints
+- data_access: set reads/writes with classification tiers, provide a specific rationale
+  (not vague phrases like "handles data" — describe the exact data and purpose),
+  and list side_effects with type, classification, fields, and rationale
+- authority: set domains this component owns (empty list if non-authoritative),
+  with rationale if domains is non-empty"""
 
     contract, in_tok, out_tok = await agent.assess_cached(
         ComponentContract, prompt, CONTRACT_SYSTEM, cache_prefix=cache_prefix,
