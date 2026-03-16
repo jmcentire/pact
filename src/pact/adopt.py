@@ -432,6 +432,7 @@ async def adopt_codebase(
             logger.info("Contracting %s (%d functions)...", module_name, len(function_names))
             contract = await reverse_engineer_contract(
                 agent, source_code, module_name, function_names,
+                tool_index=analysis.tool_index,
             )
             # Ensure component_id matches tree
             contract.component_id = component_id

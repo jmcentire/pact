@@ -613,6 +613,11 @@
         <h3>Fully Visible Projects</h3>
         <p>All project knowledge lives in the project tree &mdash; contracts, source, tests, decomposition, Goodhart tests, standards, learnings. When a teammate clones the repo, they see everything. <code>.pact/</code> contains only ephemeral per-run state that gets regenerated.</p>
       </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x1f50e;</span>
+        <h3>Tool Index</h3>
+        <p>Optional enrichment from <strong>ctags</strong> (symbol index), <strong>cscope</strong> (call graph), <strong>tree-sitter</strong> (full CST, error-tolerant, cross-language), and <strong>kindex</strong> (knowledge graph). Agents get richer context about class hierarchies, callers, and existing project knowledge. All tools optional &mdash; graceful degradation. <code>pip install pact-agents[analysis]</code></p>
+      </div>
     </div>
   </div>
 </section>
@@ -728,6 +733,9 @@
 
 <span class="code-comment"># Or with all LLM backends</span>
 <span class="code-cmd">pip install</span> pact-agents<span class="code-flag">[all-backends]</span>
+
+<span class="code-comment"># With code analysis tools (tree-sitter)</span>
+<span class="code-cmd">pip install</span> pact-agents<span class="code-flag">[analysis]</span>
 
 <span class="code-comment"># Create a project</span>
 <span class="code-cmd">pact init</span> my-project

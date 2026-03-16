@@ -140,6 +140,103 @@ class SecurityAuditReport(BaseModel):
         return sum(1 for f in self.findings if f.risk_level == SecurityRiskLevel.info)
 
 
+# ── Tool Index Models (ctags / cscope / tree-sitter / kindex) ─────
+
+
+class CtagsSymbol(BaseModel):
+    """A symbol extracted by universal-ctags."""
+    name: str
+    file_path: str
+    line_number: int = 0
+    kind: str = ""          # function, class, member, variable, import
+    scope: str = ""         # enclosing scope (e.g. class name)
+    scope_kind: str = ""    # kind of enclosing scope
+    signature: str = ""     # function signature if available
+    language: str = ""
+
+
+class TreeSitterSymbol(BaseModel):
+    """A symbol extracted by tree-sitter AST parsing."""
+    name: str
+    file_path: str
+    start_line: int = 0
+    end_line: int = 0
+    kind: str = ""          # function_definition, class_definition, etc.
+    parent: str = ""        # parent node name (e.g. class name for methods)
+    parent_kind: str = ""   # parent node type
+
+
+class CscopeRef(BaseModel):
+    """A cross-reference from cscope."""
+    symbol: str
+    file_path: str
+    line_number: int = 0
+    context: str = ""       # line content
+
+
+class CallGraphEntry(BaseModel):
+    """Call relationships for a single function."""
+    function: str
+    file_path: str
+    callers: list[CscopeRef] = []   # functions that call this one
+    callees: list[CscopeRef] = []   # functions this one calls
+
+
+class ToolAvailability(BaseModel):
+    """Which external analysis tools are available."""
+    ctags: bool = False
+    ctags_version: str = ""
+    cscope: bool = False
+    cscope_version: str = ""
+    tree_sitter: bool = False
+    tree_sitter_version: str = ""
+    kindex: bool = False
+    kindex_version: str = ""
+
+
+class ToolIndex(BaseModel):
+    """Enriched codebase index from external tools."""
+    tools: ToolAvailability = Field(default_factory=ToolAvailability)
+    symbols: list[CtagsSymbol] = []
+    tree_sitter_symbols: list[TreeSitterSymbol] = []
+    call_graph: list[CallGraphEntry] = []
+    kindex_context: str = ""
+
+    @property
+    def total_symbols(self) -> int:
+        return len(self.symbols)
+
+    @property
+    def total_tree_sitter_symbols(self) -> int:
+        return len(self.tree_sitter_symbols)
+
+    @property
+    def total_call_entries(self) -> int:
+        return len(self.call_graph)
+
+    def symbols_for_file(self, path: str) -> list[CtagsSymbol]:
+        """Get all ctags symbols defined in a specific file."""
+        return [s for s in self.symbols if s.file_path == path]
+
+    def tree_sitter_for_file(self, path: str) -> list[TreeSitterSymbol]:
+        """Get all tree-sitter symbols defined in a specific file."""
+        return [s for s in self.tree_sitter_symbols if s.file_path == path]
+
+    def callers_of(self, function_name: str) -> list[CscopeRef]:
+        """Get all callers of a function."""
+        for entry in self.call_graph:
+            if entry.function == function_name:
+                return entry.callers
+        return []
+
+    def callees_of(self, function_name: str) -> list[CscopeRef]:
+        """Get all functions called by a function."""
+        for entry in self.call_graph:
+            if entry.function == function_name:
+                return entry.callees
+        return []
+
+
 # ── Analysis & Plan Models ─────────────────────────────────────────
 
 
@@ -151,6 +248,7 @@ class CodebaseAnalysis(BaseModel):
     test_files: list[TestFile] = []
     coverage: CoverageMap = Field(default_factory=CoverageMap)
     security: SecurityAuditReport = Field(default_factory=SecurityAuditReport)
+    tool_index: ToolIndex | None = None
 
     @property
     def total_functions(self) -> int:

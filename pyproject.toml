@@ -1,6 +1,6 @@
 [project]
 name = "pact-agents"
-version = "0.7.2"
+version = "0.7.3"
 description = "Contract-first multi-agent software engineering. Contracts before code. Tests as law. Agents that can't cheat."
 readme = "README.md"
 license = {text = "MIT"}
@@ -51,6 +51,12 @@ all-backends = [
     "anthropic>=0.40",
     "openai>=1.0",
     "google-genai>=1.0",
+]
+analysis = [
+    "tree-sitter>=0.24",
+    "tree-sitter-python>=0.23",
+    "tree-sitter-javascript>=0.23",
+    "tree-sitter-typescript>=0.23",
 ]
 dev = [
     "pytest>=8.0",

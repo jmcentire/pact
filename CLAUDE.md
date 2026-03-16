@@ -130,6 +130,19 @@ Config: `max_goodhart_attempts` in pact.yaml (default: 2). Cost: ~$0.07/componen
 
 `pact adopt` generates mechanical smoke tests — no LLM required. AST analysis extracts all public module-level function signatures (filtering out methods, private functions, and nested functions via source line indentation check). Each signature produces an import + callable check test. Output goes to `tests/smoke/` (conventional location). v0.5.1 generates 248 smoke tests for Pact's own codebase.
 
+### Tool Index (ctags / cscope / tree-sitter / kindex)
+
+`analyze_codebase()` enriches analysis with external tools via `build_tool_index()`. All tools optional — skipped silently if not installed.
+
+- **ctags** (universal-ctags): Fast multi-language symbol index. `--output-format=json` with scope, signature, kind.
+- **cscope**: Cross-reference database. Call graph (callers/callees). Used for C/C++ codebases.
+- **tree-sitter**: Full CST, error-tolerant, cross-language via same API. Preferred over cscope for Python/TypeScript/JavaScript. Extracts function/class definitions with parent scope via CST walking.
+- **kindex**: Persistent knowledge graph. Pulls existing project context to avoid rediscovery.
+
+Data flows into: `reverse_engineer_contract()` prompt enrichment, `render_handoff_brief()` tier 2 context. Config: `tool_index_enabled` in pact.yaml (true/false/null=auto).
+
+Install: `brew install universal-ctags cscope` + `pip install pact-agents[analysis]` for tree-sitter.
+
 ### Casual-Pace Scheduling
 
 Poll-based, not event-loop. Agents invoked for focused bursts, state fully persisted between bursts.
@@ -159,6 +172,7 @@ src/pact/
   standards.py         # Global standards collection + rendering
   cli.py               # CLI entry points
   mcp_server.py        # MCP server (FastMCP transport + PactMCPServer handlers)
+  tool_index.py        # External tool enrichment (ctags, cscope, tree-sitter, kindex)
 
   # Spec-kit capabilities (task list, analysis, checklist)
   schemas_tasks.py     # Task list, analysis, checklist Pydantic models

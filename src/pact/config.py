@@ -194,6 +194,9 @@ class ProjectConfig:
     arbiter_endpoint: str = ""  # HTTP endpoint (or ARBITER_ENDPOINT env var)
     skip_arbiter: bool = False  # Skip Arbiter gate phase
 
+    # Tool index (ctags/cscope/tree-sitter/kindex enrichment)
+    tool_index_enabled: bool | None = None  # None = auto (use if tools available)
+
 
 def load_global_config(config_path: str | Path | None = None) -> GlobalConfig:
     """Load global config from config.yaml."""
@@ -333,6 +336,7 @@ def load_project_config(project_dir: str | Path) -> ProjectConfig:
         ledger_dir=raw.get("ledger_dir", ""),
         arbiter_endpoint=raw.get("arbiter_endpoint", ""),
         skip_arbiter=raw.get("skip_arbiter", False),
+        tool_index_enabled=raw.get("tool_index_enabled"),
     )
 
     model_tiers_raw = raw.get("model_tiers", {})
