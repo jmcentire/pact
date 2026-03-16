@@ -1051,6 +1051,7 @@ def render_handoff_brief(
     strategic_context: str = "",
     processing_register: str = "",
     max_context_tokens: int = 0,
+    tool_index_context: str = "",
 ) -> str:
     """Render a complete handoff document for a fresh agent.
 
@@ -1107,6 +1108,11 @@ def render_handoff_brief(
     # Global standards
     if standards_brief:
         tier2_lines.append(standards_brief)
+        tier2_lines.append("")
+
+    # Tool index context (ctags/tree-sitter/kindex enrichment)
+    if tool_index_context:
+        tier2_lines.append(tool_index_context)
         tier2_lines.append("")
 
     # Dependencies

@@ -286,11 +286,29 @@ pact-mcp
 
 7 tools for Claude Code integration: status, contracts, budget, validate, resume.
 
+## Codebase Analysis (Tool Index)
+
+When adopting or analyzing a codebase, Pact can leverage external tools for richer understanding. All tools are optional -- if not installed, they're silently skipped.
+
+| Tool | What It Provides | Install |
+|------|-----------------|---------|
+| **universal-ctags** | Symbol index (functions, classes, members, scope, signatures) | `brew install universal-ctags` |
+| **cscope** | Cross-references and call graph (best for C/C++) | `brew install cscope` |
+| **tree-sitter** | Full CST, error-tolerant parsing, cross-language (preferred for Python/TS/JS) | `pip install pact-agents[analysis]` |
+| **kindex** | Existing project knowledge from the knowledge graph | [kindex](https://github.com/jmcentire/kindex) |
+
+Tree-sitter is preferred over cscope for Python, TypeScript, and JavaScript codebases. Both `pact adopt` and green-field workflows benefit -- agents receive enriched context about symbol hierarchies, class structure, and existing project knowledge.
+
+```yaml
+# pact.yaml
+tool_index_enabled: true  # true | false | null (auto-detect)
+```
+
 ## Development
 
 ```bash
 make dev          # Install with LLM backend support
-make test         # Run full test suite (1766 tests)
+make test         # Run full test suite (1811 tests)
 make test-quick   # Stop on first failure
 ```
 

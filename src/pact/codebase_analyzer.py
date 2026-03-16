@@ -635,6 +635,15 @@ def analyze_codebase(root: str | Path, language: str = "python") -> CodebaseAnal
 
     security = SecurityAuditReport(findings=all_findings)
 
+    # Step 7: Build tool index (optional enrichment from ctags/cscope/tree-sitter/kindex)
+    tool_idx = None
+    try:
+        from pact.tool_index import build_tool_index
+        all_function_names = [f.name for sf in source_files for f in sf.functions]
+        tool_idx = build_tool_index(root, language, function_names=all_function_names)
+    except Exception:
+        logger.debug("Tool index build failed, continuing without it", exc_info=True)
+
     return CodebaseAnalysis(
         root_path=str(root),
         language=language,
@@ -642,4 +651,5 @@ def analyze_codebase(root: str | Path, language: str = "python") -> CodebaseAnal
         test_files=test_files,
         coverage=coverage,
         security=security,
+        tool_index=tool_idx,
     )

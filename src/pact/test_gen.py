@@ -9,6 +9,10 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pact.schemas_testgen import ToolIndex
 
 from pact.agents.base import AgentBase
 from pact.budget import BudgetTracker
@@ -115,6 +119,7 @@ async def reverse_engineer_contract(
     source_code: str,
     module_path: str,
     function_names: list[str],
+    tool_index: "ToolIndex | None" = None,
 ) -> ComponentContract:
     """Use LLM to reverse-engineer a ComponentContract from source code.
 
@@ -154,6 +159,16 @@ Requirements:
 - Extract TypeSpec for any classes/dataclasses/named tuples defined
 - List actual dependencies (imported modules used by the functions)
 - List any invariants (constants, constraints maintained across calls)"""
+
+    # Enrich prompt with tool index context if available
+    if tool_index:
+        from pact.tool_index import render_tool_index_context
+        file_path = module_path.replace(".", "/") + ".py"
+        tool_context = render_tool_index_context(
+            tool_index, file_path=file_path, max_symbols=30,
+        )
+        if tool_context:
+            prompt += f"\n\nAdditional codebase context (from static analysis tools):\n{tool_context}"
 
     cache_prefix = f"Module: {module_path}\nSource:\n{source_code[:8000]}"
 
