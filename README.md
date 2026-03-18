@@ -134,6 +134,31 @@ authority:
 
 Anti-cliche enforcement rejects vague rationale strings ("handles data", "manages stuff"). Rationale must describe the specific data accessed and why.
 
+### Canonical Types with Validators
+
+Contracts encourage defining canonical data structures with validators rather than passing raw primitives. A field like `email: str` becomes a validated type with a regex constraint; `amount: float` carries range and precision rules. The `ValidatorSpec` schema supports `range`, `regex`, `length`, and `custom` rules:
+
+```yaml
+types:
+  - name: PaymentAmount
+    kind: struct
+    fields:
+      - name: value
+        type_ref: float
+        validators:
+          - kind: range
+            expression: "0.01 <= value <= 999999.99"
+            error_message: "Amount must be between $0.01 and $999,999.99"
+      - name: currency
+        type_ref: str
+        validators:
+          - kind: regex
+            expression: "^[A-Z]{3}$"
+            error_message: "Currency must be a 3-letter ISO 4217 code"
+```
+
+Tests automatically verify both acceptance and rejection: valid instances pass, invalid inputs fail with appropriate errors, and boundary values behave correctly. Implementations render these as Pydantic models (Python), Zod schemas (TypeScript), or class constructors with validation (JavaScript).
+
 ## Audit Repo Separation
 
 Pact supports a two-repo separation-of-privilege model where the coding agent and auditing agent operate in different repositories:

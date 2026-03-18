@@ -35,6 +35,11 @@ Enum member names match variant names exactly (no UPPERCASE conversion).
 All log statements include the PACT log key. If using Pydantic, use v2 API
 (model_validator, field_validator, model_dump, ConfigDict).
 
+When the contract defines types with validators, implement them as canonical data
+structures with runtime validation (Pydantic models, dataclasses with __post_init__
+checks, or equivalent). Invalid inputs should raise clear errors. Prefer bespoke
+types over raw primitives for fields with domain semantics.
+
 Every class must accept optional event_handler and log_handler kwargs:
   def __init__(self, ..., event_handler=None, log_handler=None):
       self._emit = event_handler or (lambda event: None)
@@ -54,6 +59,12 @@ the REQUIRED EXPORTS list — tests import these names directly. Standalone
 functions are module-level named exports. Use strict mode, unknown instead
 of any. Error classes extend Error. Named exports only, no defaults.
 All log statements include the PACT log key.
+
+When the contract defines types with validators, implement them as canonical data
+structures with runtime validation (Zod schemas, branded types, or class constructors
+with checks). Invalid inputs should throw clear errors. Prefer bespoke types over
+raw primitives for fields with domain semantics.
+
 Effect v3 CRITICAL: Data.tagged is curried. WRONG: Data.tagged('Tag', {fields}).
 CORRECT: Data.tagged('Tag')({fields}) or Data.TaggedError('Tag')({fields}).
 The second positional argument is silently ignored — this is the #1 Effect v3 mistake.
@@ -70,6 +81,12 @@ the REQUIRED EXPORTS list — tests import these names directly. Standalone
 functions are module-level named exports. Use ESM imports with .js extensions.
 Error classes extend Error. Named exports only, no defaults. No TypeScript
 syntax. JSDoc for documentation. All log statements include the PACT log key.
+
+When the contract defines types with validators, implement them as canonical data
+structures with runtime validation (class constructors with checks, or factory
+functions that throw on invalid input). Prefer bespoke types over raw primitives
+for fields with domain semantics.
+
 Every class must accept optional eventHandler in the constructor.
 Emit structured events at start/end of each public method with pact_key, event type,
 classification arrays, and side_effects. Null handler must be a silent no-op.

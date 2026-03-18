@@ -27,7 +27,12 @@ You are a test author generating executable pytest code that verifies
 implementations against their contracts. Tests verify behavior at
 boundaries, not internals. Cover happy paths, edge cases, error cases,
 and invariants. Mock dependencies. Use descriptive test names with
-clear assertions."""
+clear assertions.
+
+When the contract defines types with validators, test type construction and
+validation: verify valid instances are accepted, invalid inputs are rejected
+with appropriate errors, and edge cases at validation boundaries behave
+correctly. Canonical data structures are first-class testable units."""
 
 TEST_SYSTEM_TS = """You are starting fresh on this test suite with no prior context.
 
@@ -37,6 +42,11 @@ behavior at boundaries, not internals. Cover happy paths, edge cases,
 error cases, and invariants. Mock dependencies with vi.mock(). Use
 describe/it blocks with expect() assertions.
 - Include clear assertions with helpful failure messages
+- When the contract defines types with validators, test type construction and
+  validation: verify valid instances are accepted, invalid inputs are rejected
+  with appropriate errors, and boundary values behave correctly. Canonical data
+  structures are first-class testable units — use Zod schemas, branded types,
+  or runtime checks as appropriate.
 - Effect v3 CRITICAL: Data.tagged is curried. WRONG: Data.tagged('Tag', {fields}).
   CORRECT: Data.tagged('Tag')({fields}) or Data.TaggedError('Tag')({fields}).
   The second positional argument is silently ignored — this is the #1 Effect v3 mistake.
@@ -60,6 +70,10 @@ Key principles:
 - Do NOT use TypeScript annotations — no type annotations, no interfaces
 - Use descriptive test names that explain the scenario
 - Include clear assertions with helpful failure messages
+- When the contract defines types with validators, test type construction and
+  validation: verify valid instances are accepted, invalid inputs are rejected
+  with appropriate errors, and boundary values behave correctly. Canonical data
+  structures are first-class testable units.
 - Effect v3 CRITICAL: Data.tagged is curried. WRONG: Data.tagged('Tag', {fields}).
   CORRECT: Data.tagged('Tag')({fields}) or Data.TaggedError('Tag')({fields}).
   The second positional argument is silently ignored — this is the #1 Effect v3 mistake.
@@ -82,6 +96,11 @@ def _render_focused_contract(contract: ComponentContract) -> str:
             if t.fields:
                 fields = ", ".join(f"{f.name}: {f.type_ref}" for f in t.fields)
                 parts.append(f"  {t.name} ({t.kind}): {{{fields}}}")
+                # Surface validators so tests can verify rejection of invalid data
+                for fld in t.fields:
+                    if fld.validators:
+                        for v in fld.validators:
+                            parts.append(f"    {fld.name} validator ({v.kind}): {v.expression}")
             elif t.kind == "enum" and t.variants:
                 variants = ", ".join(t.variants)
                 parts.append(f"  {t.name} (enum): [{variants}]")

@@ -27,6 +27,13 @@ Types must be complete, error cases exhaustive, pre/postconditions verifiable,
 dependencies explicit. Functions with side effects declare structured_side_effects.
 Include performance_budget for performance-sensitive functions.
 
+Where reasonable, define canonical types with validators rather than passing raw
+primitives. A field like `email: str` should be a validated EmailAddress type; an
+`amount: float` should carry range/precision constraints. Use ValidatorSpec to
+express domain rules (regex, range, length, custom) so implementations can enforce
+them and tests can verify rejection of invalid data. Not every field needs a
+validator — use judgment about which fields carry domain semantics worth encoding.
+
 Every contract MUST include:
 - data_access: declare reads/writes classification tiers (e.g. PUBLIC, PII, INTERNAL),
   a specific rationale explaining what data is accessed and why (not vague phrases like
