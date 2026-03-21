@@ -323,9 +323,13 @@ REGISTER_DRIFT_WARNING = 0.2           # 20%+ of checks show drift
 REGISTER_DRIFT_CRITICAL = 0.5          # 50%+ of checks show drift
 
 
+_PRE_ARTIFACT_PHASES = {"interview", "shape"}
+
+
 def check_health(
     metrics: HealthMetrics,
     thresholds: dict[str, float] | None = None,
+    phase: str = "",
 ) -> HealthReport:
     """Run all health checks against current metrics.
 
@@ -334,6 +338,11 @@ def check_health(
         thresholds: Optional per-project threshold overrides. Keys match
             the module-level constant names (lowercase), e.g.:
             {"output_planning_ratio_warning": 0.3, "rejection_rate_critical": 0.9}
+        phase: Current pipeline phase.  During pre-artifact phases
+            (interview, shape), artifact-production checks are skipped
+            because those phases produce planning outputs (questions,
+            pitches), not contracts or code.  This prevents false-positive
+            dysmemic pressure pauses.
 
     Returns a HealthReport with findings for each condition.
     This is pact's immune system — it detects the organizational
@@ -342,14 +351,18 @@ def check_health(
     """
     t = thresholds or {}
     findings: list[HealthFinding] = []
+    pre_artifact = phase in _PRE_ARTIFACT_PHASES
 
-    findings.append(_check_output_planning_ratio(metrics, t))
+    # Artifact-production checks — skip during pre-artifact phases
+    if not pre_artifact:
+        findings.append(_check_output_planning_ratio(metrics, t))
+        findings.append(_check_budget_velocity(metrics, t))
+
     findings.append(_check_rejection_rate(metrics, t))
-    findings.append(_check_budget_velocity(metrics, t))
     findings.append(_check_phase_balance(metrics, t))
     findings.append(_check_graceful_degradation(metrics, t))
     findings.append(_check_register_drift(metrics, t))
-    findings.extend(_check_five_conditions(metrics))
+    findings.extend(_check_five_conditions(metrics, pre_artifact=pre_artifact))
 
     report = HealthReport(findings=findings)
 
@@ -678,7 +691,10 @@ def _check_register_drift(metrics: HealthMetrics, t: dict[str, float] | None = N
     )
 
 
-def _check_five_conditions(metrics: HealthMetrics) -> list[HealthFinding]:
+def _check_five_conditions(
+    metrics: HealthMetrics,
+    pre_artifact: bool = False,
+) -> list[HealthFinding]:
     """Check the article's five formal conditions for calibrated variance.
 
     1. Room to improve — are there uncovered functions or failing tests?
@@ -686,6 +702,9 @@ def _check_five_conditions(metrics: HealthMetrics) -> list[HealthFinding]:
     3. Variance reaches target — is budget reaching the right phases?
     4. Gain outweighs cost — are we producing more value than we're consuming?
     5. Graceful degradation — already checked above, included for completeness.
+
+    During pre-artifact phases (interview, shape), conditions 3 and 4
+    are skipped because all tokens are planning tokens by design.
     """
     findings = []
 
@@ -709,12 +728,20 @@ def _check_five_conditions(metrics: HealthMetrics) -> list[HealthFinding]:
         ))
 
     # Condition 3: Variance reaches target
-    # If all budget is going to planning, variance never touches the actual code
+    # If all budget is going to planning, variance never touches the actual code.
+    # Skip during pre-artifact phases — 100% planning is expected there.
     generation_pct = (
         metrics.generation_tokens / metrics.total_tokens
         if metrics.total_tokens > 0 else 0.5
     )
-    if generation_pct < 0.2 and metrics.total_tokens > 5000:
+    if pre_artifact:
+        findings.append(HealthFinding(
+            condition=HealthCondition.variance_reaches_target,
+            status=HealthStatus.healthy,
+            message=f"Pre-artifact phase — generation ratio not yet applicable.",
+            metric_value=generation_pct,
+        ))
+    elif generation_pct < 0.2 and metrics.total_tokens > 5000:
         findings.append(HealthFinding(
             condition=HealthCondition.variance_reaches_target,
             status=HealthStatus.critical,
@@ -732,7 +759,15 @@ def _check_five_conditions(metrics: HealthMetrics) -> list[HealthFinding]:
         ))
 
     # Condition 4: Gain outweighs cost
-    if metrics.total_spend > 1.0 and metrics.artifacts_produced == 0:
+    # Skip during pre-artifact phases — zero artifacts is expected.
+    if pre_artifact:
+        findings.append(HealthFinding(
+            condition=HealthCondition.gain_outweighs_cost,
+            status=HealthStatus.healthy,
+            message=f"Pre-artifact phase — artifact production not yet applicable.",
+            metric_value=0.0,
+        ))
+    elif metrics.total_spend > 1.0 and metrics.artifacts_produced == 0:
         findings.append(HealthFinding(
             condition=HealthCondition.gain_outweighs_cost,
             status=HealthStatus.critical,

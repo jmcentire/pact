@@ -225,6 +225,51 @@ class TestApplyRemedy:
         assert result == ""
 
 
+class TestEarlyPhaseArtifactCounting:
+    """Interview and shape outputs must count as artifacts.
+
+    Without this, health checks see 0 artifacts after early phases,
+    triggering false-positive dysmemic pressure pauses that block
+    the pipeline in a resume loop.
+    """
+
+    def test_interview_with_questions_counts_as_artifact(self):
+        """Interview questions are genuine output — health should see them."""
+        from pact.health import HealthMetrics
+        metrics = HealthMetrics(
+            planning_tokens=5000,
+            total_spend=0.15,
+            contracts_produced=1,  # interview counted
+        )
+        # With 1 artifact, budget_velocity > 0 and gain_outweighs_cost won't fire
+        assert metrics.artifacts_produced == 1
+        assert metrics.budget_velocity > 0
+
+    def test_zero_artifacts_triggers_health_critical(self):
+        """Verify the original bug: 0 artifacts + spend > $1 = CRITICAL."""
+        from pact.health import HealthMetrics, check_health
+        metrics = HealthMetrics(
+            planning_tokens=8000,
+            total_spend=1.50,
+            contracts_produced=0,
+        )
+        report = check_health(metrics)
+        critical_conditions = {f.condition for f in report.critical_findings}
+        assert "gain_outweighs_cost" in critical_conditions
+
+    def test_one_artifact_avoids_gain_critical(self):
+        """With interview counted as artifact, gain check should not fire CRITICAL."""
+        from pact.health import HealthMetrics, check_health
+        metrics = HealthMetrics(
+            planning_tokens=8000,
+            total_spend=0.15,
+            contracts_produced=1,  # interview counted
+        )
+        report = check_health(metrics)
+        critical_conditions = {f.condition for f in report.critical_findings}
+        assert "gain_outweighs_cost" not in critical_conditions
+
+
 class TestPhaseCycleDetection:
     """Test that diagnose→implement/integrate loops are bounded."""
 
