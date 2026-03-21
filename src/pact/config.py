@@ -171,6 +171,11 @@ class ProjectConfig:
     language: str = "python"        # Valid values: "python", "typescript", "javascript"
     test_framework: str = ""        # Auto-detect: "pytest" for python, "vitest" for typescript/javascript
 
+    # Package namespace — when set, generated test imports use this prefix.
+    # e.g. package_namespace: "chronicler" → from chronicler.schemas import *
+    # When empty, tests import from bare component names: from schemas import *
+    package_namespace: str = ""
+
     # Health thresholds (per-project overrides — None = use defaults)
     # Example in pact.yaml:
     #   health_thresholds:
@@ -337,6 +342,7 @@ def load_project_config(project_dir: str | Path) -> ProjectConfig:
         arbiter_endpoint=raw.get("arbiter_endpoint", ""),
         skip_arbiter=raw.get("skip_arbiter", False),
         tool_index_enabled=raw.get("tool_index_enabled"),
+        package_namespace=raw.get("package_namespace", ""),
     )
 
     model_tiers_raw = raw.get("model_tiers", {})

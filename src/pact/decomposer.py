@@ -369,6 +369,7 @@ async def decompose_and_contract(
     max_plan_revisions: int = 2,
     build_mode: str = "auto",
     processing_register: str = "",
+    package_namespace: str = "",
 ) -> GateResult:
     """Run the full decomposition -> contract -> test -> validate pipeline.
 
@@ -488,6 +489,7 @@ async def decompose_and_contract(
                 sops=sops,
                 max_plan_revisions=max_plan_revisions,
                 language=project.language,
+                package_namespace=package_namespace,
             )
             test_suites[component_id] = suite
             project.save_test_suite(suite)
@@ -502,6 +504,7 @@ async def decompose_and_contract(
                     agent, contract, suite,
                     dependency_contracts=dep_contracts,
                     language=project.language,
+                    package_namespace=package_namespace,
                 )
                 project.save_goodhart_suite(goodhart_suite)
                 project.append_audit(
