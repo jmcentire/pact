@@ -3,9 +3,10 @@
 Orchestrates the full decomposition pipeline:
 1. Interview: identify risks, ambiguities, questions
 2. Decompose: task -> component tree
-3. Generate contracts for each component
-4. Generate tests for each contract
-5. Validate all contracts (mechanical gate)
+3. Generate type registry: canonical shared types across all components
+4. Generate contracts for each component (referencing the registry)
+5. Generate tests for each contract
+6. Validate all contracts (mechanical gate)
 """
 
 from __future__ import annotations
@@ -359,6 +360,64 @@ Complexity hint: task is ~{len(task.split())} words.{' This appears to be a sing
     return DecompositionResult(tree=tree, decisions=decisions)
 
 
+# ── Type Registry ────────────────────────────────────────────────────
+
+
+async def _generate_type_registry(
+    agent: AgentBase,
+    task: str,
+    tree: DecompositionTree,
+) -> "TypeRegistry":
+    """Generate canonical type definitions for all shared types.
+
+    Runs after decomposition but before contract authoring.  Asks the LLM
+    to define every type that will be referenced by two or more components,
+    with exact field names, types, and semantics.  Each contract author
+    then receives this registry and must use these definitions verbatim.
+    """
+    from pact.schemas import TypeRegistry, TypeSpec
+
+    # Build component summary for the LLM
+    comp_lines = []
+    for cid, node in tree.nodes.items():
+        comp_lines.append(f"- {cid} ({node.name}): {node.description}")
+    components_text = "\n".join(comp_lines)
+
+    prompt = f"""You are defining the canonical type registry for a software project.
+
+Task: {task}
+
+Components:
+{components_text}
+
+Define ALL types that will be shared across two or more components.
+For each type, specify:
+- name: exact PascalCase name
+- kind: one of (primitive, struct, enum, list, optional, union)
+- owner_component: which component is the authoritative source
+- For structs: every field with name, type_ref, and whether it's optional
+- For enums: every variant value
+- description: one-line purpose
+
+CRITICAL: These definitions are the SINGLE SOURCE OF TRUTH.
+Every component contract MUST use these exact type names, exact field
+names, and exact field types. No component may add, remove, or rename
+fields on a shared type.
+
+Types that are used by only one component should NOT be listed here —
+they belong in that component's contract only.
+
+Return a TypeRegistry with a list of TypeSpec objects."""
+
+    registry, _, _ = await agent.assess_cached(
+        TypeRegistry, prompt,
+        "You are a type system architect. Define precise, complete shared types.",
+    )
+
+    logger.info("Type registry: %d shared types", len(registry.types))
+    return registry
+
+
 # ── Full Pipeline ────────────────────────────────────────────────────
 
 
@@ -422,6 +481,17 @@ async def decompose_and_contract(
                 f"{len(coverage_warnings)} warnings: {'; '.join(coverage_warnings[:3])}",
             )
 
+    # Generate or load type registry — canonical shared types
+    from pact.schemas import TypeRegistry
+    type_registry = project.load_type_registry()
+    if type_registry is None:
+        type_registry = await _generate_type_registry(agent, task, decomp_tree)
+        project.save_type_registry(type_registry)
+        project.append_audit(
+            "type_registry",
+            f"{len(type_registry.types)} shared types defined",
+        )
+
     # Generate contracts (leaves first), skipping already-completed ones
     order = decomp_tree.topological_order()
     contracts: dict[str, ComponentContract] = project.load_all_contracts()
@@ -464,6 +534,7 @@ async def decompose_and_contract(
                 sops=sops,
                 max_plan_revisions=max_plan_revisions,
                 processing_register=processing_register,
+                type_registry=type_registry,
             )
 
             contracts[component_id] = contract
