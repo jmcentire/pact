@@ -55,6 +55,38 @@ class TypeSpec(BaseModel):
     variants: list[str] = []
     inner_types: list[str] = []
     description: str = ""
+    owner_component: str = ""
+
+
+class TypeRegistry(BaseModel):
+    """Canonical type definitions shared across all components.
+
+    Generated once after decomposition, before contract authoring.
+    Every component contract must reference types from this registry
+    rather than inventing its own versions.  This prevents the
+    cross-component type divergence that causes validation failures.
+    """
+    types: list[TypeSpec] = []
+
+    def render_for_prompt(self) -> str:
+        """Render the registry as text for inclusion in LLM prompts."""
+        if not self.types:
+            return ""
+        lines = ["# Canonical Type Registry — use these definitions exactly"]
+        for t in self.types:
+            owner = f" (owner: {t.owner_component})" if t.owner_component else ""
+            lines.append(f"\n## {t.name} ({t.kind}){owner}")
+            if t.description:
+                lines.append(f"  {t.description}")
+            if t.kind == "enum" and t.variants:
+                lines.append(f"  variants: {', '.join(t.variants)}")
+            if t.kind == "struct" and t.fields:
+                for f in t.fields:
+                    opt = " (optional)" if f.optional else ""
+                    lines.append(f"  - {f.name}: {f.type_ref}{opt}")
+            if t.kind == "list":
+                lines.append(f"  item_type: {t.item_type}")
+        return "\n".join(lines)
 
 
 class ErrorCase(BaseModel):

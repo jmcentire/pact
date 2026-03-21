@@ -55,6 +55,7 @@ async def author_contract(
     sops: str = "",
     max_plan_revisions: int = 2,
     processing_register: str = "",
+    type_registry: "TypeRegistry | None" = None,
 ) -> tuple[ComponentContract, ResearchReport, PlanEvaluation]:
     """Generate a ComponentContract following the Research-First Protocol.
 
@@ -84,13 +85,24 @@ async def author_contract(
     if processing_register:
         register_context = f"\nProcessing register: {processing_register}\n"
 
+    registry_context = ""
+    if type_registry and type_registry.types:
+        registry_text = type_registry.render_for_prompt()
+        registry_context = (
+            f"\n{registry_text}\n\n"
+            "IMPORTANT: For any type listed in the registry above, you MUST use "
+            "the EXACT same name, fields, and field types. Do NOT redefine these "
+            "types with different fields. If this component needs additional "
+            "component-specific types, define them separately.\n"
+        )
+
     task_desc = (
         f"Define the interface contract for component '{component_name}' "
         f"(id: {component_id}).\n"
         f"{register_context}"
         f"Description: {component_description}\n"
         f"Parent context: {parent_description or 'root component'}\n"
-        f"{dep_summary}{decisions_summary}"
+        f"{dep_summary}{decisions_summary}{registry_context}"
     )
 
     # Phase 1: Research

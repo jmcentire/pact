@@ -436,6 +436,17 @@ class ProjectManager:
         path = self._decomp_dir / "decisions.json"
         path.write_text(json.dumps(decisions, indent=2))
 
+    def save_type_registry(self, registry) -> None:
+        path = self._decomp_dir / "type_registry.json"
+        path.write_text(registry.model_dump_json(indent=2))
+
+    def load_type_registry(self):
+        from pact.schemas import TypeRegistry
+        path = self._decomp_dir / "type_registry.json"
+        if not path.exists():
+            return None
+        return TypeRegistry.model_validate_json(path.read_text())
+
     # ── Contracts ──────────────────────────────────────────────────
 
     def contract_dir(self, component_id: str) -> Path:
