@@ -660,6 +660,7 @@ class Scheduler:
                 max_plan_revisions=self.global_config.max_plan_revisions,
                 build_mode=self.build_mode.value,
                 processing_register=state.processing_register,
+                package_namespace=self.project_config.package_namespace,
             )
 
             if gate.passed:

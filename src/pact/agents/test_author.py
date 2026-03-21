@@ -168,6 +168,7 @@ async def author_tests(
     max_plan_revisions: int = 2,
     prior_research: ResearchReport | None = None,
     language: str = "python",
+    package_namespace: str = "",
 ) -> tuple[ContractTestSuite, ResearchReport, PlanEvaluation]:
     """Generate a ContractTestSuite following the Research-First Protocol.
 
@@ -338,7 +339,7 @@ Requirements:
   * Invariant tests if contract has invariants
 - generated_code must be valid Python pytest code
 - Mock all dependencies using unittest.mock
-- Import the component module as: from {contract.component_id} import *
+- Import the component module as: from {(package_namespace + '.') if package_namespace else ''}{contract.component_id} import *
   (or a reasonable module path based on the component)
 - Each test should have clear assertions
 - test_language must be "python"
@@ -429,6 +430,7 @@ async def author_goodhart_tests(
     visible_suite: ContractTestSuite,
     dependency_contracts: dict[str, ComponentContract] | None = None,
     language: str = "python",
+    package_namespace: str = "",
 ) -> ContractTestSuite:
     """Generate adversarial hidden tests (single LLM call, no research/plan).
 
@@ -470,7 +472,10 @@ async def author_goodhart_tests(
         test_lang = language
     else:
         system_prompt = GOODHART_SYSTEM
-        import_hint = f"from src.{contract.component_id} import *"
+        if package_namespace:
+            import_hint = f"from {package_namespace}.{contract.component_id} import *"
+        else:
+            import_hint = f"from src.{contract.component_id} import *"
         framework = "pytest"
         test_lang = "python"
 
