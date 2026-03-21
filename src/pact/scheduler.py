@@ -53,6 +53,10 @@ logger = logging.getLogger(__name__)
 
 PLANNING_PHASES = {"interview", "shape", "decompose", "diagnose"}
 GENERATION_PHASES = {"implement", "integrate"}
+# Phases where no artifacts are expected — health checks for output ratios
+# and budget velocity should not fire here.  Interview and shape are pure
+# planning; artifacts (contracts, tests) first appear in decompose.
+PRE_ARTIFACT_PHASES = {"interview", "shape"}
 
 # Maps tree node implementation_status -> ComponentTask status
 _IMPL_STATUS_TO_TASK: dict[str, str] = {
@@ -484,7 +488,7 @@ class Scheduler:
             if thresholds.get("output_planning_ratio_critical") == 0.0:
                 pass  # Health checks effectively disabled via config
             else:
-                state = self._check_health_and_remediate(state)
+                state = self._check_health_and_remediate(state, phase=phase)
         except Exception:
             pass  # Health instrumentation never blocks the pipeline
 
@@ -536,6 +540,18 @@ class Scheduler:
                 "interview",
                 f"{len(result.questions)} questions, register={result.processing_register}",
             )
+
+            # Count interview questions as artifacts so health checks
+            # see real output, not zero.  Interview questions are a genuine
+            # work product — they shape downstream decomposition quality.
+            if result.questions:
+                try:
+                    from pact.health import HealthMetrics
+                    metrics = HealthMetrics.from_dict(state.health_snapshot)
+                    metrics.contracts_produced += 1  # interview itself is an artifact
+                    state.health_snapshot = metrics.to_dict()
+                except Exception:
+                    pass
 
             if not result.questions:
                 result.approved = True
@@ -613,6 +629,17 @@ class Scheduler:
             )
             self.project.save_pitch(pitch)
             self.project.append_audit("shape", f"depth={depth}, appetite={pitch.appetite}")
+
+            # Count shape pitch as an artifact so health checks see
+            # real output from this phase.
+            try:
+                from pact.health import HealthMetrics
+                metrics = HealthMetrics.from_dict(state.health_snapshot)
+                metrics.contracts_produced += 1  # pitch is an artifact
+                state.health_snapshot = metrics.to_dict()
+            except Exception:
+                pass
+
             advance_phase(state)
         except Exception as e:
             logger.error("Shaping failed: %s", e)
@@ -1633,7 +1660,9 @@ class Scheduler:
         finally:
             await agent.close()
 
-    def _check_health_and_remediate(self, state: RunState) -> RunState:
+    def _check_health_and_remediate(
+        self, state: RunState, *, phase: str = "",
+    ) -> RunState:
         """Check health and apply automated remedies if needed.
 
         Auto-safe remedies (skip_cascaded, informational) are applied
@@ -1644,12 +1673,17 @@ class Scheduler:
         Also persists the overall_status and critical findings into
         health_snapshot so that format_run_summary can read them
         without re-running check_health (which has logging side effects).
+
+        The ``phase`` parameter tells check_health which checks are
+        appropriate.  Pre-artifact phases (interview, shape) skip
+        artifact-production metrics since those phases produce planning
+        outputs, not contracts or code.
         """
         from pact.health import HealthMetrics, check_health, should_abort, suggest_remedies
 
         metrics = HealthMetrics.from_dict(state.health_snapshot)
         thresholds = getattr(self.project_config, "health_thresholds", {}) or {}
-        report = check_health(metrics, thresholds=thresholds)
+        report = check_health(metrics, thresholds=thresholds, phase=phase)
 
         # Persist report summary into snapshot for side-effect-free reads
         snapshot = state.health_snapshot

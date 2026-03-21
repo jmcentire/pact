@@ -191,14 +191,16 @@ PACT keys are string literals (not computed) so Sentinel can discover them via s
 
 Pact monitors its own coordination health -- detecting the specific failure modes of agentic pipelines before they consume the budget.
 
-| Metric | What It Detects |
-|--------|-----------------|
-| **Output/planning ratio** | Spending $50 on planning and shipping nothing |
-| **Rejection rate** | Agents optimizing for each other's approval, not outcomes |
-| **Budget velocity** | Coordination cost exceeding execution value |
-| **Phase balance** | Any single phase consuming disproportionate budget |
-| **Cascade detection** | One component's failure propagating through the tree |
-| **Register drift** | Agent departing from established processing mode mid-task |
+| Metric | What It Detects | Active Phases |
+|--------|-----------------|---------------|
+| **Output/planning ratio** | Spending $50 on planning and shipping nothing | decompose+ |
+| **Rejection rate** | Agents optimizing for each other's approval, not outcomes | all |
+| **Budget velocity** | Coordination cost exceeding execution value | decompose+ |
+| **Phase balance** | Any single phase consuming disproportionate budget | all |
+| **Cascade detection** | One component's failure propagating through the tree | all |
+| **Register drift** | Agent departing from established processing mode mid-task | implement+ |
+
+Health checks are **phase-aware**: artifact-production metrics (output/planning ratio, budget velocity) only activate after the decompose phase begins. Interview and shape phases are planning-only by design -- applying artifact-production checks there would trigger false positives and block the pipeline.
 
 ```bash
 pact health my-project
