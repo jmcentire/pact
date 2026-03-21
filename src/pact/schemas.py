@@ -82,7 +82,7 @@ class TypeRegistry(BaseModel):
                 lines.append(f"  variants: {', '.join(t.variants)}")
             if t.kind == "struct" and t.fields:
                 for f in t.fields:
-                    opt = " (optional)" if f.optional else ""
+                    opt = "" if f.required else " (optional)"
                     lines.append(f"  - {f.name}: {f.type_ref}{opt}")
             if t.kind == "list":
                 lines.append(f"  item_type: {t.item_type}")
