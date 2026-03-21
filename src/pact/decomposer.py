@@ -418,6 +418,69 @@ Return a TypeRegistry with a list of TypeSpec objects."""
     return registry
 
 
+def _enforce_type_registry(
+    contract: ComponentContract,
+    registry: "TypeRegistry",
+) -> ComponentContract:
+    """Replace any contract type that matches a registry type by name.
+
+    This is the deterministic correction step.  The LLM generated the
+    contract (drunken walk #1).  Now we mechanically overwrite any shared
+    type with the canonical registry version (deterministic checkpoint).
+
+    Types in the contract that don't match any registry type by name
+    are left untouched — they're component-specific.
+    """
+    registry_by_name = {t.name: t for t in registry.types}
+    if not registry_by_name:
+        return contract
+
+    corrected_types = []
+    corrections = 0
+    for ct in contract.types:
+        if ct.name in registry_by_name:
+            canonical = registry_by_name[ct.name]
+            # Check if the LLM's version differs from the registry
+            if ct.fields != canonical.fields or ct.variants != canonical.variants:
+                corrections += 1
+                logger.info(
+                    "Type registry enforcement: %s.%s — replaced LLM version with canonical",
+                    contract.component_id, ct.name,
+                )
+            # Use the canonical version but keep owner_component from registry
+            corrected_types.append(canonical)
+        else:
+            corrected_types.append(ct)
+
+    # Also inject any registry types the LLM forgot to include
+    contract_type_names = {ct.name for ct in corrected_types}
+    for reg_type in registry.types:
+        if reg_type.name not in contract_type_names:
+            # Only inject if this component is the owner or uses this type
+            # in function signatures
+            func_type_refs = set()
+            for func in contract.functions:
+                for inp in func.inputs:
+                    func_type_refs.add(inp.type_ref)
+                func_type_refs.add(func.output_type)
+            if reg_type.name in func_type_refs:
+                corrected_types.append(reg_type)
+                corrections += 1
+                logger.info(
+                    "Type registry enforcement: %s.%s — injected missing shared type",
+                    contract.component_id, reg_type.name,
+                )
+
+    if corrections > 0:
+        logger.info(
+            "Type registry: %d corrections applied to %s",
+            corrections, contract.component_id,
+        )
+
+    # Return a new contract with corrected types
+    return contract.model_copy(update={"types": corrected_types})
+
+
 # ── Full Pipeline ────────────────────────────────────────────────────
 
 
@@ -536,6 +599,12 @@ async def decompose_and_contract(
                 processing_register=processing_register,
                 type_registry=type_registry,
             )
+
+            # Mechanical correction: replace shared types with registry versions.
+            # The LLM may have paraphrased field names or added/removed fields.
+            # The registry is the source of truth — no stochastic variance.
+            if type_registry and type_registry.types:
+                contract = _enforce_type_registry(contract, type_registry)
 
             contracts[component_id] = contract
             project.save_contract(contract)
