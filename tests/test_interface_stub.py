@@ -9,6 +9,7 @@ from pact.interface_stub import (
     render_progress_snapshot,
     render_stub,
     render_stub_js,
+    render_stub_ts,
 )
 from pact.schemas import (
     ComponentContract,
@@ -227,6 +228,44 @@ class TestRenderStub:
         stub = render_stub(contract)
         assert "Prices = list[float]" in stub
 
+    def test_async_function_renders_async_def(self):
+        contract = ComponentContract(
+            component_id="svc",
+            name="Service",
+            description="Async service",
+            functions=[
+                FunctionContract(
+                    name="fetch_data", description="Fetch data from API",
+                    inputs=[FieldSpec(name="url", type_ref="str")],
+                    output_type="str", is_async=True,
+                ),
+                FunctionContract(
+                    name="parse_data", description="Parse data",
+                    inputs=[FieldSpec(name="raw", type_ref="str")],
+                    output_type="dict", is_async=False,
+                ),
+            ],
+        )
+        stub = render_stub(contract)
+        assert "async def fetch_data(" in stub
+        assert "def parse_data(" in stub
+        # Ensure parse_data is NOT async
+        assert "async def parse_data(" not in stub
+
+    def test_sync_function_default_no_async(self):
+        contract = ComponentContract(
+            component_id="sync",
+            name="Sync",
+            description="All sync",
+            functions=[FunctionContract(
+                name="do_thing", description="Sync op",
+                inputs=[], output_type="str",
+            )],
+        )
+        stub = render_stub(contract)
+        assert "def do_thing()" in stub
+        assert "async def do_thing()" not in stub
+
 
 class TestRenderDependencyMap:
     def test_shows_dependencies(self):
@@ -425,6 +464,45 @@ class TestRenderStubJs:
         # Enum should render as JSDoc @typedef with union literal
         assert "PricingError" in stub
         assert "unit_not_found" in stub
+
+
+class TestRenderStubTsAsync:
+    """Tests for TypeScript stub async function rendering."""
+
+    def test_async_function_renders_async(self):
+        contract = ComponentContract(
+            component_id="api",
+            name="API",
+            description="Async API",
+            functions=[
+                FunctionContract(
+                    name="fetch_user", description="Fetch user by ID",
+                    inputs=[FieldSpec(name="user_id", type_ref="str")],
+                    output_type="dict", is_async=True,
+                ),
+            ],
+        )
+        stub = render_stub_ts(contract)
+        assert "async function fetch_user(" in stub
+        assert "Promise<" in stub
+
+    def test_sync_function_no_async(self):
+        contract = ComponentContract(
+            component_id="util",
+            name="Util",
+            description="Sync utility",
+            functions=[
+                FunctionContract(
+                    name="parse", description="Parse string",
+                    inputs=[FieldSpec(name="raw", type_ref="str")],
+                    output_type="dict", is_async=False,
+                ),
+            ],
+        )
+        stub = render_stub_ts(contract)
+        assert "export function parse(" in stub
+        assert "async function parse(" not in stub
+        assert "Promise<" not in stub
 
 
 class TestMapTypeJs:

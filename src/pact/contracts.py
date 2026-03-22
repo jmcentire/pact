@@ -160,6 +160,68 @@ def validate_type_references(contract: ComponentContract) -> list[str]:
     return errors
 
 
+def auto_stub_undefined_types(contract: ComponentContract) -> tuple[ComponentContract, list[str]]:
+    """Auto-generate stub TypeSpec entries for undefined type_refs.
+
+    Scans all type_ref values in the contract (function inputs, outputs,
+    struct fields, list item_types).  Any non-builtin type name that doesn't
+    match an existing TypeSpec gets a stub entry (kind="struct", no fields).
+
+    This is a mechanical repair step — call after type registry enforcement
+    and before validation.  The stubs prevent validation failures when the
+    LLM references types it didn't define.  Stubbed types are logged as
+    warnings so the user knows they may need manual attention.
+
+    Returns:
+        Tuple of (updated contract, list of warning strings for stubbed types).
+    """
+    from pact.schemas import TypeSpec
+
+    defined_types = {t.name for t in contract.types}
+    defined_types |= _BUILTIN_TYPES
+
+    # Collect all referenced type names
+    all_refs: set[str] = set()
+    for func in contract.functions:
+        if func.output_type:
+            all_refs.update(extract_base_types(func.output_type))
+        for field in func.inputs:
+            all_refs.update(extract_base_types(field.type_ref))
+    for type_spec in contract.types:
+        for field in type_spec.fields:
+            all_refs.update(extract_base_types(field.type_ref))
+        if type_spec.kind == "list" and type_spec.item_type:
+            all_refs.update(extract_base_types(type_spec.item_type))
+        for inner in type_spec.inner_types:
+            all_refs.update(extract_base_types(inner))
+
+    # Find undefined types
+    undefined = all_refs - defined_types
+    if not undefined:
+        return contract, []
+
+    # Generate stubs
+    warnings: list[str] = []
+    new_types = list(contract.types)
+    for type_name in sorted(undefined):
+        stub = TypeSpec(
+            name=type_name,
+            kind="struct",
+            description=f"Auto-stubbed type — referenced but not defined in contract '{contract.component_id}'",
+        )
+        new_types.append(stub)
+        warnings.append(
+            f"Auto-stubbed undefined type '{type_name}' in component "
+            f"'{contract.component_id}' — consider defining it explicitly"
+        )
+        logger.warning(
+            "Auto-stubbed undefined type '%s' in component '%s'",
+            type_name, contract.component_id,
+        )
+
+    return contract.model_copy(update={"types": new_types}), warnings
+
+
 def validate_dependency_graph(tree: DecompositionTree) -> list[str]:
     """Check that the dependency graph is acyclic."""
     errors = []

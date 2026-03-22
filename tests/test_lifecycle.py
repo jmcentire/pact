@@ -58,8 +58,13 @@ class TestAdvancePhase:
         advance_phase(state)
         assert state.phase == "polish"
 
-    def test_polish_to_complete(self):
+    def test_polish_to_retrospective(self):
         state = RunState(id="x", project_dir="/tmp", phase="polish")
+        advance_phase(state)
+        assert state.phase == "retrospective"
+
+    def test_retrospective_to_complete(self):
+        state = RunState(id="x", project_dir="/tmp", phase="retrospective")
         advance_phase(state)
         assert state.phase == "complete"
 

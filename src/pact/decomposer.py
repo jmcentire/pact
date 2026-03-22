@@ -622,6 +622,18 @@ async def decompose_and_contract(
             if type_registry and type_registry.types:
                 contract = _enforce_type_registry(contract, type_registry)
 
+            # Auto-stub any undefined type_refs so validation doesn't fail
+            # on types the LLM referenced but forgot to define.
+            from pact.contracts import auto_stub_undefined_types
+            contract, stub_warnings = auto_stub_undefined_types(contract)
+            for w in stub_warnings:
+                logger.warning("Type stub: %s", w)
+            if stub_warnings:
+                project.append_audit(
+                    "type_auto_stub",
+                    f"{component_id}: {len(stub_warnings)} types auto-stubbed",
+                )
+
             contracts[component_id] = contract
             project.save_contract(contract)
             project.save_research(component_id, "contract", research)

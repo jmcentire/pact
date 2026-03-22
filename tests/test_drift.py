@@ -5,11 +5,14 @@ from pathlib import Path
 
 from pact.drift import (
     ArtifactBaseline,
+    build_dependency_graph_from_contracts,
     capture_baseline,
-    load_baseline,
-    detect_drift,
-    StalenessCheck,
     check_staleness,
+    detect_changed_components,
+    detect_drift,
+    load_baseline,
+    select_affected_tests,
+    StalenessCheck,
     _hash_file,
     _hash_directory,
 )
@@ -204,3 +207,98 @@ class TestStaleness:
         )
         result = check_staleness("comp_a", baseline)
         assert result.status == "stale"
+
+
+class TestSelectAffectedTests:
+    def test_changed_component_included(self):
+        graph = {"a": [], "b": ["a"], "c": ["b"]}
+        result = select_affected_tests(["a"], graph)
+        # a changed -> b depends on a -> c depends on b
+        assert "a" in result
+        assert "b" in result
+        assert "c" in result
+
+    def test_leaf_change_no_upward_propagation(self):
+        graph = {"a": [], "b": ["a"], "c": ["a"]}
+        result = select_affected_tests(["b"], graph)
+        # Only b is affected; a and c don't depend on b
+        assert result == ["b"]
+
+    def test_empty_change_set(self):
+        graph = {"a": [], "b": ["a"]}
+        result = select_affected_tests([], graph)
+        assert result == []
+
+    def test_independent_components(self):
+        graph = {"a": [], "b": [], "c": []}
+        result = select_affected_tests(["b"], graph)
+        assert result == ["b"]
+
+    def test_diamond_dependency(self):
+        # a -> b, a -> c, b -> d, c -> d
+        graph = {"d": [], "b": ["d"], "c": ["d"], "a": ["b", "c"]}
+        result = select_affected_tests(["d"], graph)
+        # d changed -> b,c depend on d -> a depends on b,c
+        assert set(result) == {"a", "b", "c", "d"}
+
+    def test_multiple_changed(self):
+        graph = {"a": [], "b": [], "c": ["a"], "d": ["b"]}
+        result = select_affected_tests(["a", "b"], graph)
+        assert set(result) == {"a", "b", "c", "d"}
+
+
+class TestDetectChangedComponents:
+    def test_no_baselines_returns_all(self, tmp_path):
+        # Create contracts dir with components but no baselines
+        for cid in ["comp_a", "comp_b"]:
+            (tmp_path / "contracts" / cid).mkdir(parents=True)
+        result = detect_changed_components(tmp_path)
+        assert set(result) == {"comp_a", "comp_b"}
+
+    def test_unchanged_not_returned(self, tmp_path):
+        _setup_component(tmp_path, "comp_a")
+        capture_baseline("comp_a", tmp_path)
+        result = detect_changed_components(tmp_path)
+        assert "comp_a" not in result
+
+    def test_changed_impl_returned(self, tmp_path):
+        _setup_component(tmp_path, "comp_a")
+        capture_baseline("comp_a", tmp_path)
+        # Modify implementation
+        (tmp_path / "src" / "comp_a" / "main.py").write_text("changed")
+        result = detect_changed_components(tmp_path)
+        assert "comp_a" in result
+
+    def test_new_component_included(self, tmp_path):
+        _setup_component(tmp_path, "comp_a")
+        capture_baseline("comp_a", tmp_path)
+        # Add new component without baseline
+        (tmp_path / "contracts" / "comp_b").mkdir(parents=True)
+        result = detect_changed_components(tmp_path)
+        assert "comp_b" in result
+        assert "comp_a" not in result
+
+
+class TestBuildDependencyGraph:
+    def test_reads_dependencies_from_contracts(self, tmp_path):
+        contracts = tmp_path / "contracts"
+        for cid, deps in [("a", []), ("b", ["a"]), ("c", ["a", "b"])]:
+            d = contracts / cid
+            d.mkdir(parents=True)
+            (d / "interface.json").write_text(
+                json.dumps({"component_id": cid, "dependencies": deps})
+            )
+        graph = build_dependency_graph_from_contracts(contracts)
+        assert graph["a"] == []
+        assert graph["b"] == ["a"]
+        assert set(graph["c"]) == {"a", "b"}
+
+    def test_missing_interface_returns_empty_deps(self, tmp_path):
+        contracts = tmp_path / "contracts"
+        (contracts / "orphan").mkdir(parents=True)
+        graph = build_dependency_graph_from_contracts(contracts)
+        assert graph["orphan"] == []
+
+    def test_empty_dir(self, tmp_path):
+        graph = build_dependency_graph_from_contracts(tmp_path / "nonexistent")
+        assert graph == {}

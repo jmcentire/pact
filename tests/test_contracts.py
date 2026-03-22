@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from pact.contracts import (
+    auto_stub_undefined_types,
     extract_base_types,
     validate_all_contracts,
     validate_contract_completeness,
@@ -151,6 +152,136 @@ class TestValidateTypeReferences:
         )
         errors = validate_type_references(c)
         assert any("MissingItem" in e for e in errors)
+
+
+class TestAutoStubUndefinedTypes:
+    def test_no_stubs_when_all_resolved(self):
+        c = _make_contract(
+            types=[TypeSpec(name="Price", kind="struct", fields=[FieldSpec(name="amount", type_ref="float")])],
+            functions=[
+                FunctionContract(
+                    name="calc", description="d",
+                    inputs=[FieldSpec(name="p", type_ref="Price")],
+                    output_type="float",
+                ),
+            ],
+        )
+        updated, warnings = auto_stub_undefined_types(c)
+        assert warnings == []
+        assert len(updated.types) == 1
+
+    def test_stubs_undefined_output_type(self):
+        c = _make_contract(
+            functions=[
+                FunctionContract(
+                    name="fetch", description="d",
+                    inputs=[], output_type="UserProfile",
+                ),
+            ],
+        )
+        updated, warnings = auto_stub_undefined_types(c)
+        assert len(warnings) == 1
+        assert "UserProfile" in warnings[0]
+        type_names = {t.name for t in updated.types}
+        assert "UserProfile" in type_names
+        # After stubbing, validation should pass
+        errors = validate_type_references(updated)
+        assert errors == []
+
+    def test_stubs_undefined_input_type(self):
+        c = _make_contract(
+            functions=[
+                FunctionContract(
+                    name="save", description="d",
+                    inputs=[FieldSpec(name="data", type_ref="Config")],
+                    output_type="bool",
+                ),
+            ],
+        )
+        updated, warnings = auto_stub_undefined_types(c)
+        assert any("Config" in w for w in warnings)
+        assert any(t.name == "Config" for t in updated.types)
+
+    def test_stubs_undefined_field_type(self):
+        c = _make_contract(
+            types=[TypeSpec(name="Wrapper", kind="struct", fields=[
+                FieldSpec(name="inner", type_ref="InnerData"),
+            ])],
+            functions=[
+                FunctionContract(
+                    name="f", description="d",
+                    inputs=[], output_type="Wrapper",
+                ),
+            ],
+        )
+        updated, warnings = auto_stub_undefined_types(c)
+        assert any("InnerData" in w for w in warnings)
+        errors = validate_type_references(updated)
+        assert errors == []
+
+    def test_stubs_multiple_undefined(self):
+        c = _make_contract(
+            functions=[
+                FunctionContract(
+                    name="process", description="d",
+                    inputs=[
+                        FieldSpec(name="req", type_ref="Request"),
+                        FieldSpec(name="ctx", type_ref="Context"),
+                    ],
+                    output_type="Response",
+                ),
+            ],
+        )
+        updated, warnings = auto_stub_undefined_types(c)
+        assert len(warnings) == 3
+        type_names = {t.name for t in updated.types}
+        assert "Request" in type_names
+        assert "Context" in type_names
+        assert "Response" in type_names
+
+    def test_does_not_stub_builtins(self):
+        c = _make_contract(
+            functions=[
+                FunctionContract(
+                    name="f", description="d",
+                    inputs=[FieldSpec(name="x", type_ref="list[str]")],
+                    output_type="Optional[int]",
+                ),
+            ],
+        )
+        updated, warnings = auto_stub_undefined_types(c)
+        assert warnings == []
+        assert len(updated.types) == 0
+
+    def test_stubs_have_description(self):
+        c = _make_contract(
+            functions=[
+                FunctionContract(
+                    name="f", description="d",
+                    inputs=[], output_type="Widget",
+                ),
+            ],
+        )
+        updated, _ = auto_stub_undefined_types(c)
+        stub = next(t for t in updated.types if t.name == "Widget")
+        assert "Auto-stubbed" in stub.description
+        assert stub.kind == "struct"
+        assert stub.fields == []
+
+    def test_stubs_generic_inner_types(self):
+        c = _make_contract(
+            functions=[
+                FunctionContract(
+                    name="f", description="d",
+                    inputs=[FieldSpec(name="items", type_ref="list[CustomItem]")],
+                    output_type="dict[str, CustomResult]",
+                ),
+            ],
+        )
+        updated, warnings = auto_stub_undefined_types(c)
+        type_names = {t.name for t in updated.types}
+        assert "CustomItem" in type_names
+        assert "CustomResult" in type_names
 
 
 class TestValidateDependencyGraph:

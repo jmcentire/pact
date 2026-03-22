@@ -274,12 +274,13 @@ def _render_function(func: FunctionContract) -> list[str]:
             p += ","
         params.append(p)
 
+    prefix = "async def" if func.is_async else "def"
     if params:
-        lines.append(f"def {func.name}(")
+        lines.append(f"{prefix} {func.name}(")
         lines.extend(params)
         lines.append(f") -> {func.output_type}:")
     else:
-        lines.append(f"def {func.name}() -> {func.output_type}:")
+        lines.append(f"{prefix} {func.name}() -> {func.output_type}:")
 
     # Docstring
     doc_lines: list[str] = []
@@ -647,12 +648,15 @@ def _render_function_ts(func: FunctionContract) -> list[str]:
             p += ","
         params.append(p)
 
+    async_prefix = "async " if func.is_async else ""
     if params:
-        lines.append(f"export function {func.name}(")
+        lines.append(f"export {async_prefix}function {func.name}(")
         lines.extend(params)
-        lines.append(f"): {return_ts};")
+        ret_type = f"Promise<{return_ts}>" if func.is_async else return_ts
+        lines.append(f"): {ret_type};")
     else:
-        lines.append(f"export function {func.name}(): {return_ts};")
+        ret_type = f"Promise<{return_ts}>" if func.is_async else return_ts
+        lines.append(f"export {async_prefix}function {func.name}(): {ret_type};")
 
     return lines
 

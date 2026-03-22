@@ -132,6 +132,7 @@ class FunctionContract(BaseModel):
     preconditions: list[str] = []
     postconditions: list[str] = []
     idempotent: bool = False
+    is_async: bool = False
     side_effects: list[str] = []
     structured_side_effects: list[SideEffect] = []
     performance_budget: PerformanceBudget | None = None
@@ -574,7 +575,7 @@ class RunState(BaseModel):
     status: Literal["active", "paused", "completed", "failed", "budget_exceeded"] = "active"
     phase: Literal[
         "interview", "shape", "decompose", "contract", "implement",
-        "integrate", "arbiter", "polish", "diagnose", "complete"
+        "integrate", "arbiter", "polish", "retrospective", "diagnose", "complete"
     ] = "interview"
     component_tasks: list[ComponentTask] = []
     interview_result: InterviewResult | None = None
