@@ -7,11 +7,13 @@ import pytest
 from pact.schemas import (
     ComponentContract,
     ComponentTask,
+    Contingency,
     ContractTestSuite,
     DecompositionNode,
     DecompositionTree,
     DesignDocument,
     EngineeringDecision,
+    EnvironmentCheck,
     ErrorCase,
     FailureRecord,
     FieldSpec,
@@ -21,6 +23,8 @@ from pact.schemas import (
     IOTrace,
     LearningEntry,
     PlanEvaluation,
+    PreflightPlan,
+    RedLine,
     ResearchFinding,
     ResearchReport,
     RunState,
@@ -412,3 +416,92 @@ class TestDesignDocument:
             ],
         )
         assert len(d.failure_history) == 1
+
+
+class TestPreflightModels:
+    def test_red_line_basic(self):
+        r = RedLine(rule="Do not delete tests")
+        assert r.rule == "Do not delete tests"
+        assert r.action_on_violation == "stop_and_report"
+
+    def test_red_line_with_rationale(self):
+        r = RedLine(
+            rule="No eval()",
+            rationale="Security risk",
+            action_on_violation="use_registry_pattern",
+        )
+        assert r.rationale == "Security risk"
+
+    def test_contingency_basic(self):
+        c = Contingency(
+            trigger="Tests fail after 3 iterations",
+            response="Stop and report",
+        )
+        assert c.trigger.startswith("Tests fail")
+        assert c.learned_from == ""
+
+    def test_contingency_from_kindex(self):
+        c = Contingency(
+            trigger="Import resolution failure",
+            response="Check conftest.py wiring",
+            learned_from="kindex",
+        )
+        assert c.learned_from == "kindex"
+
+    def test_environment_check(self):
+        e = EnvironmentCheck(
+            check="src dir writable",
+            passed=True,
+        )
+        assert e.passed is True
+
+    def test_environment_check_failed(self):
+        e = EnvironmentCheck(
+            check="src dir writable",
+            passed=False,
+            detail="Permission denied",
+        )
+        assert e.passed is False
+        assert "Permission" in e.detail
+
+    def test_preflight_plan_basic(self):
+        plan = PreflightPlan(
+            component_id="schemas",
+            red_lines=[RedLine(rule="No test deletion")],
+            contingencies=[Contingency(trigger="fail", response="stop")],
+            environment_checks=[EnvironmentCheck(check="writable", passed=True)],
+        )
+        assert plan.component_id == "schemas"
+        assert len(plan.red_lines) == 1
+        assert len(plan.contingencies) == 1
+
+    def test_preflight_plan_empty(self):
+        plan = PreflightPlan(component_id="empty")
+        assert plan.red_lines == []
+        assert plan.contingencies == []
+        assert plan.kindex_lessons == []
+
+    def test_preflight_plan_with_kindex_lessons(self):
+        plan = PreflightPlan(
+            component_id="circuit",
+            kindex_lessons=[
+                "Previous run: subprocess spawning failed in Claude Code context",
+                "Use registry dict instead of eval() for dynamic dispatch",
+            ],
+        )
+        assert len(plan.kindex_lessons) == 2
+
+    def test_preflight_plan_serialization_roundtrip(self):
+        plan = PreflightPlan(
+            component_id="test",
+            red_lines=[RedLine(rule="r1"), RedLine(rule="r2")],
+            contingencies=[Contingency(trigger="t", response="r")],
+            environment_checks=[EnvironmentCheck(check="c", passed=True)],
+            kindex_lessons=["lesson1"],
+            created_at="2026-03-22T12:00:00",
+        )
+        json_str = plan.model_dump_json()
+        restored = PreflightPlan.model_validate_json(json_str)
+        assert restored.component_id == "test"
+        assert len(restored.red_lines) == 2
+        assert restored.kindex_lessons == ["lesson1"]

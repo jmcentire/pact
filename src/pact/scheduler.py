@@ -405,6 +405,8 @@ class Scheduler:
         elif phase == "contract":
             # Contract phase is part of decompose
             advance_phase(state)
+        elif phase == "preflight":
+            state = await self._phase_preflight(state)
         elif phase == "implement":
             state = await self._phase_implement(
                 state, sops,
@@ -769,6 +771,194 @@ class Scheduler:
         def factory() -> AgentBase:
             return self._make_agent(role)
         return factory
+
+    async def _phase_preflight(self, state: RunState) -> RunState:
+        """Preflight phase — establish red lines and contingencies before implementation.
+
+        Only activates when the backend is claude_code or claude_code_team.
+        Direct API backends (anthropic, openai, gemini) skip this phase because
+        signet-eval only runs as a Claude Code hook — there's nothing to enforce
+        the plan against when calling the API directly.
+
+        For each component about to be implemented:
+        1. Read the contract (what we're building)
+        2. Query Kindex for lessons from previous runs (if available)
+        3. Run environment checks (can we write to src dir? do deps exist?)
+        4. Establish red lines (inviolable constraints)
+        5. Establish contingencies (plan Bs for known failure modes)
+        6. Store the PreflightPlan
+
+        This is the "on the ground, before departure" planning step.
+        """
+        from pact.schemas import (
+            Contingency,
+            EnvironmentCheck,
+            PreflightPlan,
+            RedLine,
+        )
+
+        # Only activate for claude_code backends
+        backend = self.project_config.backend
+        role_backends = self.project_config.role_backends
+        implementer_backend = role_backends.get("implementer", backend)
+
+        if implementer_backend not in ("claude_code", "claude_code_team"):
+            logger.info(
+                "Preflight skipped — backend '%s' is not claude_code",
+                implementer_backend,
+            )
+            advance_phase(state)
+            return state
+
+        tree = self.project.load_tree()
+        if not tree:
+            advance_phase(state)
+            return state
+
+        contracts = self.project.load_all_contracts()
+        plans: list[PreflightPlan] = []
+
+        for cid in tree.topological_order():
+            node = tree.nodes.get(cid)
+            if not node or node.children:
+                continue  # Skip non-leaf / missing
+
+            contract = contracts.get(cid)
+            if not contract:
+                continue
+
+            # ── 1. Query Kindex for lessons ──
+            kindex_lessons: list[str] = []
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["kin", "search", f"preflight {cid} failure lesson"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    for line in result.stdout.strip().splitlines()[:5]:
+                        line = line.strip()
+                        if line and not line.startswith("Found"):
+                            kindex_lessons.append(line)
+            except Exception:
+                pass  # Kindex not available — that's fine
+
+            # ── 2. Environment checks ──
+            env_checks: list[EnvironmentCheck] = []
+
+            # Can we write to the component's src dir?
+            src_dir = self.project.impl_src_dir(cid)
+            try:
+                src_dir.mkdir(parents=True, exist_ok=True)
+                env_checks.append(EnvironmentCheck(
+                    check=f"src dir writable: {src_dir}",
+                    passed=True,
+                ))
+            except Exception as e:
+                env_checks.append(EnvironmentCheck(
+                    check=f"src dir writable: {src_dir}",
+                    passed=False,
+                    detail=str(e),
+                ))
+
+            # Does the test file exist?
+            test_path = self.project.test_code_path(cid)
+            env_checks.append(EnvironmentCheck(
+                check=f"test file exists: {test_path}",
+                passed=test_path.exists(),
+            ))
+
+            # ── 3. Red lines (universal + contract-derived) ──
+            red_lines = [
+                RedLine(
+                    rule="Do not delete test files",
+                    rationale="Tests are the contract — they define correctness",
+                    action_on_violation="stop_and_report",
+                ),
+                RedLine(
+                    rule="Do not modify contract files (interface.json)",
+                    rationale="Contracts are the spec — implementation adapts to them, not the reverse",
+                    action_on_violation="stop_and_report",
+                ),
+                RedLine(
+                    rule="Do not use try/except to silence import errors",
+                    rationale="Import errors indicate missing exports — fix the export, don't hide the error",
+                    action_on_violation="stop_and_report",
+                ),
+                RedLine(
+                    rule="Do not use eval(), exec(), or __import__() for dynamic dispatch",
+                    rationale="Use registry dicts or match statements instead",
+                    action_on_violation="use_registry_pattern",
+                ),
+            ]
+
+            # ── 4. Contingencies ──
+            contingencies = [
+                Contingency(
+                    trigger="Tests fail after 3 implementation iterations",
+                    response="Stop and report the failure pattern instead of continuing to modify",
+                ),
+                Contingency(
+                    trigger="Cannot resolve an import from another component",
+                    response="Check conftest.py path wiring; do not stub the import",
+                ),
+                Contingency(
+                    trigger="Environment check failed (src dir not writable)",
+                    response="Report the environment issue; do not attempt workarounds",
+                ),
+            ]
+
+            # Add lessons-derived contingencies
+            for lesson in kindex_lessons:
+                contingencies.append(Contingency(
+                    trigger=f"Similar pattern to previous failure",
+                    response=f"Apply lesson: {lesson}",
+                    learned_from="kindex",
+                ))
+
+            plan = PreflightPlan(
+                component_id=cid,
+                red_lines=red_lines,
+                contingencies=contingencies,
+                environment_checks=env_checks,
+                kindex_lessons=kindex_lessons,
+                created_at=datetime.now().isoformat(),
+            )
+            plans.append(plan)
+
+            # Save plan to .pact/preflight/{cid}.json
+            preflight_dir = self.project.project_dir / ".pact" / "preflight"
+            preflight_dir.mkdir(parents=True, exist_ok=True)
+            plan_path = preflight_dir / f"{cid}.json"
+            plan_path.write_text(plan.model_dump_json(indent=2))
+
+        # Check for any failed environment checks
+        failed_checks = [
+            (p.component_id, c)
+            for p in plans
+            for c in p.environment_checks
+            if not c.passed
+        ]
+        if failed_checks:
+            details = "; ".join(
+                f"{cid}: {c.check} — {c.detail}" for cid, c in failed_checks
+            )
+            logger.warning("Preflight: %d environment checks failed: %s", len(failed_checks), details)
+
+        self.project.append_audit(
+            "preflight",
+            f"{len(plans)} plans, {sum(len(p.red_lines) for p in plans)} red lines, "
+            f"{sum(len(p.contingencies) for p in plans)} contingencies, "
+            f"{sum(len(p.kindex_lessons) for p in plans)} kindex lessons",
+        )
+
+        logger.info(
+            "Preflight complete: %d component plans established",
+            len(plans),
+        )
+
+        advance_phase(state)
+        return state
 
     async def _phase_implement(
         self, state: RunState, sops: str,

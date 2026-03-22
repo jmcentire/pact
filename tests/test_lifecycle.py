@@ -38,9 +38,20 @@ class TestAdvancePhase:
         result = advance_phase(state)
         assert result == "contract"
 
-    def test_contract_to_implement(self):
+    def test_contract_to_preflight(self):
         state = RunState(id="x", project_dir="/tmp", phase="contract")
         advance_phase(state)
+        assert state.phase == "preflight"
+
+    def test_preflight_to_implement(self):
+        state = RunState(id="x", project_dir="/tmp", phase="preflight")
+        advance_phase(state)
+        assert state.phase == "implement"
+
+    def test_preflight_skipped_for_non_claude_code(self):
+        """Preflight can be skipped via skip_phases when backend is not claude_code."""
+        state = RunState(id="x", project_dir="/tmp", phase="contract")
+        advance_phase(state, skip_phases={"preflight"})
         assert state.phase == "implement"
 
     def test_implement_to_integrate(self):

@@ -40,10 +40,11 @@ Every agent follows 3 phases: Research -> Plan+Evaluate -> Execute. Research and
 3. **Contract** -- For each component (leaves first), generate ComponentContract
 4. **Test** -- For each contract, generate ContractTestSuite with executable tests + hidden Goodhart tests
 5. **Validate** -- Mechanical gate: all refs resolve, no cycles, test code parses
-6. **Implement** -- Each component independently by code_author agent, verified by contract tests
-7. **Integrate** -- Parent components: glue code wiring children, parent-level tests
-8. **Retrospective** -- Post-run analysis: cost, failure patterns, lessons learned (mechanical, no LLM)
-9. **Diagnose** -- On failure: I/O tracing, systematic error recovery
+6. **Preflight** -- Establish red lines and contingencies before implementation (Claude Code backend only). Queries Kindex for lessons from previous runs. Stores PreflightPlan per component in `.pact/preflight/`. Skipped for direct API backends.
+7. **Implement** -- Each component independently by code_author agent, verified by contract tests
+8. **Integrate** -- Parent components: glue code wiring children, parent-level tests
+9. **Retrospective** -- Post-run analysis: cost, failure patterns, lessons learned (mechanical, no LLM)
+10. **Diagnose** -- On failure: I/O tracing, systematic error recovery
 
 ### Execution Modes
 
