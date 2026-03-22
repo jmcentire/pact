@@ -24,7 +24,8 @@ _BUILTIN_TYPES = frozenset({
     "str", "int", "float", "bool", "None", "bytes", "dict", "list", "any",
     "Optional", "Union", "tuple", "set", "frozenset", "Callable",
     "Iterator", "Generator", "Sequence", "Mapping", "Iterable",
-    "Any",
+    "Any", "AsyncCallable", "Awaitable", "Coroutine", "AsyncIterator",
+    "Path", "datetime",
 })
 
 
