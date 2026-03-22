@@ -79,6 +79,14 @@ def extract_base_types(type_ref: str) -> list[str]:
                 result.extend(extract_base_types(part.strip()))
             return result
 
+    # Handle bare bracket groups like "[str, str]" from nested generics
+    if type_ref.startswith("[") and type_ref.endswith("]"):
+        inner = type_ref[1:-1]
+        result = []
+        for part in _split_at_depth_zero(inner):
+            result.extend(extract_base_types(part.strip()))
+        return result
+
     # Simple name — no brackets, no pipes
     return [type_ref]
 
