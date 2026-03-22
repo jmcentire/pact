@@ -32,7 +32,12 @@ clear assertions.
 When the contract defines types with validators, test type construction and
 validation: verify valid instances are accepted, invalid inputs are rejected
 with appropriate errors, and edge cases at validation boundaries behave
-correctly. Canonical data structures are first-class testable units."""
+correctly. Canonical data structures are first-class testable units.
+
+Async/sync CRITICAL: Functions marked "async" in the contract MUST be tested
+with async test functions using @pytest.mark.asyncio and "await". Functions
+NOT marked async MUST be tested with synchronous test functions — never use
+await on a sync function. Match the test's async-ness to the function under test."""
 
 TEST_SYSTEM_TS = """You are starting fresh on this test suite with no prior context.
 
@@ -47,6 +52,10 @@ describe/it blocks with expect() assertions.
   with appropriate errors, and boundary values behave correctly. Canonical data
   structures are first-class testable units — use Zod schemas, branded types,
   or runtime checks as appropriate.
+- Async/sync CRITICAL: Functions marked "async" in the contract MUST be tested
+  with async test callbacks (async () => { ... }) using "await". Functions NOT
+  marked async MUST be tested synchronously — never await a sync function.
+  Match the test's async-ness to the function under test.
 - Effect v3 CRITICAL: Data.tagged is curried. WRONG: Data.tagged('Tag', {fields}).
   CORRECT: Data.tagged('Tag')({fields}) or Data.TaggedError('Tag')({fields}).
   The second positional argument is silently ignored — this is the #1 Effect v3 mistake.
@@ -74,6 +83,10 @@ Key principles:
   validation: verify valid instances are accepted, invalid inputs are rejected
   with appropriate errors, and boundary values behave correctly. Canonical data
   structures are first-class testable units.
+- Async/sync CRITICAL: Functions marked "async" in the contract MUST be tested
+  with async test callbacks (async () => { ... }) using "await". Functions NOT
+  marked async MUST be tested synchronously — never await a sync function.
+  Match the test's async-ness to the function under test.
 - Effect v3 CRITICAL: Data.tagged is curried. WRONG: Data.tagged('Tag', {fields}).
   CORRECT: Data.tagged('Tag')({fields}) or Data.TaggedError('Tag')({fields}).
   The second positional argument is silently ignored — this is the #1 Effect v3 mistake.
@@ -114,7 +127,8 @@ def _render_focused_contract(contract: ComponentContract) -> str:
         parts.append("\nFunctions:")
         for f in contract.functions:
             inputs = ", ".join(f"{i.name}: {i.type_ref}" for i in f.inputs)
-            parts.append(f"  {f.name}({inputs}) -> {f.output_type}")
+            async_marker = "async " if f.is_async else ""
+            parts.append(f"  {async_marker}{f.name}({inputs}) -> {f.output_type}")
             if f.description:
                 parts.append(f"    # {f.description}")
             if f.preconditions:
@@ -185,7 +199,7 @@ async def author_tests(
         Tuple of (test_suite, research_report, plan_evaluation).
     """
     func_summary = "\n".join(
-        f"  - {f.name}({', '.join(i.name + ': ' + i.type_ref for i in f.inputs)}) -> {f.output_type}"
+        f"  - {'async ' if f.is_async else ''}{f.name}({', '.join(i.name + ': ' + i.type_ref for i in f.inputs)}) -> {f.output_type}"
         + (f" [errors: {', '.join(e.name for e in f.error_cases)}]" if f.error_cases else "")
         for f in contract.functions
     )

@@ -42,7 +42,8 @@ Every agent follows 3 phases: Research -> Plan+Evaluate -> Execute. Research and
 5. **Validate** -- Mechanical gate: all refs resolve, no cycles, test code parses
 6. **Implement** -- Each component independently by code_author agent, verified by contract tests
 7. **Integrate** -- Parent components: glue code wiring children, parent-level tests
-8. **Diagnose** -- On failure: I/O tracing, systematic error recovery
+8. **Retrospective** -- Post-run analysis: cost, failure patterns, lessons learned (mechanical, no LLM)
+9. **Diagnose** -- On failure: I/O tracing, systematic error recovery
 
 ### Execution Modes
 

@@ -2,6 +2,11 @@
 
 Runs contract-generated tests against black-box implementations.
 Parses pytest output to produce TestResults.
+
+Supports tiered evaluation:
+  - smoke: import checks only (near-instant, no execution)
+  - standard: contract tests (default, visible test suite)
+  - exhaustive: contract + Goodhart + emission compliance tests
 """
 
 from __future__ import annotations
@@ -10,11 +15,79 @@ import asyncio
 import logging
 import os
 import re
+from enum import StrEnum
 from pathlib import Path
 
 from pact.schemas import TestFailure, TestResults
 
 logger = logging.getLogger(__name__)
+
+
+class EvalTier(StrEnum):
+    """Evaluation cost tiers — controls which tests run."""
+    SMOKE = "smoke"
+    STANDARD = "standard"
+    EXHAUSTIVE = "exhaustive"
+
+
+def select_test_files(
+    component_id: str,
+    project_dir: Path,
+    tier: EvalTier = EvalTier.STANDARD,
+    language: str = "python",
+) -> list[Path]:
+    """Select test files to run based on evaluation tier.
+
+    Args:
+        component_id: The component to evaluate.
+        project_dir: Project root directory.
+        tier: Which evaluation tier to use.
+        language: Test language for file extension selection.
+
+    Returns:
+        List of test file paths to execute, in order.
+
+    Tier behavior:
+        smoke: Only smoke tests (tests/smoke/ if they exist)
+        standard: Contract test suite only
+        exhaustive: Contract + Goodhart + emission compliance
+    """
+    ext = ".test.ts" if language == "typescript" else ".py"
+    tests_dir = project_dir / "tests" / component_id
+    files: list[Path] = []
+
+    if tier == EvalTier.SMOKE:
+        # Just check that imports work — use the smoke test if available
+        smoke_dir = project_dir / "tests" / "smoke"
+        smoke_file = smoke_dir / f"test_{component_id}{ext}"
+        if smoke_file.exists():
+            files.append(smoke_file)
+        # Fall back to contract test with -x (stop at first failure)
+        elif (tests_dir / f"contract_test{ext}").exists():
+            files.append(tests_dir / f"contract_test{ext}")
+        return files
+
+    if tier == EvalTier.STANDARD:
+        contract_test = tests_dir / f"contract_test{ext}"
+        if contract_test.exists():
+            files.append(contract_test)
+        return files
+
+    # EXHAUSTIVE: contract + goodhart + emission
+    contract_test = tests_dir / f"contract_test{ext}"
+    if contract_test.exists():
+        files.append(contract_test)
+
+    goodhart_dir = tests_dir / "goodhart"
+    goodhart_test = goodhart_dir / f"goodhart_test{ext}"
+    if goodhart_test.exists():
+        files.append(goodhart_test)
+
+    emission_test = tests_dir / f"emission_test{ext}"
+    if emission_test.exists():
+        files.append(emission_test)
+
+    return files
 
 
 async def run_contract_tests(

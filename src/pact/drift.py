@@ -1,7 +1,11 @@
-"""Drift detection and staleness tracking for Pact artifacts.
+"""Drift detection, staleness tracking, and diff-based test selection.
 
 Captures hash baselines after successful builds and detects when
 artifacts have been modified without updating related artifacts.
+
+Diff-based test selection: given a set of changed files or components,
+determines the minimal set of test suites that need re-running by
+tracing the dependency graph.
 
 Storage: .pact/baselines/{component_id}.json
 """
@@ -230,3 +234,116 @@ def check_staleness(
         days_since_verification=days_since,
         dependency_updates_since=0,
     )
+
+
+# ── Diff-Based Test Selection ────────────────────────────────────────
+
+
+def detect_changed_components(project_dir: Path) -> list[str]:
+    """Detect which components have changed since their last baseline.
+
+    Compares current file hashes against saved baselines for each
+    component.  Returns component IDs whose implementation, contract,
+    or tests have changed.
+
+    Components with no saved baseline are always included (first run).
+    """
+    baselines_dir = project_dir / ".pact" / "baselines"
+    if not baselines_dir.exists():
+        # No baselines yet — return all components from contracts/
+        contracts_dir = project_dir / "contracts"
+        if contracts_dir.exists():
+            return sorted(
+                d.name for d in contracts_dir.iterdir() if d.is_dir()
+            )
+        return []
+
+    changed = []
+    # Check all components that have baselines
+    for baseline_path in baselines_dir.glob("*.json"):
+        try:
+            baseline = ArtifactBaseline.model_validate_json(baseline_path.read_text())
+        except Exception:
+            continue
+        drifts = detect_drift(baseline, project_dir)
+        if drifts:
+            changed.append(baseline.component_id)
+
+    # Also include components WITHOUT baselines (new or never verified)
+    contracts_dir = project_dir / "contracts"
+    if contracts_dir.exists():
+        for d in contracts_dir.iterdir():
+            if d.is_dir() and d.name not in changed:
+                if not (baselines_dir / f"{d.name}.json").exists():
+                    changed.append(d.name)
+
+    return sorted(changed)
+
+
+def select_affected_tests(
+    changed_components: list[str],
+    dependency_graph: dict[str, list[str]],
+) -> list[str]:
+    """Given changed components, select all test suites that need re-running.
+
+    A component's tests need re-running if:
+    1. The component itself changed, OR
+    2. Any of its dependencies changed (transitive)
+
+    Args:
+        changed_components: Component IDs whose files have changed.
+        dependency_graph: Maps component_id -> list of dependency component_ids.
+            Built from contracts (ComponentContract.dependencies).
+
+    Returns:
+        Sorted list of component IDs whose tests should be run.
+    """
+    changed_set = set(changed_components)
+    affected: set[str] = set(changed_set)
+
+    # Build reverse dependency map: who depends on me?
+    reverse_deps: dict[str, list[str]] = {}
+    for cid, deps in dependency_graph.items():
+        for dep in deps:
+            reverse_deps.setdefault(dep, []).append(cid)
+
+    # BFS: for each changed component, propagate upward to dependents
+    queue = list(changed_set)
+    while queue:
+        current = queue.pop(0)
+        for dependent in reverse_deps.get(current, []):
+            if dependent not in affected:
+                affected.add(dependent)
+                queue.append(dependent)
+
+    return sorted(affected)
+
+
+def build_dependency_graph_from_contracts(
+    contracts_dir: Path,
+) -> dict[str, list[str]]:
+    """Build a dependency graph from contract JSON files on disk.
+
+    Reads contracts/{cid}/interface.json and extracts the dependencies list.
+
+    Returns:
+        Dict mapping component_id -> list of dependency component_ids.
+    """
+    graph: dict[str, list[str]] = {}
+    if not contracts_dir.exists():
+        return graph
+
+    for comp_dir in contracts_dir.iterdir():
+        if not comp_dir.is_dir():
+            continue
+        interface_path = comp_dir / "interface.json"
+        if not interface_path.exists():
+            graph[comp_dir.name] = []
+            continue
+        try:
+            data = json.loads(interface_path.read_text())
+            graph[comp_dir.name] = data.get("dependencies", [])
+        except (json.JSONDecodeError, KeyError):
+            graph[comp_dir.name] = []
+
+    return graph

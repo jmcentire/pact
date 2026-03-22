@@ -111,3 +111,11 @@ def test_validate_decomposition_coverage_is_callable():
     fn = getattr(mod, "validate_decomposition_coverage", None)
     assert fn is not None, "'validate_decomposition_coverage' not found in pact.contracts"
     assert callable(fn)
+
+def test_auto_stub_undefined_types_is_callable():
+    """Function auto_stub_undefined_types exists and is callable."""
+    import importlib
+    mod = importlib.import_module("pact.contracts")
+    fn = getattr(mod, "auto_stub_undefined_types", None)
+    assert fn is not None, "'auto_stub_undefined_types' not found in pact.contracts"
+    assert callable(fn)

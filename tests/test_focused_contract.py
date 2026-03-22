@@ -212,3 +212,52 @@ class TestRenderFocusedContract:
         )
         result = _render_focused_contract(contract)
         assert "performance:" not in result
+
+    def test_async_function_shows_async_marker(self):
+        contract = ComponentContract(
+            component_id="async_svc",
+            name="AsyncSvc",
+            description="Service with async functions",
+            functions=[
+                FunctionContract(
+                    name="fetch_data",
+                    description="Fetch remote data",
+                    inputs=[FieldSpec(name="url", type_ref="str")],
+                    output_type="str",
+                    is_async=True,
+                ),
+                FunctionContract(
+                    name="parse_data",
+                    description="Parse data locally",
+                    inputs=[FieldSpec(name="raw", type_ref="str")],
+                    output_type="dict",
+                    is_async=False,
+                ),
+            ],
+        )
+        result = _render_focused_contract(contract)
+        assert "async fetch_data(url: str) -> str" in result
+        assert "parse_data(raw: str) -> dict" in result
+        # parse_data should NOT be async
+        assert "async parse_data" not in result
+
+    def test_sync_function_default_no_async_marker(self):
+        contract = ComponentContract(
+            component_id="sync_only",
+            name="SyncOnly",
+            description="All sync",
+            functions=[
+                FunctionContract(
+                    name="add",
+                    description="Add numbers",
+                    inputs=[
+                        FieldSpec(name="a", type_ref="int"),
+                        FieldSpec(name="b", type_ref="int"),
+                    ],
+                    output_type="int",
+                ),
+            ],
+        )
+        result = _render_focused_contract(contract)
+        assert "add(a: int, b: int) -> int" in result
+        assert "async " not in result

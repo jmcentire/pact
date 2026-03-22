@@ -423,6 +423,8 @@ class Scheduler:
             state = await self._phase_polish(state)
         elif phase == "diagnose":
             state = await self._phase_diagnose(state, sops)
+        elif phase == "retrospective":
+            state = self._phase_retrospective(state)
         elif phase == "complete":
             state.complete()
             await self.event_bus.emit(PactEvent(
@@ -1279,6 +1281,54 @@ class Scheduler:
             f"goodhart_failures={len(goodhart_failures)}",
         )
 
+        return state
+
+    def _phase_retrospective(self, state: RunState) -> RunState:
+        """Retrospective phase — analyze the completed run and capture lessons.
+
+        Generates a RunRetrospective with cost/duration analysis, failure
+        patterns, and inferred lessons.  Saves to .pact/retrospectives/.
+        Feeds lessons into the project's learnings for future runs.
+
+        This is a mechanical phase — no LLM calls, no cost.
+        """
+        try:
+            from pact.retrospective import generate_retrospective
+
+            retro = generate_retrospective(self.project.project_dir)
+
+            # Feed lessons into learnings file for future runs
+            if retro.lessons:
+                self.project.append_learning({
+                    "source": "retrospective",
+                    "run_id": retro.run_id,
+                    "lessons": retro.lessons,
+                    "failure_patterns": retro.failure_patterns,
+                })
+
+            summary_parts = [
+                f"cost=${retro.total_cost:.4f}",
+                f"components={retro.components_count}",
+                f"lessons={len(retro.lessons)}",
+            ]
+            if retro.failure_patterns:
+                summary_parts.append(f"failure_patterns={len(retro.failure_patterns)}")
+
+            self.project.append_audit(
+                "retrospective",
+                " ".join(summary_parts),
+            )
+
+            logger.info(
+                "Retrospective: %d lessons, %d failure patterns",
+                len(retro.lessons), len(retro.failure_patterns),
+            )
+
+        except Exception as e:
+            logger.debug("Retrospective generation failed (non-blocking): %s", e)
+            self.project.append_audit("retrospective", f"failed: {e}")
+
+        advance_phase(state)  # -> complete
         return state
 
     async def _run_goodhart_tests(

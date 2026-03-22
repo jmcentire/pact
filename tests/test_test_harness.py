@@ -6,7 +6,7 @@ import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from pact.test_harness import parse_pytest_output, run_contract_tests
+from pact.test_harness import EvalTier, parse_pytest_output, run_contract_tests, select_test_files
 
 
 class TestParsePytestOutput:
@@ -124,3 +124,89 @@ class TestExtraPaths:
         assert str(impl_dir) in pythonpath
         # Should only have impl_dir and parent
         assert len(pythonpath.split(":")) == 2
+
+
+class TestEvalTier:
+    """Tests for tiered evaluation and test file selection."""
+
+    def test_smoke_returns_smoke_test(self, tmp_path):
+        smoke_dir = tmp_path / "tests" / "smoke"
+        smoke_dir.mkdir(parents=True)
+        smoke_file = smoke_dir / "test_comp_a.py"
+        smoke_file.write_text("pass")
+
+        result = select_test_files("comp_a", tmp_path, EvalTier.SMOKE)
+        assert len(result) == 1
+        assert result[0] == smoke_file
+
+    def test_smoke_falls_back_to_contract(self, tmp_path):
+        tests_dir = tmp_path / "tests" / "comp_a"
+        tests_dir.mkdir(parents=True)
+        contract = tests_dir / "contract_test.py"
+        contract.write_text("pass")
+
+        result = select_test_files("comp_a", tmp_path, EvalTier.SMOKE)
+        assert len(result) == 1
+        assert result[0] == contract
+
+    def test_smoke_empty_when_no_tests(self, tmp_path):
+        result = select_test_files("comp_a", tmp_path, EvalTier.SMOKE)
+        assert result == []
+
+    def test_standard_returns_contract_only(self, tmp_path):
+        tests_dir = tmp_path / "tests" / "comp_a"
+        tests_dir.mkdir(parents=True)
+        contract = tests_dir / "contract_test.py"
+        contract.write_text("pass")
+        # Goodhart exists but shouldn't be included
+        goodhart_dir = tests_dir / "goodhart"
+        goodhart_dir.mkdir()
+        (goodhart_dir / "goodhart_test.py").write_text("pass")
+
+        result = select_test_files("comp_a", tmp_path, EvalTier.STANDARD)
+        assert len(result) == 1
+        assert result[0] == contract
+
+    def test_exhaustive_returns_all(self, tmp_path):
+        tests_dir = tmp_path / "tests" / "comp_a"
+        tests_dir.mkdir(parents=True)
+        contract = tests_dir / "contract_test.py"
+        contract.write_text("pass")
+        goodhart_dir = tests_dir / "goodhart"
+        goodhart_dir.mkdir()
+        goodhart = goodhart_dir / "goodhart_test.py"
+        goodhart.write_text("pass")
+        emission = tests_dir / "emission_test.py"
+        emission.write_text("pass")
+
+        result = select_test_files("comp_a", tmp_path, EvalTier.EXHAUSTIVE)
+        assert len(result) == 3
+        assert contract in result
+        assert goodhart in result
+        assert emission in result
+
+    def test_exhaustive_partial_files(self, tmp_path):
+        tests_dir = tmp_path / "tests" / "comp_a"
+        tests_dir.mkdir(parents=True)
+        contract = tests_dir / "contract_test.py"
+        contract.write_text("pass")
+        # No goodhart or emission
+
+        result = select_test_files("comp_a", tmp_path, EvalTier.EXHAUSTIVE)
+        assert len(result) == 1
+        assert result[0] == contract
+
+    def test_typescript_extension(self, tmp_path):
+        tests_dir = tmp_path / "tests" / "comp_a"
+        tests_dir.mkdir(parents=True)
+        ts_test = tests_dir / "contract_test.test.ts"
+        ts_test.write_text("pass")
+
+        result = select_test_files("comp_a", tmp_path, EvalTier.STANDARD, language="typescript")
+        assert len(result) == 1
+        assert result[0] == ts_test
+
+    def test_enum_values(self):
+        assert EvalTier.SMOKE == "smoke"
+        assert EvalTier.STANDARD == "standard"
+        assert EvalTier.EXHAUSTIVE == "exhaustive"
