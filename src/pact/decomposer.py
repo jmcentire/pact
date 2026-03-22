@@ -452,24 +452,31 @@ def _enforce_type_registry(
         else:
             corrected_types.append(ct)
 
-    # Also inject any registry types the LLM forgot to include
+    # Collect all type_refs used by the contract (function signatures + field types)
+    all_type_refs = set()
+    for func in contract.functions:
+        for inp in func.inputs:
+            all_type_refs.add(inp.type_ref)
+        all_type_refs.add(func.output_type)
+    for ct in corrected_types:
+        for f in ct.fields:
+            all_type_refs.add(f.type_ref)
+        if ct.item_type:
+            all_type_refs.add(ct.item_type)
+        for inner in ct.inner_types:
+            all_type_refs.add(inner)
+
+    # Inject any registry types that are referenced but missing
     contract_type_names = {ct.name for ct in corrected_types}
     for reg_type in registry.types:
-        if reg_type.name not in contract_type_names:
-            # Only inject if this component is the owner or uses this type
-            # in function signatures
-            func_type_refs = set()
-            for func in contract.functions:
-                for inp in func.inputs:
-                    func_type_refs.add(inp.type_ref)
-                func_type_refs.add(func.output_type)
-            if reg_type.name in func_type_refs:
-                corrected_types.append(reg_type)
-                corrections += 1
-                logger.info(
-                    "Type registry enforcement: %s.%s — injected missing shared type",
-                    contract.component_id, reg_type.name,
-                )
+        if reg_type.name not in contract_type_names and reg_type.name in all_type_refs:
+            corrected_types.append(reg_type)
+            contract_type_names.add(reg_type.name)
+            corrections += 1
+            logger.info(
+                "Type registry enforcement: %s.%s — injected referenced shared type",
+                contract.component_id, reg_type.name,
+            )
 
     if corrections > 0:
         logger.info(
