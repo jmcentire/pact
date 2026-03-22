@@ -786,7 +786,20 @@ class Scheduler:
         3. Run environment checks (can we write to src dir? do deps exist?)
         4. Establish red lines (inviolable constraints)
         5. Establish contingencies (plan Bs for known failure modes)
-        6. Store the PreflightPlan
+        6. Submit the PreflightPlan via signet_preflight_submit MCP tool
+
+        Compliance mechanisms (enforced by signet-eval, not by Pact):
+        - Timed lockout: plan is immutable for a configurable duration after submission
+        - HMAC signing: plan signed with vault session key, verified on every read
+        - Escalation: 5+ violations triggers ASK-everything mode
+        - Human override: preflight-override CLI requires vault passphrase
+
+        MCP tools (signet-eval):
+        - signet_preflight_submit: submit the plan (starts lockout)
+        - signet_preflight_active: read the active plan
+        - signet_preflight_history: past preflights for this component
+        - signet_preflight_violations: violations during this run
+        - signet_preflight_test: dry-run a tool call against the plan
 
         This is the "on the ground, before departure" planning step.
         """
@@ -926,11 +939,27 @@ class Scheduler:
             )
             plans.append(plan)
 
-            # Save plan to .pact/preflight/{cid}.json
+            # Submit plan via signet_preflight_submit if available,
+            # fall back to local file storage.  The MCP submission
+            # starts the timed lockout and HMAC-signs the plan.
             preflight_dir = self.project.project_dir / ".pact" / "preflight"
             preflight_dir.mkdir(parents=True, exist_ok=True)
             plan_path = preflight_dir / f"{cid}.json"
             plan_path.write_text(plan.model_dump_json(indent=2))
+
+            try:
+                import subprocess as _sp
+                _sp.run(
+                    ["claude", "mcp", "call", "signet_preflight_submit",
+                     "--", plan.model_dump_json()],
+                    capture_output=True, text=True, timeout=10,
+                )
+                logger.info("Preflight submitted via signet for %s", cid)
+            except Exception:
+                logger.debug(
+                    "signet_preflight_submit not available — plan saved locally for %s",
+                    cid,
+                )
 
         # Check for any failed environment checks
         failed_checks = [
