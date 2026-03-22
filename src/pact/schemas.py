@@ -185,6 +185,48 @@ class ComponentContract(BaseModel):
     authority: AuthorityDeclaration = AuthorityDeclaration()
 
 
+# ── Preflight Models ─────────────────────────────────────────────────
+
+
+class RedLine(BaseModel):
+    """An inviolable constraint the implementing agent commits to."""
+    rule: str
+    rationale: str = ""
+    action_on_violation: str = "stop_and_report"
+
+
+class Contingency(BaseModel):
+    """A plan B when a specific failure mode is encountered."""
+    trigger: str
+    response: str
+    learned_from: str = ""
+
+
+class EnvironmentCheck(BaseModel):
+    """A pre-execution environment validation."""
+    check: str
+    passed: bool = False
+    detail: str = ""
+
+
+class PreflightPlan(BaseModel):
+    """Operational plan established before implementation begins.
+
+    Only generated when the backend is claude_code — direct API backends
+    bypass the Claude Code hook layer where signet-eval enforces these.
+
+    The agent establishes red lines and contingencies at task-specification
+    time, before goal pressure exists.  Kindex lessons from previous runs
+    inform the plan.
+    """
+    component_id: str
+    red_lines: list[RedLine] = []
+    contingencies: list[Contingency] = []
+    environment_checks: list[EnvironmentCheck] = []
+    kindex_lessons: list[str] = []
+    created_at: str = ""
+
+
 # ── Test Models ──────────────────────────────────────────────────────
 
 
@@ -574,8 +616,9 @@ class RunState(BaseModel):
     project_dir: str
     status: Literal["active", "paused", "completed", "failed", "budget_exceeded"] = "active"
     phase: Literal[
-        "interview", "shape", "decompose", "contract", "implement",
-        "integrate", "arbiter", "polish", "retrospective", "diagnose", "complete"
+        "interview", "shape", "decompose", "contract", "preflight",
+        "implement", "integrate", "arbiter", "polish", "retrospective",
+        "diagnose", "complete"
     ] = "interview"
     component_tasks: list[ComponentTask] = []
     interview_result: InterviewResult | None = None

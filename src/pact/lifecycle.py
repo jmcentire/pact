@@ -8,9 +8,10 @@ State transitions:
   paused → active          (resume)
 
 Phase transitions:
-  interview → shape → decompose → contract → implement → integrate → polish → retrospective → complete
+  interview → shape → decompose → contract → preflight → implement → integrate → polish → retrospective → complete
   Any phase can transition to → diagnose → (back to prior phase)
   shape phase is skipped when shaping is disabled (default)
+  preflight phase is skipped when backend is not claude_code
 """
 
 from __future__ import annotations
@@ -47,8 +48,8 @@ def advance_phase(state: RunState, skip_phases: set[str] | None = None) -> str:
     """
     phase_order = [
         "interview", "shape", "decompose", "contract",
-        "implement", "integrate", "arbiter", "polish",
-        "retrospective", "complete",
+        "preflight", "implement", "integrate", "arbiter",
+        "polish", "retrospective", "complete",
     ]
     try:
         idx = phase_order.index(state.phase)
