@@ -679,6 +679,53 @@ async def decompose_and_contract(
     # Save updated tree
     project.save_tree(decomp_tree)
 
+    # Re-enforce type registry on ALL contracts (catches contracts generated
+    # by older Pact versions or earlier in this run before the registry existed).
+    # Also reconcile types not in the registry by picking the owner's definition.
+    if type_registry and type_registry.types:
+        reconciled = 0
+        # Build owner map: for types not in registry, find which component defines them
+        all_type_defs: dict[str, list[tuple[str, "TypeSpec"]]] = {}
+        for cid, c in contracts.items():
+            for t in c.types:
+                all_type_defs.setdefault(t.name, []).append((cid, t))
+
+        for cid, c in list(contracts.items()):
+            updated = _enforce_type_registry(c, type_registry)
+            if updated.types != c.types:
+                reconciled += 1
+                contracts[cid] = updated
+                project.save_contract(updated)
+
+        # For types NOT in registry that appear in multiple components with
+        # different fields, pick the first component's definition as canonical
+        for type_name, defs in all_type_defs.items():
+            if type_name in {t.name for t in type_registry.types}:
+                continue  # Already handled by registry enforcement
+            if len(defs) < 2:
+                continue
+            # Check if definitions differ
+            first_fields = [(f.name, f.type_ref) for f in defs[0][1].fields]
+            for other_cid, other_def in defs[1:]:
+                other_fields = [(f.name, f.type_ref) for f in other_def.fields]
+                if other_fields != first_fields:
+                    # Replace with first definition
+                    c = contracts[other_cid]
+                    new_types = [
+                        defs[0][1] if t.name == type_name else t
+                        for t in c.types
+                    ]
+                    contracts[other_cid] = c.model_copy(update={"types": new_types})
+                    project.save_contract(contracts[other_cid])
+                    reconciled += 1
+                    logger.info(
+                        "Type reconciliation: %s.%s — aligned with %s's definition",
+                        other_cid, type_name, defs[0][0],
+                    )
+
+        if reconciled:
+            project.append_audit("type_reconciliation", f"{reconciled} contracts reconciled")
+
     # Validate (mechanical gate)
     gate = validate_all_contracts(decomp_tree, contracts, test_suites)
     project.append_audit(
