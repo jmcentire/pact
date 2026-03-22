@@ -455,21 +455,25 @@ def _enforce_type_registry(
     # Transitively inject all referenced registry types.
     # Iterate until no new types are added — handles chains like
     # ExemplarConfig → BackendConfig → ListOfStr.
+    # Uses extract_base_types to decompose complex generics like
+    # AsyncCallable[[str, str], ListVulnerabilityRecord].
+    from pact.contracts import extract_base_types
+
     changed = True
     while changed:
         changed = False
         all_type_refs = set()
         for func in contract.functions:
             for inp in func.inputs:
-                all_type_refs.add(inp.type_ref)
-            all_type_refs.add(func.output_type)
+                all_type_refs.update(extract_base_types(inp.type_ref))
+            all_type_refs.update(extract_base_types(func.output_type))
         for ct in corrected_types:
             for f in ct.fields:
-                all_type_refs.add(f.type_ref)
+                all_type_refs.update(extract_base_types(f.type_ref))
             if ct.item_type:
-                all_type_refs.add(ct.item_type)
+                all_type_refs.update(extract_base_types(ct.item_type))
             for inner in ct.inner_types:
-                all_type_refs.add(inner)
+                all_type_refs.update(extract_base_types(inner))
 
         contract_type_names = {ct.name for ct in corrected_types}
         for reg_type in registry.types:
