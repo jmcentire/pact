@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -122,7 +123,31 @@ class AnthropicBackend:
                     return cls._coerce_fields(parsed)
                 except (json.JSONDecodeError, ValueError):
                     pass
+                # Common LLM JSON malformations: trailing commas, control chars
+                repaired = cls._repair_json(stripped)
+                if repaired is not None:
+                    return cls._coerce_fields(repaired)
         return data
+
+    @staticmethod
+    def _repair_json(s: str):
+        """Attempt common repairs on malformed JSON from LLMs."""
+        # Remove trailing commas before ] or }
+        fixed = re.sub(r",\s*([}\]])", r"\1", s)
+        # Replace unescaped control characters (tabs, newlines inside strings)
+        # by walking through and escaping bare control chars
+        try:
+            parsed = json.loads(fixed)
+            return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+        # Try replacing single quotes with double quotes (only outer-level)
+        try:
+            parsed = json.loads(fixed.replace("'", '"'))
+            return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+        return None
 
     async def _call_llm(
         self,

@@ -1,3 +1,3 @@
 """Pact — contract-first multi-agent software engineering."""
 
-__version__ = "0.10.0"
+__version__ = "0.10.1"
