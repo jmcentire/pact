@@ -63,7 +63,7 @@ class GlobalConfig:
     max_implementation_attempts: int = 3
     max_plan_revisions: int = 2
     max_phase_cycles: int = 3
-    autonomous_timeout: int = 600
+    autonomous_timeout: int = 0  # 0 = no hard timeout; phases run to completion
 
     parallel_components: bool = False
     competitive_implementations: bool = False

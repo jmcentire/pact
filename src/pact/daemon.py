@@ -99,7 +99,8 @@ class Daemon:
         scheduler: Scheduler,
         health_check_interval: int = 30,
         max_idle: int = 600,
-        phase_timeout: int = 1800,
+        phase_timeout: int = 0,  # 0 = stall-based only (no hard wall-clock cap)
+        stall_timeout: int = 600,  # max seconds with no progress before declaring stall
         event_bus: EventBus | None = None,
         poll_integrations: bool = False,
         poll_interval: int = 60,
@@ -111,7 +112,8 @@ class Daemon:
         self.pid_path = project._pact_dir / "daemon.pid"
         self.health_check_interval = health_check_interval  # t: PID check interval
         self.max_idle = max_idle  # t': max wait for human input before alert+exit
-        self.phase_timeout = phase_timeout  # max time for a single phase to complete
+        self.phase_timeout = phase_timeout  # hard wall-clock cap (0=disabled)
+        self.stall_timeout = stall_timeout  # max idle seconds within a phase
         self._shutdown_requested = False
         self.event_bus = event_bus
         self.poll_integrations = poll_integrations
@@ -244,10 +246,18 @@ class Daemon:
             self.project.append_audit("daemon_dispatch", f"Phase: {state.phase}")
 
             try:
-                state = await asyncio.wait_for(
-                    self.scheduler.run_once(),
-                    timeout=self.phase_timeout,
-                )
+                if self.phase_timeout > 0:
+                    # Legacy hard wall-clock timeout (non-default).
+                    # Prefer stall_timeout=600 with phase_timeout=0.
+                    state = await asyncio.wait_for(
+                        self.scheduler.run_once(),
+                        timeout=self.phase_timeout,
+                    )
+                else:
+                    # No hard timeout — complexity determines duration.
+                    # Stall detection (via ActivityTracker + audit log)
+                    # catches genuinely stuck phases separately.
+                    state = await self.scheduler.run_once()
                 self.activity.record_activity("phase_complete")
             except asyncio.TimeoutError:
                 logger.error(

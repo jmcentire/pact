@@ -692,7 +692,11 @@ async def decompose_and_contract(
         else:
             logger.info("Skipping tests for %s — already exist", component_id)
 
-    # Save updated tree
+        # Save tree incrementally after each component — prevents state loss
+        # if the phase is interrupted (timeout, crash, rate limit).
+        project.save_tree(decomp_tree)
+
+    # Final save (redundant but explicit)
     project.save_tree(decomp_tree)
 
     # Re-enforce type registry on ALL contracts (catches contracts generated
