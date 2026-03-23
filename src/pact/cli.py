@@ -724,9 +724,11 @@ async def cmd_daemon(args: argparse.Namespace) -> None:
         else global_config.max_poll_attempts
     )
 
-    # Phase timeout: global config autonomous_timeout (default 1800s)
-    # Separate from max_idle which is for FIFO human-input waiting
-    phase_timeout = global_config.autonomous_timeout or 1800
+    # Phase timeout: 0 = no hard timeout (phases run to completion).
+    # Complexity determines duration, not a fixed clock.
+    # A stall-detection approach (no API progress for N seconds) is
+    # the right way to detect stuck phases, not wall-clock caps.
+    phase_timeout = global_config.autonomous_timeout  # 0 by default
 
     daemon = Daemon(
         project, scheduler,
@@ -743,7 +745,11 @@ async def cmd_daemon(args: argparse.Namespace) -> None:
     print(f"  FIFO: {daemon.fifo_path}")
     print(f"  Health check: every {args.health_interval}s")
     print(f"  Max idle: {args.max_idle}s")
-    print(f"  Phase timeout: {phase_timeout}s")
+    if phase_timeout > 0:
+        print(f"  Phase timeout: {phase_timeout}s (hard wall-clock)")
+    else:
+        print(f"  Phase timeout: none (stall-based detection)")
+
     if poll_integrations:
         print(f"  Integration polling: every {poll_interval}s (max {max_poll_attempts} attempts)")
     print(f"  Resume with: pact signal {args.project_dir}")
