@@ -488,11 +488,25 @@ def cmd_pricing(args: argparse.Namespace) -> None:
 
 def cmd_init(args: argparse.Namespace) -> None:
     """Initialize a new project."""
+    from pact.archive import list_archived_sessions
+
     project = ProjectManager(args.project_dir)
     project.init(budget=args.budget)
+
+    # Show archive info if artifacts were just archived
+    sessions = list_archived_sessions(project.archive_dir)
+    if sessions:
+        latest = sessions[0]
+        print(f"Archived previous artifacts to .pact/archive/{latest['slug']}/")
+
     print(f"Initialized project: {project.project_dir}")
     print(f"  Edit {project.task_path} to describe your task")
     print(f"  Edit {project.sops_path} to set operating procedures")
+
+    # Hint about previous context if archived sessions exist
+    if sessions:
+        print(f"  Previous sessions available: {', '.join(s['slug'] for s in sessions)}")
+
     print(f"  Then run: pact daemon {args.project_dir}")
 
 

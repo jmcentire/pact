@@ -243,11 +243,63 @@ class ProjectManager:
     def standards_path(self) -> Path:
         return self.audit_root / "standards.json"
 
+    # ── Archive ────────────────────────────────────────────────────
+
+    # Files that pact writes during init (human inputs + generated metadata).
+    _ARCHIVABLE_FILES = [
+        "task.md", "sops.md", "pact.yaml", "design.md",
+        "design.json", "tasks.json", "TASKS.md",
+        "analysis.json", "checklist.json", "standards.json",
+    ]
+
+    @property
+    def archive_dir(self) -> Path:
+        """Archive directory: .pact/archive/ under the project directory."""
+        return self._pact_dir / "archive"
+
+    def archive_existing(self) -> list[tuple[Path, Path]]:
+        """Archive existing artifacts into .pact/archive/<slug>/.
+
+        Returns list of (original, archived) path pairs.
+        """
+        from pact.archive import archive_artifacts
+
+        subdir, archived = archive_artifacts(
+            self.project_dir,
+            self._ARCHIVABLE_FILES,
+            archive_base=self.archive_dir,
+            slug_source_priority=["task.md", "pact.yaml"],
+        )
+        if archived:
+            logger.info(
+                "Archived %d artifact(s) to %s/",
+                len(archived), subdir.name if subdir else "?",
+            )
+            for orig, dest in archived:
+                logger.info("  %s", orig.name)
+        return archived
+
+    def load_previous_context(self) -> dict[str, str]:
+        """Load artifact contents from the most recent archived session.
+
+        Returns dict mapping filename to content, or empty dict if none.
+        """
+        from pact.archive import load_archived_artifacts
+
+        return load_archived_artifacts(self.archive_dir)
+
     # ── Init ───────────────────────────────────────────────────────
 
     def init(self, budget: float = 10.00) -> None:
-        """Scaffold a new project directory."""
+        """Scaffold a new project directory.
+
+        If artifacts from a previous session exist, they are archived
+        into ``.pact/archive/<slug>/`` before fresh templates are written.
+        """
         self.project_dir.mkdir(parents=True, exist_ok=True)
+
+        # Archive existing artifacts before scaffolding fresh templates
+        self.archive_existing()
 
         # Audit-owned directories (in audit_dir when separated, else project_dir)
         self._visible_contracts_dir.mkdir(parents=True, exist_ok=True)
@@ -272,45 +324,42 @@ class ProjectManager:
         self._impl_dir.mkdir(exist_ok=True)
         self._comp_dir.mkdir(exist_ok=True)
 
-        if not self.task_path.exists():
-            self.task_path.write_text(
-                "# Task\n\n"
-                "Describe your task here.\n\n"
-                "## Context\n\n"
-                "Any relevant context, constraints, or requirements.\n"
-            )
+        # Write fresh templates (files were archived above if they existed)
+        self.task_path.write_text(
+            "# Task\n\n"
+            "Describe your task here.\n\n"
+            "## Context\n\n"
+            "Any relevant context, constraints, or requirements.\n"
+        )
 
-        if not self.sops_path.exists():
-            self.sops_path.write_text(
-                "# Operating Procedures\n\n"
-                "## Tech Stack\n"
-                "- Language: Python 3.12+\n"
-                "- Testing: pytest\n\n"
-                "## Standards\n"
-                "- Type annotations on all public functions\n"
-                "- Prefer composition over inheritance\n\n"
-                "## Verification\n"
-                "- All functions must have at least one test\n"
-                "- Tests must be runnable without external services\n"
-                "- No task is done until its contract tests pass\n\n"
-                "## Preferences\n"
-                "- Prefer stdlib over third-party libraries\n"
-                "- Keep files under 300 lines\n"
-            )
+        self.sops_path.write_text(
+            "# Operating Procedures\n\n"
+            "## Tech Stack\n"
+            "- Language: Python 3.12+\n"
+            "- Testing: pytest\n\n"
+            "## Standards\n"
+            "- Type annotations on all public functions\n"
+            "- Prefer composition over inheritance\n\n"
+            "## Verification\n"
+            "- All functions must have at least one test\n"
+            "- Tests must be runnable without external services\n"
+            "- No task is done until its contract tests pass\n\n"
+            "## Preferences\n"
+            "- Prefer stdlib over third-party libraries\n"
+            "- Keep files under 300 lines\n"
+        )
 
-        if not self.config_path.exists():
-            config = {
-                "budget": budget,
-            }
-            with open(self.config_path, "w") as f:
-                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+        config = {
+            "budget": budget,
+        }
+        with open(self.config_path, "w") as f:
+            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
-        if not self.design_path.exists():
-            self.design_path.write_text(
-                "# Design Document\n\n"
-                "*Auto-maintained by pact. Do not edit manually.*\n\n"
-                "## Status: Not started\n"
-            )
+        self.design_path.write_text(
+            "# Design Document\n\n"
+            "*Auto-maintained by pact. Do not edit manually.*\n\n"
+            "## Status: Not started\n"
+        )
 
         gitattributes = self.project_dir / ".gitattributes"
         if not gitattributes.exists():
