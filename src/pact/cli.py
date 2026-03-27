@@ -486,6 +486,74 @@ def cmd_pricing(args: argparse.Namespace) -> None:
     print(f"Override file: {DEFAULT_PRICING_PATH}")
 
 
+def _kindex_prompt_and_index(project_dir: str) -> None:
+    """Check kindex availability and offer code indexing on first run."""
+    from pact import kindex_integration as kindex
+    from pathlib import Path
+
+    if not kindex.is_available():
+        return
+
+    directory = Path(project_dir).resolve()
+    auto = kindex.should_auto_index(directory)
+    if auto is True:
+        print("Kindex: auto-indexing codebase...")
+        kindex.index_codebase(directory)
+    elif auto is None:
+        # Not configured — prompt
+        print("Kindex detected. Index this codebase for cross-session context?")
+        print("  [y] Yes  [n] No  [a] Always (save)  [v] Never (save)")
+        choice = input("  Choice [y]: ").strip().lower() or "y"
+        if choice in ("y", "a"):
+            print("Indexing codebase...")
+            kindex.index_codebase(directory)
+        if choice == "a":
+            kindex.write_kin_config(directory, {"auto_index": True})
+            print("  Saved to .kin/config (auto_index: true)")
+        elif choice == "v":
+            kindex.write_kin_config(directory, {"auto_index": False})
+            print("  Saved to .kin/config (auto_index: false)")
+
+
+def _kindex_fetch_context(project_dir: str) -> str | None:
+    """Fetch kindex context for the project topic. Returns context string or None."""
+    from pact import kindex_integration as kindex
+    from pathlib import Path
+
+    if not kindex.is_available():
+        return None
+
+    directory = Path(project_dir).resolve()
+    kin_config = kindex.read_kin_config(directory)
+    topic = kin_config.get("name", directory.name)
+    context = kindex.fetch_context(f"{topic} architecture components")
+    if context.strip():
+        print(f"Loaded kindex context for '{topic}'.")
+        return context
+    return None
+
+
+def _kindex_publish_task(project_dir: str) -> None:
+    """Publish task.md and sops.md to kindex after init."""
+    from pact import kindex_integration as kindex
+    from pathlib import Path
+
+    if not kindex.is_available():
+        return
+
+    directory = Path(project_dir).resolve()
+    task_path = directory / "task.md"
+    if task_path.exists():
+        content = task_path.read_text(encoding="utf-8")
+        # Skip if still a template
+        if "Describe your task here" not in content:
+            kindex.publish_task(
+                title=f"Pact Task: {directory.name}",
+                content=content,
+                tags=["pact", directory.name],
+            )
+
+
 def cmd_init(args: argparse.Namespace) -> None:
     """Initialize a new project."""
     from pact.archive import list_archived_sessions
@@ -499,11 +567,17 @@ def cmd_init(args: argparse.Namespace) -> None:
         latest = sessions[0]
         print(f"Archived previous artifacts to .pact/archive/{latest['slug']}/")
 
+    # Kindex: offer code indexing + fetch context
+    _kindex_prompt_and_index(args.project_dir)
+    kindex_context = _kindex_fetch_context(args.project_dir)
+
     print(f"Initialized project: {project.project_dir}")
     print(f"  Edit {project.task_path} to describe your task")
     print(f"  Edit {project.sops_path} to set operating procedures")
 
-    # Hint about previous context if archived sessions exist
+    if kindex_context:
+        print(f"  Kindex context loaded — will be available during interview phase")
+
     if sessions:
         print(f"  Previous sessions available: {', '.join(s['slug'] for s in sessions)}")
 
@@ -666,6 +740,78 @@ def _show_component_detail(project: ProjectManager, component_id: str) -> None:
             print(f"  ... and {len(source_files) - 10} more")
 
 
+def _kindex_publish_project(project_dir: str) -> None:
+    """Publish project artifacts to kindex after a run completes."""
+    from pact import kindex_integration as kindex
+    from pathlib import Path
+    import json
+
+    if not kindex.is_available():
+        return
+
+    directory = Path(project_dir).resolve()
+    published = 0
+
+    # Publish task
+    task_path = directory / "task.md"
+    if task_path.exists():
+        content = task_path.read_text(encoding="utf-8")
+        if "Describe your task here" not in content:
+            kindex.publish_task(
+                title=f"Pact Task: {directory.name}",
+                content=content,
+                tags=["pact", directory.name],
+            )
+            published += 1
+
+    # Publish decomposition decisions
+    decisions_path = directory / "decomposition" / "decisions.json"
+    if decisions_path.exists():
+        try:
+            decisions = json.loads(decisions_path.read_text(encoding="utf-8"))
+            for d in (decisions if isinstance(decisions, list) else []):
+                if isinstance(d, dict) and d.get("decision"):
+                    kindex.publish_decision(
+                        title=d.get("decision", "")[:80],
+                        rationale=d.get("rationale", d.get("decision", "")),
+                        tags=["pact", directory.name],
+                    )
+                    published += 1
+        except Exception:
+            pass
+
+    # Publish decomposition tree components
+    tree_path = directory / "decomposition" / "tree.json"
+    if tree_path.exists():
+        try:
+            published += kindex.publish_decomposition(
+                tree_path.read_text(encoding="utf-8"),
+                tags=["pact", directory.name],
+            )
+        except Exception:
+            pass
+
+    # Publish contracts (visible, not goodhart)
+    contracts_dir = directory / "contracts"
+    if contracts_dir.exists():
+        for iface in contracts_dir.rglob("interface.json"):
+            try:
+                component_id = iface.parent.name
+                kindex.publish_contract(
+                    component_id,
+                    iface.read_text(encoding="utf-8"),
+                    tags=["pact", directory.name],
+                )
+                published += 1
+            except Exception:
+                pass
+
+    if published:
+        print(f"Published {published} item(s) to kindex.")
+
+    kindex.close()
+
+
 async def cmd_run(args: argparse.Namespace) -> None:
     """Run the pipeline (poll-based, legacy)."""
     from pact.budget import BudgetTracker
@@ -694,6 +840,7 @@ async def cmd_run(args: argparse.Namespace) -> None:
         state = await scheduler.run_forever()
 
     print(format_run_summary(state))
+    _kindex_publish_project(args.project_dir)
 
 
 async def cmd_daemon(args: argparse.Namespace) -> None:
@@ -772,6 +919,7 @@ async def cmd_daemon(args: argparse.Namespace) -> None:
     state = await daemon.run()
     print()
     print(format_run_summary(state))
+    _kindex_publish_project(args.project_dir)
 
 
 def cmd_log(args: argparse.Namespace) -> None:
