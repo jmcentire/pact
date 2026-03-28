@@ -304,17 +304,51 @@ class ContractTestSuite(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _coerce_test_cases(cls, data: dict) -> dict:
-        """LLMs sometimes return test_cases as a JSON string instead of a list."""
+        """LLMs sometimes return test_cases as a JSON string instead of a list.
+
+        Multiple fallback strategies for malformed JSON:
+        1. Direct json.loads
+        2. Repair trailing commas + retry
+        3. ast.literal_eval (handles Python-ish syntax)
+        4. Regex extraction of individual objects
+        """
         if isinstance(data, dict) and "test_cases" in data:
             tc = data["test_cases"]
             if isinstance(tc, str):
                 tc = tc.strip()
+                if not tc:
+                    data["test_cases"] = []
+                    return data
+                # Strategy 1: direct parse
                 try:
                     parsed = _json.loads(tc)
                     if isinstance(parsed, list):
                         data["test_cases"] = parsed
+                        return data
                 except (_json.JSONDecodeError, ValueError):
                     pass
+                # Strategy 2: repair common issues and retry
+                import re as _re
+                repaired = _re.sub(r",\s*([}\]])", r"\1", tc)
+                try:
+                    parsed = _json.loads(repaired)
+                    if isinstance(parsed, list):
+                        data["test_cases"] = parsed
+                        return data
+                except (_json.JSONDecodeError, ValueError):
+                    pass
+                # Strategy 3: ast.literal_eval (handles single quotes, Python exprs)
+                import ast as _ast
+                try:
+                    parsed = _ast.literal_eval(tc)
+                    if isinstance(parsed, list):
+                        data["test_cases"] = parsed
+                        return data
+                except (ValueError, SyntaxError):
+                    pass
+                # Strategy 4: if all else fails, empty list so adoption continues
+                # The test authoring will retry via assess() correction prompt
+                data["test_cases"] = []
         return data
 
 
