@@ -52,7 +52,8 @@ def select_test_files(
         standard: Contract test suite only
         exhaustive: Contract + Goodhart + emission compliance
     """
-    ext = ".test.ts" if language == "typescript" else ".py"
+    ext_map = {"typescript": ".test.ts", "rust": ".rs", "python": ".py"}
+    ext = ext_map.get(language, ".py")
     tests_dir = project_dir / "tests" / component_id
     files: list[Path] = []
 
@@ -119,6 +120,11 @@ async def run_contract_tests(
         return await run_typescript_tests(
             test_file, impl_dir, extra_paths=extra_paths, timeout=timeout,
             project_dir=project_dir,
+        )
+
+    if language == "rust":
+        return await run_rust_tests(
+            impl_dir, timeout=timeout, project_dir=project_dir,
         )
 
     if not test_file.exists():
@@ -458,6 +464,170 @@ def parse_vitest_output(stdout: str, stderr: str) -> TestResults:
         failures.append(TestFailure(
             test_id="collection",
             error_message="Failed to collect or run tests",
+            stdout=stdout,
+            stderr=stderr,
+        ))
+
+    from datetime import datetime
+    return TestResults(
+        total=total,
+        passed=passed,
+        failed=failed,
+        errors=errors,
+        failure_details=failures,
+        timestamp=datetime.now().isoformat(),
+    )
+
+
+# ── Rust / cargo test support ───────────────────────────────────────
+
+
+async def run_rust_tests(
+    impl_dir: Path,
+    timeout: int = 120,
+    project_dir: Path | None = None,
+) -> TestResults:
+    """Run cargo test on a Rust project.
+
+    Args:
+        impl_dir: Path to the implementation source directory.
+        timeout: Max seconds to wait for tests.
+        project_dir: Project root directory (where Cargo.toml lives).
+            If None, discovered by walking up from impl_dir.
+
+    Returns:
+        TestResults with pass/fail counts and failure details.
+    """
+    # Resolve project root: walk up from impl_dir looking for Cargo.toml
+    if project_dir is None:
+        candidate = impl_dir
+        while candidate != candidate.parent:
+            if (candidate / "Cargo.toml").exists():
+                project_dir = candidate
+                break
+            candidate = candidate.parent
+        if project_dir is None:
+            project_dir = impl_dir
+
+    if not (project_dir / "Cargo.toml").exists():
+        return TestResults(
+            total=0, passed=0, failed=0, errors=1,
+            failure_details=[TestFailure(
+                test_id="setup",
+                error_message=f"Cargo.toml not found in {project_dir}",
+            )],
+        )
+
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/usr/local/bin"),
+        "HOME": os.environ.get("HOME", ""),
+        "CARGO_TERM_COLOR": "never",
+    }
+
+    cmd = ["cargo", "test", "--", "--format=terse"]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+            cwd=str(project_dir),
+        )
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(), timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        return TestResults(
+            total=0, passed=0, failed=0, errors=1,
+            failure_details=[TestFailure(
+                test_id="timeout",
+                error_message=f"Tests timed out after {timeout}s",
+            )],
+        )
+    except Exception as e:
+        return TestResults(
+            total=0, passed=0, failed=0, errors=1,
+            failure_details=[TestFailure(
+                test_id="execution",
+                error_message=str(e),
+            )],
+        )
+
+    stdout_text = stdout.decode(errors="replace")
+    stderr_text = stderr.decode(errors="replace")
+
+    return parse_cargo_test_output(stdout_text, stderr_text)
+
+
+def parse_cargo_test_output(stdout: str, stderr: str) -> TestResults:
+    """Parse cargo test output into TestResults.
+
+    Cargo test output formats:
+        test module::test_name ... ok
+        test module::test_name ... FAILED
+
+    Summary line:
+        test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+        test result: FAILED. 40 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out
+    """
+    total = 0
+    passed = 0
+    failed = 0
+    errors = 0
+    failures: list[TestFailure] = []
+
+    combined = stdout + "\n" + stderr
+
+    # Parse individual test result lines
+    for line in combined.splitlines():
+        stripped = line.strip()
+
+        # Match: test some::path::test_name ... ok
+        match = re.match(r"^test\s+(.+?)\s+\.\.\.\s+ok$", stripped)
+        if match:
+            total += 1
+            passed += 1
+            continue
+
+        # Match: test some::path::test_name ... FAILED
+        match = re.match(r"^test\s+(.+?)\s+\.\.\.\s+FAILED$", stripped)
+        if match:
+            total += 1
+            failed += 1
+            test_name = match.group(1)
+            failures.append(TestFailure(
+                test_id=test_name,
+                error_message="FAILED",
+                stdout=stdout,
+                stderr=stderr,
+            ))
+            continue
+
+        # Match: test some::path::test_name ... ignored
+        match = re.match(r"^test\s+(.+?)\s+\.\.\.\s+ignored$", stripped)
+        if match:
+            # Ignored tests don't count toward pass/fail
+            continue
+
+    # Fallback: parse the summary line
+    if total == 0:
+        summary = re.search(
+            r"test result:.*?(\d+)\s+passed;\s*(\d+)\s+failed",
+            combined,
+        )
+        if summary:
+            passed = int(summary.group(1))
+            failed = int(summary.group(2))
+            total = passed + failed
+
+    # Check for compilation errors (cargo won't run tests if build fails)
+    if total == 0 and ("error[E" in combined or "could not compile" in combined.lower()):
+        errors = 1
+        total = 1
+        failures.append(TestFailure(
+            test_id="compilation",
+            error_message="Rust compilation failed",
             stdout=stdout,
             stderr=stderr,
         ))

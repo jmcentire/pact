@@ -210,7 +210,7 @@ def main() -> None:
     # test-gen
     p_testgen = subparsers.add_parser("test-gen", help="Generate tests + security audit for any codebase")
     p_testgen.add_argument("project_dir", help="Root directory of the codebase to analyze")
-    p_testgen.add_argument("--language", default="python", choices=["python", "typescript"], help="Language (default: python)")
+    p_testgen.add_argument("--language", default="python", choices=["python", "typescript", "rust"], help="Language (default: python)")
     p_testgen.add_argument("--budget", type=float, default=10.0, help="Max LLM spend in dollars (default: 10.0)")
     p_testgen.add_argument("--model", default="claude-sonnet-4-5-20250929", help="LLM model for generation")
     p_testgen.add_argument("--backend", default="anthropic", help="LLM backend (default: anthropic)")
@@ -222,7 +222,7 @@ def main() -> None:
     # adopt
     p_adopt = subparsers.add_parser("adopt", help="Adopt existing codebase under pact governance")
     p_adopt.add_argument("project_dir", help="Root directory of the codebase to adopt")
-    p_adopt.add_argument("--language", default="python", choices=["python", "typescript"], help="Language (default: python)")
+    p_adopt.add_argument("--language", default="python", choices=["python", "typescript", "rust"], help="Language (default: python)")
     p_adopt.add_argument("--budget", type=float, default=10.0, help="Max LLM spend in dollars (default: 10.0)")
     p_adopt.add_argument("--model", default="claude-sonnet-4-5-20250929", help="LLM model for generation")
     p_adopt.add_argument("--backend", default="anthropic", help="LLM backend (default: anthropic)")

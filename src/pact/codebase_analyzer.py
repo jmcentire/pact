@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import logging
 import os
+import re
 import textwrap
 from pathlib import Path
 
@@ -70,12 +71,16 @@ def discover_source_files(root: str | Path, language: str = "python") -> list[So
     Returns list of SourceFile with path set but functions not yet extracted.
     """
     root = Path(root).resolve()
-    ext = ".py" if language == "python" else ".ts"
+    ext_map = {"python": ".py", "typescript": ".ts", "javascript": ".js", "rust": ".rs"}
+    ext = ext_map.get(language, ".py")
     source_files: list[SourceFile] = []
 
     for dirpath, dirnames, filenames in os.walk(root):
         # Filter out skip dirs in-place to prevent os.walk from descending
         dirnames[:] = [d for d in dirnames if not _should_skip_dir(d)]
+        # Rust builds into target/ — always skip
+        if language == "rust":
+            dirnames[:] = [d for d in dirnames if d != "target"]
 
         rel_dir = Path(dirpath).relative_to(root)
         # Skip test directories for source discovery
@@ -99,24 +104,42 @@ def discover_source_files(root: str | Path, language: str = "python") -> list[So
 def discover_tests(root: str | Path, language: str = "python") -> list[TestFile]:
     """Find test files in the codebase."""
     root = Path(root).resolve()
-    ext = ".py" if language == "python" else ".ts"
+    ext_map = {"python": ".py", "typescript": ".ts", "javascript": ".js", "rust": ".rs"}
+    ext = ext_map.get(language, ".py")
     test_files: list[TestFile] = []
 
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if not _should_skip_dir(d)]
+        if language == "rust":
+            dirnames[:] = [d for d in dirnames if d != "target"]
 
         for fname in sorted(filenames):
             if not fname.endswith(ext):
                 continue
-            is_test = (
-                fname.startswith("test_")
-                or fname.endswith(f"_test{ext}")
-                or "tests" in Path(dirpath).relative_to(root).parts
-            )
+
+            fpath = Path(dirpath) / fname
+            rel_parts = Path(dirpath).relative_to(root).parts
+
+            if language == "rust":
+                # Rust tests: files in tests/ dir, or any .rs file containing #[test]
+                in_tests_dir = "tests" in rel_parts
+                has_test_attr = False
+                if not in_tests_dir:
+                    try:
+                        source = fpath.read_text(encoding="utf-8", errors="replace")
+                        has_test_attr = "#[test]" in source or "#[cfg(test)]" in source
+                    except (OSError, UnicodeDecodeError):
+                        pass
+                is_test = in_tests_dir or has_test_attr
+            else:
+                is_test = (
+                    fname.startswith("test_")
+                    or fname.endswith(f"_test{ext}")
+                    or "tests" in rel_parts
+                )
             if not is_test:
                 continue
 
-            fpath = Path(dirpath) / fname
             rel_path = str(fpath.relative_to(root))
             tf = TestFile(path=rel_path)
 
@@ -130,6 +153,13 @@ def discover_tests(root: str | Path, language: str = "python") -> list[TestFile]
                     tf.referenced_names = _extract_referenced_names(tree)
                 except (SyntaxError, UnicodeDecodeError):
                     logger.debug("Failed to parse test file: %s", rel_path)
+            elif language == "rust":
+                try:
+                    source = fpath.read_text(encoding="utf-8", errors="replace")
+                    tf.test_functions = _extract_rust_test_function_names(source)
+                    tf.referenced_names = _extract_rust_referenced_names(source)
+                except (OSError, UnicodeDecodeError):
+                    logger.debug("Failed to parse Rust test file: %s", rel_path)
 
             test_files.append(tf)
 
@@ -170,6 +200,50 @@ def _extract_referenced_names(tree: ast.Module) -> list[str]:
     return sorted(names)
 
 
+# ── Rust Helpers (regex-based, no external parser) ─────────────────
+
+
+# Regex for Rust function definitions: `fn name(` or `pub fn name(`
+_RUST_FN_RE = re.compile(
+    r"^[ \t]*(?:pub(?:\(crate\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)\s*[<(]",
+    re.MULTILINE,
+)
+# Regex for Rust struct/enum/trait/impl definitions
+_RUST_STRUCT_RE = re.compile(r"^[ \t]*(?:pub(?:\(crate\))?\s+)?struct\s+(\w+)", re.MULTILINE)
+_RUST_ENUM_RE = re.compile(r"^[ \t]*(?:pub(?:\(crate\))?\s+)?enum\s+(\w+)", re.MULTILINE)
+_RUST_TRAIT_RE = re.compile(r"^[ \t]*(?:pub(?:\(crate\))?\s+)?trait\s+(\w+)", re.MULTILINE)
+_RUST_IMPL_RE = re.compile(r"^[ \t]*impl(?:<[^>]*>)?\s+(\w+)", re.MULTILINE)
+
+# Regex to find #[test] annotated functions
+_RUST_TEST_FN_RE = re.compile(
+    r"#\[test\]\s*(?:#\[.*?\]\s*)*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)",
+    re.DOTALL,
+)
+
+# Regex for Rust use statements (for reference matching)
+_RUST_USE_RE = re.compile(r"^[ \t]*use\s+([\w:]+)", re.MULTILINE)
+
+
+def _extract_rust_test_function_names(source: str) -> list[str]:
+    """Extract test function names from Rust source (functions with #[test] attribute)."""
+    return _RUST_TEST_FN_RE.findall(source)
+
+
+def _extract_rust_referenced_names(source: str) -> list[str]:
+    """Extract referenced names from Rust source for coverage matching."""
+    names: set[str] = set()
+    # Collect function calls and identifiers
+    for m in _RUST_FN_RE.finditer(source):
+        names.add(m.group(1))
+    # Collect use paths — take the last segment as the referenced name
+    for m in _RUST_USE_RE.finditer(source):
+        path = m.group(1)
+        last_segment = path.rsplit("::", 1)[-1]
+        if last_segment != "*":
+            names.add(last_segment)
+    return sorted(names)
+
+
 # ── Function Extraction ────────────────────────────────────────────
 
 
@@ -194,6 +268,203 @@ def extract_functions(file_path: str | Path, source: str | None = None) -> list[
             functions.append(func)
 
     return functions
+
+
+def extract_functions_rust(file_path: str | Path, source: str | None = None) -> list[ExtractedFunction]:
+    """Parse a Rust file and extract function/struct/enum/trait/impl definitions via regex.
+
+    Since Python's ast module only handles Python, this uses regex patterns
+    to find Rust definitions. Less precise than a real parser but sufficient
+    for signature extraction and coverage mapping.
+    """
+    file_path = Path(file_path)
+    if source is None:
+        try:
+            source = file_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            logger.debug("Failed to read: %s", file_path)
+            return []
+
+    source_lines = source.splitlines()
+    functions: list[ExtractedFunction] = []
+
+    # Extract fn definitions
+    for m in _RUST_FN_RE.finditer(source):
+        name = m.group(1)
+        line_number = source[:m.start()].count("\n") + 1
+        # Determine visibility
+        line_text = source_lines[line_number - 1] if line_number <= len(source_lines) else ""
+        is_pub = line_text.lstrip().startswith("pub")
+        is_async = "async" in line_text.split("fn")[0] if "fn" in line_text else False
+
+        # Try to extract simple parameter list
+        params = _extract_rust_params(source, m.end() - 1)
+
+        # Try to extract return type
+        return_type = _extract_rust_return_type(source, m.end() - 1)
+
+        functions.append(ExtractedFunction(
+            name=name,
+            params=params,
+            return_type=return_type,
+            complexity=1,  # No AST-based complexity for Rust
+            body_source="",
+            line_number=line_number,
+            is_async=is_async,
+            is_method="self" in line_text.split(")")[0] if ")" in line_text else False,
+            class_name="",
+            decorators=["pub"] if is_pub else [],
+            docstring="",
+        ))
+
+    # Extract struct definitions
+    for m in _RUST_STRUCT_RE.finditer(source):
+        name = m.group(1)
+        line_number = source[:m.start()].count("\n") + 1
+        functions.append(ExtractedFunction(
+            name=name,
+            params=[],
+            return_type="struct",
+            complexity=1,
+            body_source="",
+            line_number=line_number,
+            is_async=False,
+            is_method=False,
+            class_name="",
+            decorators=["struct"],
+            docstring="",
+        ))
+
+    # Extract enum definitions
+    for m in _RUST_ENUM_RE.finditer(source):
+        name = m.group(1)
+        line_number = source[:m.start()].count("\n") + 1
+        functions.append(ExtractedFunction(
+            name=name,
+            params=[],
+            return_type="enum",
+            complexity=1,
+            body_source="",
+            line_number=line_number,
+            is_async=False,
+            is_method=False,
+            class_name="",
+            decorators=["enum"],
+            docstring="",
+        ))
+
+    # Extract trait definitions
+    for m in _RUST_TRAIT_RE.finditer(source):
+        name = m.group(1)
+        line_number = source[:m.start()].count("\n") + 1
+        functions.append(ExtractedFunction(
+            name=name,
+            params=[],
+            return_type="trait",
+            complexity=1,
+            body_source="",
+            line_number=line_number,
+            is_async=False,
+            is_method=False,
+            class_name="",
+            decorators=["trait"],
+            docstring="",
+        ))
+
+    # Extract impl blocks
+    for m in _RUST_IMPL_RE.finditer(source):
+        name = m.group(1)
+        line_number = source[:m.start()].count("\n") + 1
+        functions.append(ExtractedFunction(
+            name=name,
+            params=[],
+            return_type="impl",
+            complexity=1,
+            body_source="",
+            line_number=line_number,
+            is_async=False,
+            is_method=False,
+            class_name="",
+            decorators=["impl"],
+            docstring="",
+        ))
+
+    return functions
+
+
+def _extract_rust_params(source: str, paren_start: int) -> list[ExtractedParameter]:
+    """Extract parameters from a Rust function starting at the opening paren."""
+    # Find matching closing paren
+    if paren_start >= len(source) or source[paren_start] != "(":
+        return []
+
+    depth = 0
+    end = paren_start
+    for i in range(paren_start, min(paren_start + 500, len(source))):
+        if source[i] == "(":
+            depth += 1
+        elif source[i] == ")":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    else:
+        return []
+
+    param_text = source[paren_start + 1:end].strip()
+    if not param_text:
+        return []
+
+    params: list[ExtractedParameter] = []
+    # Split on commas (naive — doesn't handle commas inside generics)
+    # but good enough for signature extraction
+    for part in param_text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        # Handle &self, &mut self, self
+        if part in ("self", "&self", "&mut self"):
+            params.append(ExtractedParameter(name=part, type_annotation="", default=""))
+            continue
+        # name: Type pattern
+        if ":" in part:
+            name, type_ann = part.split(":", 1)
+            params.append(ExtractedParameter(
+                name=name.strip(),
+                type_annotation=type_ann.strip(),
+                default="",
+            ))
+        else:
+            params.append(ExtractedParameter(name=part.strip(), type_annotation="", default=""))
+
+    return params
+
+
+def _extract_rust_return_type(source: str, paren_start: int) -> str:
+    """Extract return type from a Rust function (the -> Type before the opening brace)."""
+    # Find closing paren first
+    if paren_start >= len(source) or source[paren_start] != "(":
+        return ""
+
+    depth = 0
+    close_paren = paren_start
+    for i in range(paren_start, min(paren_start + 500, len(source))):
+        if source[i] == "(":
+            depth += 1
+        elif source[i] == ")":
+            depth -= 1
+            if depth == 0:
+                close_paren = i
+                break
+    else:
+        return ""
+
+    # Look for -> between close_paren and opening brace or newline
+    rest = source[close_paren + 1:close_paren + 200]
+    arrow_match = re.search(r"\s*->\s*([^{]+)", rest)
+    if arrow_match:
+        return arrow_match.group(1).strip().rstrip("{").strip()
+    return ""
 
 
 def _extract_single_function(
@@ -600,7 +871,10 @@ def analyze_codebase(root: str | Path, language: str = "python") -> CodebaseAnal
     # Step 2: Extract functions
     for sf in source_files:
         full_path = root / sf.path
-        if full_path.exists() and language == "python":
+        if not full_path.exists():
+            continue
+
+        if language == "python":
             source = full_path.read_text(encoding="utf-8", errors="replace")
             sf.functions = extract_functions(full_path, source)
 
@@ -614,6 +888,18 @@ def analyze_codebase(root: str | Path, language: str = "python") -> CodebaseAnal
                 ]
             except SyntaxError:
                 pass
+
+        elif language == "rust":
+            source = full_path.read_text(encoding="utf-8", errors="replace")
+            sf.functions = extract_functions_rust(full_path, source)
+
+            # Extract struct/enum/trait names as "classes" for coverage mapping
+            sf.classes = [
+                f.name for f in sf.functions
+                if f.decorators and f.decorators[0] in ("struct", "enum", "trait")
+            ]
+            # Extract use statements as imports
+            sf.imports = [m.group(1) for m in _RUST_USE_RE.finditer(source)]
 
     # Step 3: Discover tests
     test_files = discover_tests(root, language)

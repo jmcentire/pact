@@ -103,7 +103,7 @@ class TestRunWizardInteractive:
         scripted = [
             "my-project",     # project_name
             "A project",      # description
-            "rust",           # language -- INVALID (not in enum)
+            "cobol",          # language -- INVALID (not in enum)
             "python",         # language -- valid retry
         ] + [""] * 20
         idx = [0]

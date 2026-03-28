@@ -49,7 +49,7 @@ def build_wizard_questions() -> list[InterviewQuestion]:
             id="language",
             text="Primary language",
             question_type=QuestionType.ENUM,
-            options=["python", "typescript", "javascript"],
+            options=["python", "typescript", "javascript", "rust"],
             default="python",
         ),
         InterviewQuestion(
@@ -192,7 +192,7 @@ def resolve_test_framework(config: WizardConfig) -> str:
     """Auto-detect test framework from language if not explicitly set."""
     if config.test_framework:
         return config.test_framework
-    defaults = {"python": "pytest", "typescript": "vitest", "javascript": "jest"}
+    defaults = {"python": "pytest", "typescript": "vitest", "javascript": "jest", "rust": "cargo test"}
     return defaults.get(config.language, "pytest")
 
 
@@ -243,6 +243,28 @@ def _task_example(language: str) -> str:
 # - createLimiter(config: RateLimitConfig) -> RateLimiter
 # - limiter.tryAcquire(endpoint: string) -> { allowed: boolean, retryAfterMs?: number }
 # - limiter.reset(endpoint: string) -> void"""
+
+    elif language == "rust":
+        return """\
+# Example: Thread Pool
+#
+# Build a fixed-size thread pool with work-stealing.
+# Each job is a boxed closure sent via channel.
+#
+# ## Context
+# Replacing rayon for a constrained embedded use case where the full
+# dependency tree is too large.
+#
+# ## Constraints
+# - Must use only std (no external crates)
+# - Must handle panicking jobs without poisoning the pool
+# - Must support graceful shutdown (finish queued work, then exit)
+#
+# ## Requirements
+# - ThreadPool::new(size: usize) -> ThreadPool
+# - pool.execute(job: impl FnOnce() + Send + 'static)
+# - pool.shutdown() blocks until all queued jobs complete
+# - Panicking jobs are caught; pool continues operating"""
 
     else:
         return """\
@@ -335,7 +357,21 @@ def generate_sops_md(config: WizardConfig) -> str:
     )
 
     # Language-specific sections
-    if lang == "python":
+    if lang == "rust":
+        tech_stack = f"""\
+## Tech Stack
+- Language: Rust (latest stable)
+- Build: cargo
+- Testing: {framework}
+- Linting: clippy
+- Formatting: rustfmt"""
+        standards = """\
+## Standards
+- Use Result<T, E> for fallible functions (no unwrap in library code)
+- Derive macros (Debug, Clone, PartialEq) on all public types
+- Documentation comments (///) on all public items
+- Follow Rust API guidelines (https://rust-lang.github.io/api-guidelines/)"""
+    elif lang == "python":
         tech_stack = f"""\
 ## Tech Stack
 - Language: Python 3.12+

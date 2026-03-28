@@ -64,15 +64,28 @@ class AnthropicBackend:
         system: str,
         max_tokens: int = 32768,
     ) -> tuple[T, int, int]:
-        """Call LLM with schema enforcement via tool_choice."""
+        """Call LLM with schema enforcement via tool_choice.
+
+        On validation failure, feeds the error back to the LLM as a
+        correction prompt so it can fix its output.
+        """
         total_in = 0
         total_out = 0
         cap = self._max_tokens_cap()
         current_max = min(max_tokens, cap)
+        last_error: ValidationError | None = None
 
         for attempt in range(3):
+            # On retry after validation error, augment prompt with correction
+            effective_prompt = prompt
+            if last_error is not None:
+                correction = self._format_validation_correction(last_error)
+                effective_prompt = f"{prompt}\n\n{correction}"
+                logger.info("Retrying %s with validation feedback (attempt %d)",
+                            schema.__name__, attempt + 1)
+
             raw_input, stop_reason, in_tok, out_tok = await self._call_llm(
-                schema, prompt, system, current_max,
+                schema, effective_prompt, system, current_max,
             )
             total_in += in_tok
             total_out += out_tok
@@ -94,6 +107,7 @@ class AnthropicBackend:
                 parsed = schema.model_validate(raw_input)
                 return parsed, total_in, total_out
             except ValidationError as e:
+                last_error = e
                 if attempt < 2:
                     new_max = min(current_max * 2, cap)
                     if new_max > current_max:
@@ -102,6 +116,35 @@ class AnthropicBackend:
                 raise
 
         raise RuntimeError(f"Failed to get valid {schema.__name__} after 3 attempts")
+
+    @staticmethod
+    def _format_validation_correction(error: ValidationError) -> str:
+        """Format a Pydantic ValidationError into a clear correction prompt.
+
+        Tells the LLM exactly what fields failed validation and what types
+        are expected, so it can fix its output on the next attempt.
+        """
+        lines = [
+            "IMPORTANT: Your previous response failed schema validation. "
+            "Please fix the following errors and try again:\n"
+        ]
+        for err in error.errors():
+            loc = " -> ".join(str(p) for p in err["loc"])
+            msg = err["msg"]
+            typ = err["type"]
+            inp = err.get("input")
+            inp_preview = repr(inp)[:120] if inp is not None else "N/A"
+            lines.append(
+                f"  - Field '{loc}': {msg} (error type: {typ}). "
+                f"You provided: {inp_preview}"
+            )
+        lines.append(
+            "\nEnsure all fields match the required types exactly. "
+            "Lists must be JSON arrays (not strings). "
+            "Dictionaries must be JSON objects (not strings). "
+            "String fields must be plain strings (not objects)."
+        )
+        return "\n".join(lines)
 
     @classmethod
     def _coerce_fields(cls, data):
@@ -379,20 +422,25 @@ class AnthropicBackend:
     ) -> tuple[T, int, int]:
         """Like assess() but marks system + cache_prefix for prompt caching.
 
-        Args:
-            system: System prompt -- always cached.
-            cache_prefix: Static portion of user prompt (SOPs, contracts, etc.).
-                          Sent as a separate content block with cache_control.
-            prompt: Dynamic portion of user prompt (attempt-specific).
+        On validation failure, feeds the error back to the LLM as a
+        correction prompt so it can fix its output.
         """
         total_in = 0
         total_out = 0
         cap = self._max_tokens_cap()
         current_max = min(max_tokens, cap)
+        last_error: ValidationError | None = None
 
         for attempt in range(3):
+            effective_prompt = prompt
+            if last_error is not None:
+                correction = self._format_validation_correction(last_error)
+                effective_prompt = f"{prompt}\n\n{correction}"
+                logger.info("Retrying %s with validation feedback (attempt %d)",
+                            schema.__name__, attempt + 1)
+
             raw_input, stop_reason, in_tok, out_tok = await self._call_llm_cached(
-                schema, prompt, system, cache_prefix, current_max,
+                schema, effective_prompt, system, cache_prefix, current_max,
             )
             total_in += in_tok
             total_out += out_tok
@@ -414,6 +462,7 @@ class AnthropicBackend:
                 parsed = schema.model_validate(raw_input)
                 return parsed, total_in, total_out
             except ValidationError as e:
+                last_error = e
                 if attempt < 2:
                     new_max = min(current_max * 2, cap)
                     if new_max > current_max:

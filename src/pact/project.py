@@ -514,10 +514,13 @@ class ProjectManager:
         d = self.contract_dir(contract.component_id)
         path = d / "interface.json"
         path.write_text(contract.model_dump_json(indent=2))
-        from pact.interface_stub import render_stub
-        stub_ext = ".ts" if self.language == "typescript" else ".py"
+        from pact.interface_stub import render_stub, render_stub_ts, render_stub_js, render_stub_rust
+        _stub_ext_map = {"typescript": ".ts", "javascript": ".js", "rust": ".rs"}
+        _stub_fn_map = {"typescript": render_stub_ts, "javascript": render_stub_js, "rust": render_stub_rust}
+        stub_ext = _stub_ext_map.get(self.language, ".py")
+        stub_fn = _stub_fn_map.get(self.language, render_stub)
         stub_path = d / f"interface{stub_ext}"
-        stub_path.write_text(render_stub(contract))
+        stub_path.write_text(stub_fn(contract))
         # History alongside contract
         history = d / "history"
         history.mkdir(exist_ok=True)

@@ -168,7 +168,7 @@ class ProjectConfig:
     register_check_rate: float = 0.1  # Probability of drift-checking each component (0.0-1.0)
 
     # Language support
-    language: str = "python"        # Valid values: "python", "typescript", "javascript"
+    language: str = "python"        # Valid values: "python", "typescript", "javascript", "rust"
     test_framework: str = ""        # Auto-detect: "pytest" for python, "vitest" for typescript/javascript
 
     # Package namespace — when set, generated test imports use this prefix.

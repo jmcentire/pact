@@ -371,6 +371,9 @@ def _get_tree_sitter_language(language: str):
         elif language == "typescript":
             import tree_sitter_typescript
             return Language(tree_sitter_typescript.language_typescript())
+        elif language == "rust":
+            import tree_sitter_rust
+            return Language(tree_sitter_rust.language())
     except (ImportError, Exception) as e:
         logger.debug("tree-sitter grammar for %s not available: %s", language, e)
 
@@ -378,8 +381,16 @@ def _get_tree_sitter_language(language: str):
 
 
 # Node types that represent definitions worth extracting
-_FUNC_DEF_TYPES = {"function_definition", "function_declaration", "method_definition"}
-_CLASS_DEF_TYPES = {"class_definition", "class_declaration"}
+_FUNC_DEF_TYPES = {
+    "function_definition", "function_declaration", "method_definition",
+    "function_item",  # Rust
+}
+_CLASS_DEF_TYPES = {
+    "class_definition", "class_declaration",
+    "struct_item", "enum_item", "trait_item",  # Rust
+}
+# Rust impl blocks — extract as scope containers
+_IMPL_TYPES = {"impl_item"}
 
 
 def _walk_tree_sitter(node, rel_path: str, symbols: list[TreeSitterSymbol]) -> None:
@@ -396,17 +407,24 @@ def _walk_tree_sitter(node, rel_path: str, symbols: list[TreeSitterSymbol]) -> N
                 break
 
         if name:
-            # Determine parent scope (class)
+            # Determine parent scope (class or impl block)
             parent_name = ""
             parent_kind = ""
             p = node.parent
-            if p and p.type == "block":
+            if p and p.type in ("block", "declaration_list"):
                 p = p.parent
             if p and p.type in _CLASS_DEF_TYPES:
                 for child in p.children:
-                    if child.type == "identifier":
+                    if child.type in ("identifier", "type_identifier"):
                         parent_name = child.text.decode("utf-8", errors="replace")
                         parent_kind = "class"
+                        break
+            elif p and p.type in _IMPL_TYPES:
+                # Rust impl blocks — find the type being implemented
+                for child in p.children:
+                    if child.type == "type_identifier":
+                        parent_name = child.text.decode("utf-8", errors="replace")
+                        parent_kind = "impl"
                         break
 
             symbols.append(TreeSitterSymbol(
@@ -422,7 +440,7 @@ def _walk_tree_sitter(node, rel_path: str, symbols: list[TreeSitterSymbol]) -> N
     elif node.type in _CLASS_DEF_TYPES:
         name = ""
         for child in node.children:
-            if child.type == "identifier":
+            if child.type in ("identifier", "type_identifier"):
                 name = child.text.decode("utf-8", errors="replace")
                 break
 
@@ -432,7 +450,23 @@ def _walk_tree_sitter(node, rel_path: str, symbols: list[TreeSitterSymbol]) -> N
                 file_path=rel_path,
                 start_line=node.start_point[0] + 1,
                 end_line=node.end_point[0] + 1,
-                kind="class_definition",
+                kind=node.type if node.type in ("struct_item", "enum_item", "trait_item") else "class_definition",
+            ))
+
+    elif node.type in _IMPL_TYPES:
+        # Rust impl blocks — record as a definition
+        name = ""
+        for child in node.children:
+            if child.type == "type_identifier":
+                name = child.text.decode("utf-8", errors="replace")
+                break
+        if name:
+            symbols.append(TreeSitterSymbol(
+                name=name,
+                file_path=rel_path,
+                start_line=node.start_point[0] + 1,
+                end_line=node.end_point[0] + 1,
+                kind="impl_item",
             ))
 
     # Recurse into children
@@ -458,6 +492,7 @@ def run_tree_sitter(root: Path, language: str = "python") -> list[TreeSitterSymb
         "python": {".py"},
         "typescript": {".ts", ".tsx"},
         "javascript": {".js", ".jsx"},
+        "rust": {".rs"},
     }
     exts = ext_map.get(language, set())
     if not exts:

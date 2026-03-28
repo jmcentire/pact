@@ -13,12 +13,13 @@ Even for dynamically-typed target languages, the stub gives agents a
 precise conceptual model. We don't need the language to be strongly typed;
 we just need agents to know the valid shapes, constraints, and expectations.
 
-Five output formats:
+Six output formats:
   1. render_stub()           — Python-style interface stub (.pyi-like)
   2. render_stub_ts()        — TypeScript interface stub (.d.ts-like)
-  3. render_dependency_map() — compact reference for all dependencies
-  4. render_compact_deps()   — function signatures + type shapes (~80% smaller)
-  5. render_handoff_brief()  — complete context for agent handoff
+  3. render_stub_rust()      — Rust interface stub (pub struct/enum/fn)
+  4. render_dependency_map() — compact reference for all dependencies
+  5. render_compact_deps()   — function signatures + type shapes (~80% smaller)
+  6. render_handoff_brief()  — complete context for agent handoff
 """
 
 from __future__ import annotations
@@ -864,6 +865,405 @@ def render_log_key_preamble_js(key: str) -> str:
     return f'const PACT_KEY = "{key}";'
 
 
+# ── Rust Interface Stub Rendering ────────────────────────────────────
+
+
+_RUST_PRIMITIVE_MAP: dict[str, str] = {
+    "str": "String",
+    "int": "i64",
+    "float": "f64",
+    "bool": "bool",
+    "dict": "std::collections::HashMap<String, serde_json::Value>",
+    "list": "Vec<serde_json::Value>",
+    "any": "serde_json::Value",
+    "Any": "serde_json::Value",
+    "bytes": "Vec<u8>",
+    "None": "()",
+    "object": "serde_json::Value",
+}
+
+
+def _map_type_rust(type_ref: str) -> str:
+    """Map a Pact type reference to its Rust equivalent.
+
+    Handles primitive mappings, Optional[X], list[X], dict[K, V],
+    and passes through unknown type names as-is (assumed to be
+    user-defined types from the contract).
+    """
+    # Direct primitive mapping
+    if type_ref in _RUST_PRIMITIVE_MAP:
+        return _RUST_PRIMITIVE_MAP[type_ref]
+
+    # Optional[X] -> Option<X>
+    if type_ref.startswith("Optional[") and type_ref.endswith("]"):
+        inner = type_ref[len("Optional["):-1]
+        return f"Option<{_map_type_rust(inner)}>"
+
+    # list[X] -> Vec<X>
+    if type_ref.startswith("list[") and type_ref.endswith("]"):
+        inner = type_ref[len("list["):-1]
+        return f"Vec<{_map_type_rust(inner)}>"
+
+    # dict[K, V] -> HashMap<K, V>
+    if type_ref.startswith("dict[") and type_ref.endswith("]"):
+        inner = type_ref[len("dict["):-1]
+        # Split on first comma (handles nested types)
+        depth = 0
+        split_idx = -1
+        for i, ch in enumerate(inner):
+            if ch in ("[", "("):
+                depth += 1
+            elif ch in ("]", ")"):
+                depth -= 1
+            elif ch == "," and depth == 0:
+                split_idx = i
+                break
+        if split_idx >= 0:
+            key = inner[:split_idx].strip()
+            val = inner[split_idx + 1:].strip()
+            return f"std::collections::HashMap<{_map_type_rust(key)}, {_map_type_rust(val)}>"
+        return "std::collections::HashMap<String, serde_json::Value>"
+
+    # Union with pipe: X | Y | Z -> not directly representable, use enum or first type
+    # For Rust we just pass through — the agent will need to model this as an enum
+    if " | " in type_ref:
+        parts = [p.strip() for p in type_ref.split(" | ")]
+        if "None" in parts:
+            non_none = [_map_type_rust(p) for p in parts if p != "None"]
+            if len(non_none) == 1:
+                return f"Option<{non_none[0]}>"
+        # Multiple non-None types: pass through as a comment-worthy situation
+        return _map_type_rust(parts[0])
+
+    # Pass through user-defined types unchanged
+    return type_ref
+
+
+def render_stub_rust(contract: ComponentContract) -> str:
+    """Render a contract as a Rust interface stub.
+
+    Generates idiomatic Rust with pub structs, enums, and function signatures.
+    Uses doc comments (///) for descriptions, preconditions, postconditions,
+    and error cases. Structs derive common traits.
+
+    Example output:
+        // === Pricing Engine (pricing) v1 ===
+        // Dependencies: inventory, tax_calculator
+
+        use serde::{Deserialize, Serialize};
+        use thiserror::Error;
+
+        /// Final price calculation result.
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct PriceResult {
+            /// required
+            pub base_price: f64,
+            /// required
+            pub tax_amount: f64,
+            /// required, postcondition: total == base_price + tax_amount
+            pub total: f64,
+            /// optional, default: "USD", validators: regex(^[A-Z]{3}$)
+            pub currency: Option<String>,
+        }
+
+        pub enum PricingError {
+            UnitNotFound,
+            InvalidDates,
+        }
+
+        /// Calculate the nightly price for a unit stay.
+        ///
+        /// Preconditions:
+        ///   - check_in < check_out
+        ///   - unit_id exists in inventory
+        ///
+        /// Postconditions:
+        ///   - result.total > 0
+        ///   - result.currency is valid ISO 4217
+        ///
+        /// Errors:
+        ///   - UnitNotFound: when unit_id not in inventory
+        ///   - InvalidDates: when check_in >= check_out
+        ///
+        /// Side effects: none
+        /// Idempotent: yes
+        pub fn calculate_price(
+            unit_id: &str,
+            check_in: &str,
+            check_out: &str,
+            guest_count: Option<i64>,
+        ) -> Result<PriceResult, PricingError> {
+            todo!()
+        }
+    """
+    lines: list[str] = []
+
+    # Header
+    dep_str = f"  Dependencies: {', '.join(contract.dependencies)}" if contract.dependencies else ""
+    lines.append(f"// === {contract.name} ({contract.component_id}) v{contract.version} ===")
+    if dep_str:
+        lines.append(f"//{dep_str}")
+    if contract.description:
+        lines.append(f"// {contract.description}")
+    lines.append("")
+
+    # Common imports
+    lines.append("use serde::{Deserialize, Serialize};")
+    lines.append("use thiserror::Error;")
+    lines.append("")
+
+    # Invariants (module-level)
+    if contract.invariants:
+        lines.append("// Module invariants:")
+        for inv in contract.invariants:
+            lines.append(f"//   - {inv}")
+        lines.append("")
+
+    # Type definitions
+    for type_spec in contract.types:
+        lines.extend(_render_type_rust(type_spec))
+        lines.append("")
+
+    # Function signatures
+    for func in contract.functions:
+        lines.extend(_render_function_rust(func))
+        lines.append("")
+
+    # Required exports checklist
+    exports = get_required_exports(contract)
+    if exports:
+        lines.append("// -- REQUIRED EXPORTS -----------------------------------------------")
+        lines.append("// Your implementation module MUST export ALL of these names")
+        lines.append("// with EXACTLY these spellings. Tests import them by name.")
+        lines.append(f"// exports: {exports}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _render_type_rust(t: TypeSpec) -> list[str]:
+    """Render a single type definition as Rust."""
+    lines: list[str] = []
+
+    if t.kind == "enum":
+        if t.description:
+            lines.append(f"/// {t.description}")
+        lines.append("#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]")
+        lines.append(f"pub enum {t.name} {{")
+        for variant in t.variants:
+            lines.append(f"    {variant},")
+        if not t.variants:
+            # Empty enum — add a placeholder
+            lines.append("    // no variants defined")
+        lines.append("}")
+        return lines
+
+    if t.kind == "struct":
+        if t.description:
+            lines.append(f"/// {t.description}")
+        lines.append("#[derive(Debug, Clone, Serialize, Deserialize)]")
+        lines.append(f"pub struct {t.name} {{")
+        for field in t.fields:
+            lines.append(f"    {_render_field_line_rust(field)}")
+        lines.append("}")
+        return lines
+
+    if t.kind == "list":
+        item_rs = _map_type_rust(t.item_type) if t.item_type else "serde_json::Value"
+        if t.description:
+            lines.append(f"/// {t.description}")
+        lines.append(f"pub type {t.name} = Vec<{item_rs}>;")
+        return lines
+
+    if t.kind == "optional":
+        inner = t.inner_types[0] if t.inner_types else "serde_json::Value"
+        inner_rs = _map_type_rust(inner)
+        if t.description:
+            lines.append(f"/// {t.description}")
+        lines.append(f"pub type {t.name} = Option<{inner_rs}>;")
+        return lines
+
+    if t.kind == "union":
+        # Rust unions are best modeled as enums; emit a type alias with a comment
+        if t.description:
+            lines.append(f"/// {t.description}")
+        if t.inner_types:
+            lines.append(f"// Union of: {', '.join(t.inner_types)}")
+            lines.append(f"// Consider modeling as an enum with variants for each type")
+            # Use first type as alias for now
+            lines.append(f"pub type {t.name} = {_map_type_rust(t.inner_types[0])};")
+        else:
+            lines.append(f"pub type {t.name} = serde_json::Value;")
+        return lines
+
+    if t.kind == "map":
+        if len(t.inner_types) >= 2:
+            key_rs = _map_type_rust(t.inner_types[0])
+            val_rs = _map_type_rust(t.inner_types[1])
+        elif t.item_type:
+            key_rs = "String"
+            val_rs = _map_type_rust(t.item_type)
+        else:
+            key_rs = "String"
+            val_rs = "serde_json::Value"
+        if t.description:
+            lines.append(f"/// {t.description}")
+        lines.append(f"pub type {t.name} = std::collections::HashMap<{key_rs}, {val_rs}>;")
+        return lines
+
+    if t.kind == "newtype":
+        inner = t.inner_types[0] if t.inner_types else t.item_type or "serde_json::Value"
+        inner_rs = _map_type_rust(inner)
+        if t.description:
+            lines.append(f"/// {t.description}")
+        lines.append(f"pub struct {t.name}(pub {inner_rs});")
+        return lines
+
+    # Primitive alias or unknown kind
+    if t.name in _RUST_PRIMITIVE_MAP:
+        return lines
+    if t.item_type:
+        underlying = _map_type_rust(t.item_type)
+    elif t.inner_types:
+        underlying = _map_type_rust(t.inner_types[0])
+    else:
+        underlying = "serde_json::Value"
+    if t.description:
+        lines.append(f"/// {t.description}")
+    lines.append(f"pub type {t.name} = {underlying};")
+    return lines
+
+
+def _render_field_line_rust(field: FieldSpec) -> str:
+    """Render a single struct field as a Rust struct member."""
+    rs_type = _map_type_rust(field.type_ref)
+
+    # Optional fields become Option<T>
+    if not field.required:
+        rs_type = f"Option<{rs_type}>"
+
+    annotations: list[str] = []
+    if not field.required:
+        annotations.append("optional")
+        if field.default:
+            annotations.append(f"default: {field.default}")
+    else:
+        annotations.append("required")
+
+    for v in field.validators:
+        annotations.append(f"{v.kind}({v.expression})")
+
+    if field.description:
+        annotations.append(field.description)
+
+    comment = ", ".join(annotations)
+    return f"/// {comment}\n    pub {field.name}: {rs_type},"
+
+
+def _render_function_rust(func: FunctionContract) -> list[str]:
+    """Render a function signature as a Rust declaration with doc comments."""
+    lines: list[str] = []
+
+    # Build doc comment
+    doc_lines: list[str] = []
+    if func.description:
+        doc_lines.append(f"/// {func.description}")
+        doc_lines.append("///")
+
+    if func.preconditions:
+        doc_lines.append("/// Preconditions:")
+        for pre in func.preconditions:
+            doc_lines.append(f"///   - {pre}")
+        doc_lines.append("///")
+
+    if func.postconditions:
+        doc_lines.append("/// Postconditions:")
+        for post in func.postconditions:
+            doc_lines.append(f"///   - {post}")
+        doc_lines.append("///")
+
+    if func.error_cases:
+        doc_lines.append("/// Errors:")
+        for err in func.error_cases:
+            doc_lines.append(f"///   - {err.name} ({err.error_type}): {err.condition}")
+            if err.error_data:
+                for k, v in err.error_data.items():
+                    doc_lines.append(f"///       {k}: {v}")
+        doc_lines.append("///")
+
+    if func.side_effects:
+        doc_lines.append(f"/// Side effects: {', '.join(func.side_effects)}")
+    else:
+        doc_lines.append("/// Side effects: none")
+
+    doc_lines.append(f"/// Idempotent: {'yes' if func.idempotent else 'no'}")
+
+    lines.extend(doc_lines)
+
+    # Function signature
+    return_rs = _map_type_rust(func.output_type)
+
+    # Determine if we need Result wrapping (if there are error cases)
+    has_errors = bool(func.error_cases)
+
+    params: list[str] = []
+    for inp in func.inputs:
+        rs_type = _map_type_rust(inp.type_ref)
+        # Use references for string inputs (idiomatic Rust)
+        if rs_type == "String":
+            rs_type = "&str"
+        if not inp.required:
+            rs_type = f"Option<{rs_type}>"
+        p = f"    {inp.name}: {rs_type}"
+        # Add inline validator comment
+        if inp.validators:
+            v_str = ", ".join(f"{v.kind}({v.expression})" for v in inp.validators)
+            p += f",  // {v_str}"
+        else:
+            p += ","
+        params.append(p)
+
+    # Wrap return type in Result if there are error cases
+    if has_errors:
+        # Find the primary error type name from error cases
+        error_types = {e.error_type for e in func.error_cases if e.error_type}
+        if len(error_types) == 1:
+            error_type = next(iter(error_types))
+        else:
+            error_type = "Box<dyn std::error::Error>"
+        ret_type = f"Result<{return_rs}, {error_type}>"
+    else:
+        ret_type = return_rs
+
+    async_prefix = "async " if func.is_async else ""
+    if params:
+        lines.append(f"pub {async_prefix}fn {func.name}(")
+        lines.extend(params)
+        lines.append(f") -> {ret_type} {{")
+    else:
+        lines.append(f"pub {async_prefix}fn {func.name}() -> {ret_type} {{")
+
+    lines.append("    todo!()")
+    lines.append("}")
+
+    return lines
+
+
+def render_log_key_preamble_rust(key: str) -> str:
+    """Generate a Rust logging preamble that embeds the PACT log key.
+
+    Returns Rust code that declares the PACT_KEY constant using the log crate.
+    """
+    return f'''const PACT_KEY: &str = "{key}";
+
+/// Log a message with the PACT key embedded for production traceability.
+macro_rules! pact_log {{
+    ($level:ident, $($arg:tt)*) => {{
+        log::$level!("[{{}}] {{}}", PACT_KEY, format!($($arg)*));
+    }};
+}}'''
+
+
 # ── Dependency Map ───────────────────────────────────────────────────
 
 
@@ -1056,6 +1456,7 @@ def render_handoff_brief(
     processing_register: str = "",
     max_context_tokens: int = 0,
     tool_index_context: str = "",
+    language: str = "python",
 ) -> str:
     """Render a complete handoff document for a fresh agent.
 
@@ -1072,6 +1473,7 @@ def render_handoff_brief(
     Args:
         max_context_tokens: If >0, apply tiered compression to keep the brief
             within this token budget. Tier 1 is never truncated.
+        language: Target language for stub rendering (python, typescript, javascript, rust).
     """
     # ── Tier 1: Context fence + domain primer (never truncated) ──
 
@@ -1088,16 +1490,24 @@ def render_handoff_brief(
 
     # Interface stub — the domain primer. This is the most important content.
     # Paper XX: 15 tokens of domain-matched content capture 98.8% of benefit.
+    # Dispatch to language-specific stub renderer
+    _stub_renderers = {
+        "typescript": (render_stub_ts, "typescript"),
+        "javascript": (render_stub_js, "javascript"),
+        "rust": (render_stub_rust, "rust"),
+    }
+    stub_renderer, code_fence_lang = _stub_renderers.get(language, (render_stub, "python"))
+
     tier1_lines.append("Here is the interface contract you need to implement:")
-    tier1_lines.append("```python")
-    tier1_lines.append(render_stub(contract))
+    tier1_lines.append(f"```{code_fence_lang}")
+    tier1_lines.append(stub_renderer(contract))
     tier1_lines.append("```")
     tier1_lines.append("")
 
     # Log key preamble (production traceability — part of the contract)
     if log_key_preamble:
         tier1_lines.append("Include this logging preamble at the top of every module:")
-        tier1_lines.append("```python")
+        tier1_lines.append(f"```{code_fence_lang}")
         tier1_lines.append(log_key_preamble)
         tier1_lines.append("```")
         tier1_lines.append("")
@@ -1310,6 +1720,7 @@ def build_code_agent_context(
     decisions: list[str] | None = None,
     research: list[dict] | None = None,
     max_tokens: int = 8000,
+    language: str = "python",
 ) -> str:
     """Build tiered context for code generation agent.
 
@@ -1326,10 +1737,16 @@ def build_code_agent_context(
     used_tokens = 0
 
     # Tier 1: Always include contract stub and test code
-    stub = render_stub(contract)
+    _stub_renderers = {
+        "typescript": (render_stub_ts, "typescript"),
+        "javascript": (render_stub_js, "javascript"),
+        "rust": (render_stub_rust, "rust"),
+    }
+    stub_renderer, code_fence_lang = _stub_renderers.get(language, (render_stub, "python"))
+    stub = stub_renderer(contract)
     tier1_parts = [
         "## CONTRACT",
-        "```python",
+        f"```{code_fence_lang}",
         stub,
         "```",
     ]

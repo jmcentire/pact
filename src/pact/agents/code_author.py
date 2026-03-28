@@ -95,6 +95,44 @@ CORRECT: Data.tagged('Tag')({fields}) or Data.TaggedError('Tag')({fields}).
 The second positional argument is silently ignored — this is the #1 Effect v3 mistake.
 Similarly, Layer.fail() takes a value, not a constructor — pass the constructed error."""
 
+CODE_SYSTEM_RUST = """You are starting fresh on this implementation with no prior context.
+
+You are implementing a Rust component against its contract. All type names,
+function names, and error type names must match the contract stub exactly.
+Check the REQUIRED EXPORTS list — tests import these names directly.
+Standalone functions are pub module-level functions. All log statements
+include the PACT log key via the pact_log! macro.
+
+Write idiomatic Rust with proper ownership, borrowing, and lifetimes.
+Use Result<T, E> for all fallible operations — never unwrap() or panic!()
+in library code. Prefer &str over String for function inputs; return String
+for owned values. Use Option<T> for optional fields and parameters.
+
+Use serde (Serialize, Deserialize) for all data types that cross boundaries.
+Use thiserror::Error for custom error types — derive Error with #[error("...")]
+messages. Use anyhow::Result only in binary entry points, not library code.
+
+Include all necessary `use` statements at the top of each module. Prefer
+explicit imports over glob imports. Common patterns:
+  use serde::{Deserialize, Serialize};
+  use thiserror::Error;
+  use std::collections::HashMap;
+
+When the contract defines types with validators, implement validation in
+constructor functions (e.g., fn new(...) -> Result<Self, Error>) or use the
+builder pattern. Invalid inputs should return Err, not panic.
+
+Struct fields that have domain semantics should use newtype wrappers
+(e.g., pub struct UserId(pub String)) rather than raw primitives.
+
+Every public struct must derive Debug and Clone at minimum. Data structs
+should also derive Serialize and Deserialize. Error enums should derive
+Error (thiserror) and Debug.
+
+All log statements must use the pact_log! macro with the embedded PACT key
+for production traceability. When no log handler is configured, logging must
+be a silent no-op — no stdout, no errors."""
+
 
 class ImplementationResult:
     """Result of a code author run."""
@@ -201,13 +239,16 @@ async def author_code(
     )
 
     # Phase 3: Generate code — using the handoff brief as the mental model
-    from pact.interface_stub import render_handoff_brief, render_log_key_preamble, render_log_key_preamble_ts, project_id_hash
+    from pact.interface_stub import render_handoff_brief, render_log_key_preamble, render_log_key_preamble_ts, render_log_key_preamble_rust, project_id_hash
 
     # Generate log key preamble for production traceability
     pid = project_id_hash(contract.component_id)  # Use component as project proxy
     if language == "typescript":
         key = f"PACT:{pid}:{contract.component_id}"
         log_preamble = render_log_key_preamble_ts(key)
+    elif language == "rust":
+        key = f"PACT:{pid}:{contract.component_id}"
+        log_preamble = render_log_key_preamble_rust(key)
     else:
         log_preamble = render_log_key_preamble(pid, contract.component_id)
 
@@ -242,9 +283,13 @@ async def author_code(
 
     is_ts = language == "typescript"
     is_js = language == "javascript"
-    file_ext = ".ts" if is_ts else (".js" if is_js else ".py")
-    lang_label = "TypeScript" if is_ts else ("JavaScript" if is_js else "Python")
-    code_fence = "typescript" if is_ts else ("javascript" if is_js else "python")
+    is_rust = language == "rust"
+    _ext_map = {"typescript": ".ts", "javascript": ".js", "rust": ".rs"}
+    _label_map = {"typescript": "TypeScript", "javascript": "JavaScript", "rust": "Rust"}
+    _fence_map = {"typescript": "typescript", "javascript": "javascript", "rust": "rust"}
+    file_ext = _ext_map.get(language, ".py")
+    lang_label = _label_map.get(language, "Python")
+    code_fence = _fence_map.get(language, "python")
     example_file = f"module{file_ext}"
 
     if use_patch_mode:
@@ -342,6 +387,31 @@ and values are file contents. At minimum include a main module file.
 
 Example response format:
 {{"files": {{"module.js": "// implementation code..."}}}}"""
+        elif is_rust:
+            prompt = f"""Implement the component described in the handoff brief above.
+
+Research approach: {research.recommended_approach}
+Plan: {plan.plan_summary}
+
+Requirements:
+- Produce Rust source files implementing all types and functions
+- CRITICAL: All type names, function names, and error type names must match
+  the interface stub EXACTLY. See the REQUIRED EXPORTS list at the bottom of
+  the stub — every name there MUST be pub-exported from your module
+- Use Result<T, E> for all error handling — never unwrap() or panic!() in library code
+- Use thiserror::Error for custom error types with #[error("...")] messages
+- Use serde (Serialize, Deserialize) for all data types that cross boundaries
+- Prefer &str over String for function inputs; return String for owned values
+- Include all necessary `use` statements
+- Derive Debug, Clone on all public structs; Serialize, Deserialize on data structs
+- Dependencies should be accepted as function parameters (dependency injection)
+- Must pass ALL tests listed in the brief
+
+Respond with a JSON object containing a "files" dict where keys are filenames
+and values are file contents. At minimum include a main module file (lib.rs).
+
+Example response format:
+{{"files": {{"lib.rs": "// implementation code..."}}}}"""
         else:
             prompt = f"""Implement the component described in the handoff brief above.
 
@@ -371,7 +441,12 @@ Example response format:
         """Generated implementation files."""
         files: dict[str, str]
 
-    system_prompt = CODE_SYSTEM_TS if is_ts else (CODE_SYSTEM_JS if is_js else CODE_SYSTEM)
+    _system_prompts = {
+        "typescript": CODE_SYSTEM_TS,
+        "javascript": CODE_SYSTEM_JS,
+        "rust": CODE_SYSTEM_RUST,
+    }
+    system_prompt = _system_prompts.get(language, CODE_SYSTEM)
     response, in_tok, out_tok = await agent.assess_cached(
         CodeResponse, prompt, system_prompt, cache_prefix=cache_prefix,
     )

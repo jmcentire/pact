@@ -29,10 +29,17 @@ def detect_language(project_dir: Path) -> str:
         if cfg.language and cfg.language != "python":
             return cfg.language
 
+    # Check for Rust project markers
+    if (project_dir / "Cargo.toml").exists():
+        return "rust"
+
     tests_dir = project_dir / "tests"
     if tests_dir.exists():
         ts_files = list(tests_dir.rglob("*.ts"))
         py_files = list(tests_dir.rglob("*.py"))
+        rs_files = list(tests_dir.rglob("*.rs"))
+        if rs_files and not py_files and not ts_files:
+            return "rust"
         if ts_files and not py_files:
             return "typescript"
         if py_files:
@@ -184,6 +191,42 @@ def _typescript_install_step(project_dir: Path) -> str:
         return "npm init -y\nnpm install vitest typescript"
 
 
+def generate_rust_workflow(project_dir: Path, test_dirs: list[str]) -> dict:
+    """Generate a GitHub Actions workflow dict for a Rust pact project."""
+    return {
+        "name": "Pact Contract Verification",
+        "on": {
+            "pull_request": {
+                "branches": ["main", "dev"],
+            },
+        },
+        "jobs": {
+            "verify-contracts": {
+                "runs-on": "ubuntu-latest",
+                "steps": [
+                    {"uses": "actions/checkout@v4"},
+                    {
+                        "uses": "dtolnay/rust-toolchain@stable",
+                        "with": {"components": "clippy, rustfmt"},
+                    },
+                    {
+                        "name": "Run contract tests",
+                        "run": "cargo test --verbose",
+                    },
+                    {
+                        "name": "Lint (clippy)",
+                        "run": "cargo clippy -- -D warnings",
+                    },
+                    {
+                        "name": "Format check",
+                        "run": "cargo fmt -- --check",
+                    },
+                ],
+            },
+        },
+    }
+
+
 def generate_ci_workflow(
     project_dir: str | Path,
     output_path: str | None = None,
@@ -200,7 +243,9 @@ def generate_ci_workflow(
     language = detect_language(project_dir)
     test_dirs = _find_test_dirs(project_dir)
 
-    if language in ("typescript", "javascript"):
+    if language == "rust":
+        workflow = generate_rust_workflow(project_dir, test_dirs)
+    elif language in ("typescript", "javascript"):
         workflow = generate_typescript_workflow(project_dir, test_dirs)
     else:
         workflow = generate_python_workflow(project_dir, test_dirs)
