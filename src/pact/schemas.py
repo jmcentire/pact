@@ -96,6 +96,29 @@ class ErrorCase(BaseModel):
     error_type: str
     error_data: dict[str, str] = {}
 
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_error_data_values(cls, data: dict) -> dict:
+        """LLMs sometimes return dicts as error_data values instead of strings."""
+        if isinstance(data, dict) and "error_data" in data:
+            ed = data["error_data"]
+            if isinstance(ed, dict):
+                data["error_data"] = {
+                    k: _json.dumps(v) if not isinstance(v, str) else v
+                    for k, v in ed.items()
+                }
+            elif isinstance(ed, str):
+                try:
+                    parsed = _json.loads(ed)
+                    if isinstance(parsed, dict):
+                        data["error_data"] = {
+                            k: _json.dumps(v) if not isinstance(v, str) else v
+                            for k, v in parsed.items()
+                        }
+                except (_json.JSONDecodeError, ValueError):
+                    pass
+        return data
+
 
 class SideEffectKind(StrEnum):
     """Categorized side effect types for contract functions."""
@@ -277,6 +300,22 @@ class ContractTestSuite(BaseModel):
     test_cases: list[TestCase] = []
     test_language: str = "python"  # Valid values: "python", "typescript", "rust"
     generated_code: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_test_cases(cls, data: dict) -> dict:
+        """LLMs sometimes return test_cases as a JSON string instead of a list."""
+        if isinstance(data, dict) and "test_cases" in data:
+            tc = data["test_cases"]
+            if isinstance(tc, str):
+                tc = tc.strip()
+                try:
+                    parsed = _json.loads(tc)
+                    if isinstance(parsed, list):
+                        data["test_cases"] = parsed
+                except (_json.JSONDecodeError, ValueError):
+                    pass
+        return data
 
 
 class TestFailure(BaseModel):
