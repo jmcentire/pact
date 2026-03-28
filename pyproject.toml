@@ -58,6 +58,9 @@ analysis = [
     "tree-sitter-javascript>=0.23",
     "tree-sitter-typescript>=0.23",
 ]
+transmogrifier = [
+    "transmogrifier>=0.2.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

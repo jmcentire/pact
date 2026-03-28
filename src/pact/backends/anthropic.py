@@ -210,6 +210,20 @@ class AnthropicBackend:
         connection goes silent — a 10-minute generation that's actively
         streaming tokens will never trigger it.
         """
+        # Optional register normalization via Transmogrifier
+        try:
+            from transmogrifier.core import Transmogrifier
+            from transmogrifier.system_prompts import inject_system_prompt
+            _transmog = Transmogrifier()
+            result = _transmog.translate(prompt, model=self._model)
+            prompt = result.output_text
+            if result.system_prompt:
+                system = inject_system_prompt(system, result.system_prompt)
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
         async with self._client.messages.stream(
             model=self._model,
             max_tokens=max_tokens,
@@ -281,6 +295,20 @@ class AnthropicBackend:
         stall_timeout: float = 300.0,
     ) -> tuple[dict | None, str, int, int]:
         """Like _call_llm but sends system + cache_prefix with cache_control."""
+        # Optional register normalization via Transmogrifier
+        try:
+            from transmogrifier.core import Transmogrifier
+            from transmogrifier.system_prompts import inject_system_prompt
+            _transmog = Transmogrifier()
+            result = _transmog.translate(prompt, model=self._model)
+            prompt = result.output_text
+            if result.system_prompt:
+                system = inject_system_prompt(system, result.system_prompt)
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
         tool_name = schema.__name__
         tool_schema = schema.model_json_schema()
         tool_schema.pop("title", None)
