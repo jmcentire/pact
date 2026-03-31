@@ -93,8 +93,10 @@ def plan_test_generation(
 
         # Module name from file path
         module_name = entry.file_path.replace("/", ".").replace("\\", ".")
-        if module_name.endswith(".py"):
-            module_name = module_name[:-3]
+        for _ext in (".py", ".ts", ".js", ".tsx", ".jsx", ".rs"):
+            if module_name.endswith(_ext):
+                module_name = module_name[:-len(_ext)]
+                break
 
         entries.append(TestGenPlanEntry(
             function_name=entry.function_name,

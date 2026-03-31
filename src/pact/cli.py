@@ -228,6 +228,10 @@ def main() -> None:
     p_adopt.add_argument("--backend", default="anthropic", help="LLM backend (default: anthropic)")
     p_adopt.add_argument("--complexity-threshold", type=int, default=5, help="Min complexity for priority (default: 5)")
     p_adopt.add_argument("--dry-run", action="store_true", help="Analyze only, no LLM calls or state changes")
+    p_adopt.add_argument("--include", action="append", default=None,
+                         help="Scope to directory, file list, or - for stdin (repeatable)")
+    p_adopt.add_argument("--exclude", action="append", default=None,
+                         help="Additional directories to skip (repeatable)")
 
     # health
     p_health = subparsers.add_parser("health", help="Check pipeline health (dysmemic pressure detection)")
@@ -2210,6 +2214,8 @@ async def cmd_adopt(args: argparse.Namespace) -> None:
         backend=args.backend,
         complexity_threshold=args.complexity_threshold,
         dry_run=args.dry_run,
+        include=args.include,
+        exclude=args.exclude,
     )
 
     print(result.summary())

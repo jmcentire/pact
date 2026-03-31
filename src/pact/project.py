@@ -532,7 +532,11 @@ class ProjectManager:
         path = self._visible_contracts_dir / component_id / "interface.json"
         if not path.exists():
             return None
-        return ComponentContract.model_validate_json(path.read_text())
+        try:
+            return ComponentContract.model_validate_json(path.read_text())
+        except Exception:
+            # Corrupted (half-written) — treat as missing
+            return None
 
     def load_all_contracts(self) -> dict[str, ComponentContract]:
         contracts = {}
@@ -565,7 +569,11 @@ class ProjectManager:
         path = self._visible_tests_dir / component_id / "contract_test_suite.json"
         if not path.exists():
             return None
-        return ContractTestSuite.model_validate_json(path.read_text())
+        try:
+            return ContractTestSuite.model_validate_json(path.read_text())
+        except Exception:
+            # Corrupted (half-written) — treat as missing
+            return None
 
     def load_all_test_suites(self) -> dict[str, ContractTestSuite]:
         suites = {}
