@@ -600,6 +600,8 @@ async def adopt_codebase(
     agent = AgentBase(budget_tracker, model=model, backend=backend)
 
     # Group source files by component for processing
+    from pact.budget import BudgetExceeded
+
     resumed = 0
     skipped = 0
     try:
@@ -647,9 +649,9 @@ async def adopt_codebase(
                         agent, source_code, module_name, function_names,
                         tool_index=analysis.tool_index,
                     )
-                except RuntimeError as exc:
-                    if "stalled" in str(exc):
-                        logger.warning("API stalled on %s, skipping to next module", module_name)
+                except Exception as exc:
+                    if "stalled" in str(exc) or "APIStatusError" in type(exc).__name__ or "500" in str(exc):
+                        logger.warning("API error on %s: %s — skipping", module_name, exc)
                         skipped += 1
                         continue
                     raise
@@ -671,9 +673,9 @@ async def adopt_codebase(
                 suite, _research, _plan = await author_tests(
                     agent, contract, language=language,
                 )
-            except RuntimeError as exc:
-                if "stalled" in str(exc):
-                    logger.warning("API stalled on tests for %s, skipping", module_name)
+            except Exception as exc:
+                if "stalled" in str(exc) or "APIStatusError" in type(exc).__name__ or "500" in str(exc):
+                    logger.warning("API error on tests for %s: %s — skipping", module_name, exc)
                     skipped += 1
                     continue
                 raise
@@ -690,12 +692,14 @@ async def adopt_codebase(
                 component_id=component_id,
             )
 
+    except BudgetExceeded:
+        logger.warning("Budget exhausted — progress saved, re-run to continue")
+
+    finally:
         if resumed:
             logger.info("Resumed: %d modules from previous run", resumed)
         if skipped:
-            logger.warning("Skipped %d modules due to API stalls", skipped)
-
-    finally:
+            logger.warning("Skipped %d modules due to API errors", skipped)
         await agent.close()
         result.total_cost_usd = budget_tracker.project_spend
 
