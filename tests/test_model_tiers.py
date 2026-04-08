@@ -1,6 +1,9 @@
-"""Tests for tiered model selection (P2-3)."""
+"""Tests for tiered model selection (P2-3) and ResolvedConfig."""
 import pytest
-from pact.config import ModelTierConfig, resolve_model_tiers, GlobalConfig, ProjectConfig
+from pact.config import (
+    ModelTierConfig, ResolvedConfig, resolve_all, resolve_model_tiers,
+    GlobalConfig, ProjectConfig,
+)
 
 
 class TestModelTierConfig:
@@ -95,3 +98,37 @@ class TestTemporaryModel:
         from pact.agents.research import plan_and_evaluate
         sig = inspect.signature(plan_and_evaluate)
         assert "research_model" in sig.parameters
+
+
+class TestResolvedConfig:
+    """Tests for the ResolvedConfig dataclass and resolve_all()."""
+
+    def test_resolve_all_defaults(self):
+        rc = resolve_all(ProjectConfig(), GlobalConfig())
+        assert isinstance(rc, ResolvedConfig)
+        assert "code_author" in rc.models
+        assert "code_author" in rc.backends
+        assert rc.build_mode is not None
+        assert rc.parallel is not None
+        assert rc.model_tiers is not None
+
+    def test_resolve_all_project_overrides(self):
+        pc = ProjectConfig(role_models={"code_author": "custom-model"})
+        gc = GlobalConfig()
+        rc = resolve_all(pc, gc)
+        assert rc.models["code_author"] == "custom-model"
+        # Other roles should use global default
+        assert rc.models["decomposer"] == gc.model
+
+    def test_resolve_all_backend_override(self):
+        pc = ProjectConfig(role_backends={"code_author": "claude_code"})
+        gc = GlobalConfig()
+        rc = resolve_all(pc, gc)
+        assert rc.backends["code_author"] == "claude_code"
+
+    def test_resolve_all_covers_all_roles(self):
+        rc = resolve_all(ProjectConfig(), GlobalConfig())
+        from pact.config import AGENT_ROLES
+        for role in AGENT_ROLES:
+            assert role in rc.models
+            assert role in rc.backends

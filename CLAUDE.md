@@ -15,6 +15,7 @@ pact run <project-dir>             # Execute pipeline
 pact tasks <project-dir>           # Generate/display task list
 pact analyze <project-dir>         # Cross-artifact analysis
 pact checklist <project-dir>       # Requirements quality checklist
+pact assess <directory>            # Architectural assessment (any codebase)
 pact export-tasks <project-dir>    # Export TASKS.md
 pact handoff <project-dir> <id>    # Render/validate handoff brief
 pact directive <project-dir> <json> # Send structured directive to daemon
@@ -180,6 +181,8 @@ src/pact/
   schemas_tasks.py     # Task list, analysis, checklist Pydantic models
   task_list.py         # Task list generation + rendering (mechanical, no LLM)
   analyzer.py          # Cross-artifact consistency analysis (mechanical)
+  assessor.py          # Architectural assessment engine (any codebase, mechanical)
+  schemas_assess.py    # Assessment models (AssessmentReport, ModuleMetrics, etc.)
   checklist_gen.py     # Requirements quality checklist generation (mechanical)
 
   # Monitoring subsystem
@@ -291,9 +294,16 @@ pact analyze <project-dir> --json          # Output as JSON
 pact checklist <project-dir>               # Generate requirements checklist
 pact checklist <project-dir> --json        # Output as JSON
 pact export-tasks <project-dir>            # Export TASKS.md
+pact assess <directory>                    # Assess codebase architecture
+pact assess <directory> --json             # Output as JSON
+pact assess <directory> --threshold K=V    # Override threshold
 ```
 
 The task list is auto-generated after decomposition and auto-updated after each implementation/integration phase.
+
+### Architectural Assessment
+
+`pact assess` performs mechanical analysis of any Python codebase for structural friction. No LLM required. Detects: shallow modules (low depth ratio), hub dependencies (high fan-in), tight coupling (mutual imports, SCCs), scattered logic (same import in many files), and test coverage gaps.
 
 ## Directive Commands
 

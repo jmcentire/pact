@@ -203,6 +203,16 @@ def main() -> None:
     p_export = subparsers.add_parser("export-tasks", help="Export TASKS.md")
     p_export.add_argument("project_dir", help="Project directory path")
 
+    # assess
+    p_assess = subparsers.add_parser("assess", help="Assess codebase architecture for structural friction")
+    p_assess.add_argument("target_dir", help="Root directory of the codebase to analyze")
+    p_assess.add_argument("--language", default="python", choices=["python"], help="Language (default: python)")
+    p_assess.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
+    p_assess.add_argument(
+        "--threshold", action="append", dest="thresholds", metavar="KEY=VALUE",
+        help="Override a threshold (e.g. --threshold hub_fan_in_warning=10)",
+    )
+
     p_audit = subparsers.add_parser("audit", help="Spec-compliance audit")
     p_audit.add_argument("project_dir", help="Project directory path")
     p_audit.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
@@ -365,6 +375,8 @@ def main() -> None:
         cmd_directive(args)
     elif args.command == "export-tasks":
         cmd_export_tasks(args)
+    elif args.command == "assess":
+        cmd_assess(args)
     elif args.command == "audit":
         asyncio.run(cmd_audit(args))
     elif args.command == "test-gen":
@@ -2085,6 +2097,41 @@ def cmd_checklist(args: argparse.Namespace) -> None:
         return
 
     print(render_checklist_markdown(checklist))
+
+
+def cmd_assess(args: argparse.Namespace) -> None:
+    """Assess codebase architecture for structural friction."""
+    from pathlib import Path
+
+    from pact.assessor import assess_codebase, render_assessment_markdown
+
+    target = Path(args.target_dir)
+    if not target.is_dir():
+        print(f"Error: {args.target_dir} is not a directory.")
+        return
+
+    # Parse threshold overrides
+    thresholds: dict[str, float] | None = None
+    if args.thresholds:
+        thresholds = {}
+        for item in args.thresholds:
+            if "=" not in item:
+                print(f"Invalid threshold format: {item} (expected KEY=VALUE)")
+                return
+            key, val = item.split("=", 1)
+            try:
+                thresholds[key] = float(val)
+            except ValueError:
+                print(f"Invalid threshold value: {val} (expected number)")
+                return
+
+    report = assess_codebase(target, language=args.language, thresholds=thresholds)
+
+    if getattr(args, "json_output", False):
+        print(report.model_dump_json(indent=2))
+        return
+
+    print(render_assessment_markdown(report))
 
 
 def cmd_directive(args: argparse.Namespace) -> None:

@@ -1935,67 +1935,42 @@ class Scheduler:
     ) -> RunState:
         """Check health and apply automated remedies if needed.
 
-        Auto-safe remedies (skip_cascaded, informational) are applied
-        immediately. Config-changing remedies (max_plan_revisions, shaping)
-        are surfaced as proposals in the pause message — the user accepts
-        them via FIFO directive.
-
-        Also persists the overall_status and critical findings into
-        health_snapshot so that format_run_summary can read them
-        without re-running check_health (which has logging side effects).
-
-        The ``phase`` parameter tells check_health which checks are
-        appropriate.  Pre-artifact phases (interview, shape) skip
-        artifact-production metrics since those phases produce planning
-        outputs, not contracts or code.
+        Delegates to health_policy() for the decision, then acts on it.
+        Auto-safe remedies are applied immediately. Config-changing
+        remedies are surfaced as proposals in the pause message.
         """
-        from pact.health import HealthMetrics, check_health, should_abort, suggest_remedies
+        from pact.health import health_policy
 
-        metrics = HealthMetrics.from_dict(state.health_snapshot)
         thresholds = getattr(self.project_config, "health_thresholds", {}) or {}
-        report = check_health(metrics, thresholds=thresholds, phase=phase)
+        decision = health_policy(state.health_snapshot, phase, thresholds)
 
         # Persist report summary into snapshot for side-effect-free reads
         snapshot = state.health_snapshot
-        snapshot["_overall_status"] = report.overall_status.value
+        snapshot["_overall_status"] = decision.report.overall_status.value
         snapshot["_critical_findings"] = [
             f"[{f.condition}] {f.message[:80]}"
-            for f in report.critical_findings[:3]
+            for f in decision.report.critical_findings[:3]
         ]
         state.health_snapshot = snapshot
 
-        if report.overall_status.value != "healthy":
-            all_remedies = suggest_remedies(report, metrics)
-            auto_applied = self._apply_auto_remedies(
-                [r for r in all_remedies if r.auto], state,
+        # Apply auto-safe remedies
+        auto_applied = self._apply_auto_remedies(decision.auto_remedies, state)
+        if auto_applied:
+            self.project.append_audit("health_remedy", "; ".join(auto_applied))
+
+        if decision.action == "pause":
+            # Store proposals in snapshot for CLI display
+            if decision.proposed_remedies:
+                snapshot["_proposed_remedies"] = [
+                    {"kind": r.kind, "description": r.description, "fifo_hint": r.fifo_hint}
+                    for r in decision.proposed_remedies
+                ]
+                state.health_snapshot = snapshot
+
+            state.pause(
+                f"Health check: {decision.message} "
+                f"Review with 'pact health'."
             )
-            proposed = [r for r in all_remedies if not r.auto]
-
-            if auto_applied:
-                self.project.append_audit(
-                    "health_remedy",
-                    "; ".join(auto_applied),
-                )
-
-            if should_abort(report):
-                parts = []
-                if auto_applied:
-                    parts.append(f"Applied: {'; '.join(auto_applied)}")
-                if proposed:
-                    proposals = "; ".join(r.description for r in proposed)
-                    parts.append(f"Proposed: {proposals}")
-                    # Store proposals in snapshot for CLI display
-                    snapshot["_proposed_remedies"] = [
-                        {"kind": r.kind, "description": r.description, "fifo_hint": r.fifo_hint}
-                        for r in proposed
-                    ]
-                    state.health_snapshot = snapshot
-
-                summary = ". ".join(parts) if parts else "no remedies available"
-                state.pause(
-                    f"Health check: dysmemic pressure detected. {summary}. "
-                    f"Review with 'pact health'."
-                )
 
         return state
 

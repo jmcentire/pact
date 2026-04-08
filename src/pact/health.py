@@ -913,3 +913,78 @@ def should_abort(report: HealthReport) -> bool:
         if f.condition == HealthCondition.variance_reaches_target:
             return True
     return False
+
+
+# ── Health Policy (consolidated decision interface) ────────────────
+
+
+@dataclass
+class HealthPolicyDecision:
+    """Single decision object returned by health_policy().
+
+    Consolidates: health check, remedy suggestion, and abort decision.
+    The scheduler acts on the action without knowing policy details.
+    """
+    action: str  # "continue" or "pause"
+    report: HealthReport
+    auto_remedies: list[Remedy] = field(default_factory=list)
+    proposed_remedies: list[Remedy] = field(default_factory=list)
+    message: str = ""
+
+
+def health_policy(
+    state_snapshot: dict,
+    phase: str,
+    thresholds: dict[str, float] | None = None,
+) -> HealthPolicyDecision:
+    """Single entry point for health decision-making.
+
+    Consolidates: metrics hydration, check_health, suggest_remedies,
+    should_abort. The scheduler calls this once and acts on the result.
+
+    Args:
+        state_snapshot: The state.health_snapshot dict.
+        phase: Current pipeline phase (for phase-aware checks).
+        thresholds: Optional override thresholds from project config.
+
+    Returns:
+        HealthPolicyDecision with action + remedies + report.
+    """
+    metrics = HealthMetrics.from_dict(state_snapshot)
+    report = check_health(metrics, thresholds=thresholds, phase=phase)
+
+    if report.overall_status == HealthStatus.healthy:
+        return HealthPolicyDecision(
+            action="continue",
+            report=report,
+            message="All health checks passed.",
+        )
+
+    # Unhealthy: compute remedies and decide action
+    all_remedies = suggest_remedies(report, metrics)
+    auto = [r for r in all_remedies if r.auto]
+    proposed = [r for r in all_remedies if not r.auto]
+
+    if should_abort(report):
+        parts = []
+        if auto:
+            parts.append("Applied: " + "; ".join(r.description for r in auto))
+        if proposed:
+            parts.append("Proposed: " + "; ".join(r.description for r in proposed))
+        message = ". ".join(parts) if parts else "Critical health findings, no remedies available."
+        return HealthPolicyDecision(
+            action="pause",
+            report=report,
+            auto_remedies=auto,
+            proposed_remedies=proposed,
+            message=f"Dysmemic pressure detected. {message}",
+        )
+
+    # Warning-level: continue but surface remedies
+    return HealthPolicyDecision(
+        action="continue",
+        report=report,
+        auto_remedies=auto,
+        proposed_remedies=proposed,
+        message="Health warnings detected.",
+    )

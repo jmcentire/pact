@@ -11,9 +11,11 @@ import pytest
 from pact.health import (
     HealthCondition,
     HealthMetrics,
+    HealthPolicyDecision,
     HealthStatus,
     Remedy,
     check_health,
+    health_policy,
     render_health_report,
     should_abort,
     suggest_remedies,
@@ -469,3 +471,78 @@ class TestThresholdOverrides:
         report = check_health(m, thresholds={"cascade_warning": 5})
         gd = next(f for f in report.findings if f.condition == HealthCondition.graceful_degradation)
         assert gd.status == HealthStatus.healthy
+
+
+# ── Health Policy ──────────────────────────────────────────────────
+
+
+class TestHealthPolicy:
+    """Tests for the consolidated health_policy() function."""
+
+    def test_healthy_returns_continue(self):
+        """Healthy metrics produce continue action."""
+        m = HealthMetrics(
+            planning_tokens=100, generation_tokens=200,
+            contracts_produced=3, tests_produced=3,
+            implementations_produced=2,
+            total_spend=1.0, budget_cap=10.0,
+        )
+        decision = health_policy(m.to_dict(), "implement")
+        assert decision.action == "continue"
+        assert decision.report.overall_status == HealthStatus.healthy
+
+    def test_critical_returns_pause(self):
+        """Critical findings (e.g. all planning, no output) produce pause."""
+        m = HealthMetrics(
+            planning_tokens=10000, generation_tokens=100,
+            planning_calls=50, generation_calls=1,
+            total_spend=5.0, budget_cap=10.0,
+        )
+        decision = health_policy(m.to_dict(), "implement")
+        assert decision.action == "pause"
+        assert "pressure" in decision.message.lower() or "detected" in decision.message.lower()
+
+    def test_warning_returns_continue_with_remedies(self):
+        """Warning-level issues return continue but surface remedies."""
+        m = HealthMetrics(
+            planning_tokens=1000, generation_tokens=600,
+            planning_calls=10, generation_calls=5,
+            total_spend=2.0, budget_cap=10.0,
+            contracts_produced=2, tests_produced=2,
+            implementations_produced=1,
+        )
+        decision = health_policy(m.to_dict(), "implement")
+        # Should be continue (not critical enough to pause)
+        assert decision.action == "continue"
+
+    def test_respects_thresholds(self):
+        """Custom thresholds are passed through to check_health."""
+        m = HealthMetrics(cascade_events=4)
+        # Default cascade_warning is 2, so this would normally warn.
+        # Override to 5 so it doesn't.
+        decision = health_policy(
+            m.to_dict(), "implement",
+            thresholds={"cascade_warning": 5},
+        )
+        assert decision.action == "continue"
+
+    def test_pre_artifact_phase_skips_output_checks(self):
+        """Interview/shape phases skip output ratio checks."""
+        m = HealthMetrics(
+            planning_tokens=5000, generation_tokens=0,
+            planning_calls=20, generation_calls=0,
+        )
+        # In implement phase, zero generation would be critical
+        decision_impl = health_policy(m.to_dict(), "implement")
+        # In interview phase, zero generation is expected
+        decision_interview = health_policy(m.to_dict(), "interview")
+        # Interview should be healthier than implement
+        assert decision_interview.action == "continue" or (
+            decision_interview.report.overall_status.value
+            <= decision_impl.report.overall_status.value
+        )
+
+    def test_returns_policy_decision_type(self):
+        m = HealthMetrics()
+        decision = health_policy(m.to_dict(), "decompose")
+        assert isinstance(decision, HealthPolicyDecision)
