@@ -519,6 +519,44 @@ class TimeoutConfig:
         return max(effective, self.TIMEOUT_FLOOR)
 
 
+# ── Resolved Config (computed once at startup) ────────────────────
+
+
+AGENT_ROLES = ("decomposer", "contract_author", "test_author", "code_author", "trace_analyst", "shaper")
+
+
+@dataclass
+class ResolvedConfig:
+    """Pre-computed config resolution — avoids calling resolve_* repeatedly.
+
+    Computed once at scheduler startup from ProjectConfig + GlobalConfig.
+    Callers read resolved values directly instead of resolution functions.
+    """
+    models: dict[str, str] = field(default_factory=dict)
+    backends: dict[str, str] = field(default_factory=dict)
+    build_mode: BuildMode = BuildMode.AUTO
+    parallel: "ParallelConfig | None" = None
+    model_tiers: "ModelTierConfig | None" = None
+
+
+def resolve_all(project: ProjectConfig, global_cfg: GlobalConfig) -> ResolvedConfig:
+    """Compute all resolved config values once.
+
+    Returns a ResolvedConfig with models and backends pre-resolved for
+    every agent role, plus build mode, parallel config, and model tiers.
+    """
+    models = {role: resolve_model(role, project, global_cfg) for role in AGENT_ROLES}
+    backends = {role: resolve_backend(role, project, global_cfg) for role in AGENT_ROLES}
+
+    return ResolvedConfig(
+        models=models,
+        backends=backends,
+        build_mode=resolve_build_mode(project, global_cfg),
+        parallel=resolve_parallel_config(project, global_cfg),
+        model_tiers=resolve_model_tiers(global_cfg, project),
+    )
+
+
 def resolve_environment(project: ProjectConfig, global_cfg: GlobalConfig) -> EnvironmentSpec:
     """Resolve environment spec from project or global config."""
     raw = project.environment if project.environment else global_cfg.environment

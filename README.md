@@ -237,6 +237,7 @@ Either, neither, or both. Defaults: both off (sequential, single-attempt).
 | `pact tasks <project>` | List phase tasks with status |
 | `pact handoff <project> <id>` | Render/validate handoff brief |
 | `pact adopt <project>` | Adopt existing codebase under pact governance |
+| `pact assess <directory>` | Architectural assessment — shallow modules, hub dependencies, coupling |
 | `pact mcp-server` | Run MCP server (stdio transport) |
 
 Run flags: `--constrain-dir`, `--ledger-dir`, `--skip-arbiter`.
@@ -331,11 +332,33 @@ Tree-sitter is preferred over cscope for Python, TypeScript, and JavaScript code
 tool_index_enabled: true  # true | false | null (auto-detect)
 ```
 
+## Architectural Assessment
+
+`pact assess` performs mechanical codebase analysis for structural friction -- no LLM, no project setup required. Point it at any Python source directory.
+
+```bash
+pact assess src/myproject/                    # Markdown report
+pact assess src/myproject/ --json             # Machine-readable output
+pact assess src/ --threshold hub_fan_in_warning=12  # Custom thresholds
+```
+
+Detects five categories of architectural friction:
+
+| Category | What It Flags | Severity |
+|----------|--------------|----------|
+| **Hub dependency** | Modules with high fan-in (many dependents) | warning/error |
+| **Shallow module** | Interface complexity rivals implementation complexity | warning |
+| **Tight coupling** | Mutual imports, circular dependency clusters (SCCs) | warning/error |
+| **Scattered logic** | Same intra-project import appearing in many files | info/warning |
+| **Test gap** | Source modules with no corresponding test file | info |
+
+Uses Python `ast` for parsing and Tarjan's algorithm for strongly connected component detection. Configurable thresholds via `--threshold KEY=VALUE`. Output includes per-module metrics (LOC, public interface size, depth ratio, fan-in/fan-out).
+
 ## Development
 
 ```bash
 make dev          # Install with LLM backend support
-make test         # Run full test suite (1811 tests)
+make test         # Run full test suite (2073 tests)
 make test-quick   # Stop on first failure
 ```
 
@@ -343,7 +366,7 @@ Requires Python 3.12+. Core dependencies: `pydantic` and `pyyaml`.
 
 ## Architecture
 
-See [CLAUDE.md](CLAUDE.md) for the full technical reference.
+See [CLAUDE.md](CLAUDE.md) for the full technical reference. See [CAPABILITIES.md](CAPABILITIES.md) for the AI-friendly capability inventory and decision guide.
 
 ## Background
 

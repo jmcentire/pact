@@ -91,6 +91,55 @@ def select_test_files(
     return files
 
 
+# ── Shared subprocess execution ────────────────────────────────────
+
+
+class TestSubprocessError(Exception):
+    """Raised when a test subprocess fails to execute."""
+    def __init__(self, test_id: str, message: str):
+        self.test_id = test_id
+        self.message = message
+        super().__init__(message)
+
+
+async def _run_test_subprocess(
+    cmd: list[str],
+    env: dict[str, str],
+    cwd: str,
+    timeout: int,
+) -> tuple[str, str]:
+    """Run a test subprocess with timeout and error handling.
+
+    Returns (stdout, stderr) as decoded strings.
+    Raises TestSubprocessError on timeout or execution failure.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+            cwd=cwd,
+        )
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(), timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        raise TestSubprocessError("timeout", f"Tests timed out after {timeout}s")
+    except Exception as e:
+        raise TestSubprocessError("execution", str(e))
+
+    return stdout.decode(errors="replace"), stderr.decode(errors="replace")
+
+
+def _error_results(test_id: str, message: str) -> TestResults:
+    """Create a TestResults for a subprocess error."""
+    return TestResults(
+        total=0, passed=0, failed=0, errors=1,
+        failure_details=[TestFailure(test_id=test_id, error_message=message)],
+    )
+
+
 async def run_contract_tests(
     test_file: Path,
     impl_dir: Path,
@@ -158,35 +207,11 @@ async def run_contract_tests(
     ]
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-            cwd=str(impl_dir.parent),
+        stdout_text, stderr_text = await _run_test_subprocess(
+            cmd, env, str(impl_dir.parent), timeout,
         )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout,
-        )
-    except asyncio.TimeoutError:
-        return TestResults(
-            total=0, passed=0, failed=0, errors=1,
-            failure_details=[TestFailure(
-                test_id="timeout",
-                error_message=f"Tests timed out after {timeout}s",
-            )],
-        )
-    except Exception as e:
-        return TestResults(
-            total=0, passed=0, failed=0, errors=1,
-            failure_details=[TestFailure(
-                test_id="execution",
-                error_message=str(e),
-            )],
-        )
-
-    stdout_text = stdout.decode(errors="replace")
-    stderr_text = stderr.decode(errors="replace")
+    except TestSubprocessError as e:
+        return _error_results(e.test_id, e.message)
 
     return parse_pytest_output(stdout_text, stderr_text)
 
@@ -326,69 +351,22 @@ async def run_typescript_tests(
     ]
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-            cwd=str(project_dir),
+        stdout_text, stderr_text = await _run_test_subprocess(
+            cmd, env, str(project_dir), timeout,
         )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout,
-        )
-    except asyncio.TimeoutError:
-        return TestResults(
-            total=0, passed=0, failed=0, errors=1,
-            failure_details=[TestFailure(
-                test_id="timeout",
-                error_message=f"Tests timed out after {timeout}s",
-            )],
-        )
-    except Exception as e:
-        return TestResults(
-            total=0, passed=0, failed=0, errors=1,
-            failure_details=[TestFailure(
-                test_id="execution",
-                error_message=str(e),
-            )],
-        )
-
-    stdout_text = stdout.decode(errors="replace")
-    stderr_text = stderr.decode(errors="replace")
+    except TestSubprocessError as e:
+        return _error_results(e.test_id, e.message)
 
     # If vitest was not found, retry with jest
-    if proc.returncode != 0 and "vitest" in stderr_text.lower() and "not found" in stderr_text.lower():
+    if "vitest" in stderr_text.lower() and "not found" in stderr_text.lower():
         logger.info("vitest not found, falling back to jest")
         cmd = ["npx", "jest", str(test_file), "--verbose"]
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env,
-                cwd=str(project_dir),
+            stdout_text, stderr_text = await _run_test_subprocess(
+                cmd, env, str(project_dir), timeout,
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout,
-            )
-        except asyncio.TimeoutError:
-            return TestResults(
-                total=0, passed=0, failed=0, errors=1,
-                failure_details=[TestFailure(
-                    test_id="timeout",
-                    error_message=f"Tests timed out after {timeout}s (jest fallback)",
-                )],
-            )
-        except Exception as e:
-            return TestResults(
-                total=0, passed=0, failed=0, errors=1,
-                failure_details=[TestFailure(
-                    test_id="execution",
-                    error_message=str(e),
-                )],
-            )
-        stdout_text = stdout.decode(errors="replace")
-        stderr_text = stderr.decode(errors="replace")
+        except TestSubprocessError as e:
+            return _error_results(e.test_id, f"{e.message} (jest fallback)")
 
     return parse_vitest_output(stdout_text, stderr_text)
 
@@ -527,35 +505,11 @@ async def run_rust_tests(
     cmd = ["cargo", "test", "--", "--format=terse"]
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-            cwd=str(project_dir),
+        stdout_text, stderr_text = await _run_test_subprocess(
+            cmd, env, str(project_dir), timeout,
         )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout,
-        )
-    except asyncio.TimeoutError:
-        return TestResults(
-            total=0, passed=0, failed=0, errors=1,
-            failure_details=[TestFailure(
-                test_id="timeout",
-                error_message=f"Tests timed out after {timeout}s",
-            )],
-        )
-    except Exception as e:
-        return TestResults(
-            total=0, passed=0, failed=0, errors=1,
-            failure_details=[TestFailure(
-                test_id="execution",
-                error_message=str(e),
-            )],
-        )
-
-    stdout_text = stdout.decode(errors="replace")
-    stderr_text = stderr.decode(errors="replace")
+    except TestSubprocessError as e:
+        return _error_results(e.test_id, e.message)
 
     return parse_cargo_test_output(stdout_text, stderr_text)
 

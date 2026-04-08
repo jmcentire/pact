@@ -614,6 +614,11 @@
         <p>Mechanical smoke tests from AST analysis &mdash; no LLM required. <code>pact adopt</code> extracts every public module-level function signature and generates import + callable checks in <code>tests/smoke/</code>. Filters out methods, private functions, and nested functions.</p>
       </div>
       <div class="feature-card">
+        <span class="feature-icon">&#x1f3d7;</span>
+        <h3>Architectural Assessment</h3>
+        <p>Mechanical codebase analysis for structural friction &mdash; no LLM required. <code>pact assess</code> detects hub dependencies, shallow modules, tight coupling (mutual imports + SCCs), scattered logic, and test coverage gaps. Uses Python <code>ast</code> and Tarjan's algorithm. Point it at any Python directory &mdash; no project setup needed.</p>
+      </div>
+      <div class="feature-card">
         <span class="feature-icon">&#x1f4c2;</span>
         <h3>Fully Visible Projects</h3>
         <p>All project knowledge lives in the project tree &mdash; contracts, source, tests, decomposition, Goodhart tests, standards, learnings. When a teammate clones the repo, they see everything. <code>.pact/</code> contains only ephemeral per-run state that gets regenerated.</p>
