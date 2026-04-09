@@ -59,12 +59,17 @@ class TestProjectInit:
     def test_creates_design_doc(self, tmp_project: ProjectManager):
         assert tmp_project.design_path.exists()
 
-    def test_idempotent(self, tmp_project: ProjectManager):
+    def test_reinit_archives_and_rewrites(self, tmp_project: ProjectManager):
         # Write custom content
         tmp_project.task_path.write_text("# My Task")
-        # Re-init should not overwrite
+        # Re-init archives existing artifacts and writes fresh templates
         tmp_project.init()
-        assert tmp_project.task_path.read_text() == "# My Task"
+        # task.md now has the fresh template
+        assert "# My Task" not in tmp_project.task_path.read_text()
+        assert "Task" in tmp_project.task_path.read_text()
+        # Original content is preserved in archive
+        archived = tmp_project.load_previous_context()
+        assert archived.get("task.md") == "# My Task"
 
 
 class TestTaskAndConfig:

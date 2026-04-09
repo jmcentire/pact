@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel
 
+pytest.importorskip("google.genai", reason="google-genai not installed")
+
 from pact.budget import BudgetTracker
 
 
