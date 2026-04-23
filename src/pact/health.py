@@ -561,6 +561,16 @@ def _check_phase_balance(metrics: HealthMetrics, t: dict[str, float] | None = No
     pb_crit = t.get("phase_balance_critical", PHASE_BALANCE_CRITICAL)
     pb_warn = t.get("phase_balance_warning", PHASE_BALANCE_WARNING)
 
+    # Only flag planning/coordination phases — implement/integrate/polish dominating is expected.
+    _EXECUTION_PHASES = {"implement", "integrate", "polish", "retrospective", "complete"}
+    if worst_phase in _EXECUTION_PHASES:
+        return HealthFinding(
+            condition=HealthCondition.phase_balance,
+            status=HealthStatus.healthy,
+            message=f"Phase balance OK — execution phase '{worst_phase}' dominates at {worst_ratio:.0%} (expected).",
+            metric_value=worst_ratio,
+        )
+
     if worst_ratio >= pb_crit and excess > 0.1:
         return HealthFinding(
             condition=HealthCondition.phase_balance,
