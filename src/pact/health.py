@@ -323,7 +323,7 @@ REGISTER_DRIFT_WARNING = 0.2           # 20%+ of checks show drift
 REGISTER_DRIFT_CRITICAL = 0.5          # 50%+ of checks show drift
 
 
-_PRE_ARTIFACT_PHASES = {"interview", "shape", "integrate", "arbiter", "polish", "retrospective", "complete"}
+_PRE_ARTIFACT_PHASES = {"interview", "shape", "preflight", "integrate", "arbiter", "polish", "retrospective", "complete"}
 
 
 def check_health(
