@@ -14,6 +14,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install system tools used by tests
+        # universal-ctags + cscope are exercised by tests/test_tool_index.py
+        # via tool_index.py. Pre-installed on macOS dev boxes; not on the
+        # ubuntu-latest runner.
+        run: sudo apt-get update && sudo apt-get install -y universal-ctags cscope
+
       - name: Install dependencies
         # Include the optional extras whose modules tests/ actually exercises:
         # all-backends → anthropic, openai, google-genai (test_*_backend.py)
