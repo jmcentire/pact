@@ -9,6 +9,7 @@ Follows the Research-First Protocol:
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from pact.agents.base import AgentBase
 from pact.agents.research import plan_and_evaluate, research_phase
@@ -17,6 +18,9 @@ from pact.schemas import (
     PlanEvaluation,
     ResearchReport,
 )
+
+if TYPE_CHECKING:
+    from pact.schemas import TypeRegistry
 
 logger = logging.getLogger(__name__)
 

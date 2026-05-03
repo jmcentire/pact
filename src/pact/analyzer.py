@@ -6,7 +6,6 @@ No LLM calls required.
 
 from __future__ import annotations
 
-from collections import Counter
 
 from pact.schemas import (
     ComponentContract,
@@ -206,7 +205,6 @@ def _check_consistency(
             child_set = set(node.children)
             dep_set = set(contract.dependencies)
             missing_deps = child_set - dep_set
-            extra_deps = dep_set - child_set
 
             # Only flag missing children — extra deps might be valid cross-references
             if missing_deps:

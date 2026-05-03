@@ -37,6 +37,7 @@ import asyncio
 import json
 import logging
 import sys
+from pathlib import Path
 
 from pact.config import load_global_config, load_project_config
 from pact.lifecycle import format_run_summary
@@ -100,7 +101,7 @@ def main() -> None:
     p_log.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
 
     # ping
-    p_ping = subparsers.add_parser("ping", help="Test API connection and show pricing")
+    subparsers.add_parser("ping", help="Test API connection and show pricing")
 
     # signal
     p_signal = subparsers.add_parser("signal", help="Send signal to running daemon")
@@ -238,6 +239,14 @@ def main() -> None:
     p_adopt.add_argument("--backend", default="anthropic", help="LLM backend (default: anthropic)")
     p_adopt.add_argument("--complexity-threshold", type=int, default=5, help="Min complexity for priority (default: 5)")
     p_adopt.add_argument("--dry-run", action="store_true", help="Analyze only, no LLM calls or state changes")
+    p_adopt.add_argument(
+        "--workers", default="auto",
+        help=(
+            "Concurrent LLM workers for contract+test generation. "
+            "'auto' (default) sizes from file count, budget, and config. "
+            "'off' or '1' runs sequentially. Integer N runs N workers."
+        ),
+    )
     p_adopt.add_argument("--include", action="append", default=None,
                          help="Scope to directory, file list, or - for stdin (repeatable)")
     p_adopt.add_argument("--exclude", action="append", default=None,
@@ -458,9 +467,9 @@ def cmd_wizard(args: argparse.Namespace) -> None:
         yaml.dump(pact_yaml, f, default_flow_style=False, sort_keys=False)
 
     print(f"\nProject initialized: {project.project_dir}")
-    print(f"  task.md   - Pre-filled from your description")
+    print("  task.md   - Pre-filled from your description")
     print(f"  sops.md   - Tailored for {config.language}")
-    print(f"  pact.yaml - Configured with your preferences")
+    print("  pact.yaml - Configured with your preferences")
 
     if config.run_interview:
         print("\nStarting interview phase...")
@@ -468,8 +477,8 @@ def cmd_wizard(args: argparse.Namespace) -> None:
             project_dir=project_dir, verbose=False,
         )))
     else:
-        print(f"\nNext steps:")
-        print(f"  1. Review and refine task.md")
+        print("\nNext steps:")
+        print("  1. Review and refine task.md")
         print(f"  2. pact interview {project_dir}")
         print(f"  3. pact approve {project_dir}")
         print(f"  4. pact run {project_dir}")
@@ -592,7 +601,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     print(f"  Edit {project.sops_path} to set operating procedures")
 
     if kindex_context:
-        print(f"  Kindex context loaded — will be available during interview phase")
+        print("  Kindex context loaded — will be available during interview phase")
 
     if sessions:
         print(f"  Previous sessions available: {', '.join(s['slug'] for s in sessions)}")
@@ -707,7 +716,7 @@ def _show_component_detail(project: ProjectManager, component_id: str) -> None:
         if contract.dependencies:
             print(f"  Dependencies: {', '.join(contract.dependencies)}")
         if contract.invariants:
-            print(f"  Invariants:")
+            print("  Invariants:")
             for inv in contract.invariants:
                 print(f"    - {inv}")
     else:
@@ -716,7 +725,7 @@ def _show_component_detail(project: ProjectManager, component_id: str) -> None:
     # Tests
     suite = project.load_test_suite(component_id)
     if suite:
-        print(f"\nTest Suite:")
+        print("\nTest Suite:")
         print(f"  Cases: {len(suite.test_cases)}")
         for tc in suite.test_cases:
             print(f"    [{tc.category}] {tc.id}: {tc.description[:60]}")
@@ -732,7 +741,7 @@ def _show_component_detail(project: ProjectManager, component_id: str) -> None:
         status = "PASS" if tr.all_passed else "FAIL"
         print(f"\nTest Results: {status} ({tr.passed}/{tr.total} passed, {tr.failed} failed, {tr.errors} errors)")
         if tr.failure_details:
-            print(f"  Failures:")
+            print("  Failures:")
             for fd in tr.failure_details:
                 print(f"    {fd.test_id}: {fd.error_message[:80]}")
 
@@ -880,7 +889,6 @@ async def cmd_daemon(args: argparse.Namespace) -> None:
         per_project_cap=project_config.budget or global_config.default_budget,
     )
 
-    from pact.events import EventBus
 
     scheduler = Scheduler(project, global_config, project_config, budget)
 
@@ -925,7 +933,7 @@ async def cmd_daemon(args: argparse.Namespace) -> None:
     if phase_timeout > 0:
         print(f"  Phase timeout: {phase_timeout}s (hard wall-clock)")
     else:
-        print(f"  Phase timeout: none (stall-based detection)")
+        print("  Phase timeout: none (stall-based detection)")
 
     if poll_integrations:
         print(f"  Integration polling: every {poll_interval}s (max {max_poll_attempts} attempts)")
@@ -1021,7 +1029,7 @@ async def cmd_ping(args: argparse.Namespace) -> None:
         finally:
             await client.close()
     except Exception as e:
-        print(f"FAILED")
+        print("FAILED")
         print(f"  Error: {e}")
 
 
@@ -1103,7 +1111,7 @@ async def cmd_interview(args: argparse.Namespace) -> None:
             print(f"\nRisks: {', '.join(result.risks)}")
             print(f"Assumptions: {', '.join(result.assumptions)}")
             if result.acceptance_criteria:
-                print(f"\nAcceptance criteria (done when):")
+                print("\nAcceptance criteria (done when):")
                 for i, ac in enumerate(result.acceptance_criteria, 1):
                     print(f"  {i}. {ac}")
             print(f"\nAnswer with: pact answer {args.project_dir}")
@@ -1444,7 +1452,7 @@ async def cmd_build(args: argparse.Namespace) -> None:
         if args.competitive:
             print(f"  Mode: competitive ({args.agents} agents)")
         else:
-            print(f"  Mode: sequential")
+            print("  Mode: sequential")
         print("\nRun without --plan-only to build.")
         return
 
@@ -1458,9 +1466,9 @@ async def cmd_build(args: argparse.Namespace) -> None:
     if args.competitive:
         print(f"  Mode: competitive ({args.agents} agents)")
     else:
-        print(f"  Mode: sequential")
+        print("  Mode: sequential")
 
-    state = await scheduler.build_component(
+    await scheduler.build_component(
         args.component_id,
         competitive=args.competitive,
         num_agents=args.agents,
@@ -1547,7 +1555,6 @@ def cmd_tree(args: argparse.Namespace) -> None:
             child_prefix = prefix + ("    " if is_last else "\u2502   ")
             if not prefix:
                 child_prefix = "    "
-            status_word = "passed" if node.test_results.all_passed else "passed"
             print(f"{child_prefix}{node.test_results.passed}/{node.test_results.total} tests passed")
 
         # Recurse into children
@@ -1668,7 +1675,6 @@ def cmd_cost(args: argparse.Namespace) -> None:
 def cmd_doctor(args: argparse.Namespace) -> None:
     """Diagnose common issues."""
     import os
-    from pact.budget import get_model_pricing_table
     from pact.daemon import check_daemon_health
 
     global_config = load_global_config()
@@ -2252,18 +2258,31 @@ async def cmd_adopt(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     from pact.adopt import adopt_codebase
+    from pact.config import load_global_config
 
-    result = await adopt_codebase(
-        project_path=project_dir,
-        language=args.language,
-        budget=args.budget,
-        model=args.model,
-        backend=args.backend,
-        complexity_threshold=args.complexity_threshold,
-        dry_run=args.dry_run,
-        include=args.include,
-        exclude=args.exclude,
-    )
+    # Pull max_concurrent_agents ceiling from global config so adopt's auto
+    # heuristic agrees with the rest of pact (build, etc.). Project-level
+    # config doesn't apply here — adopt runs before the project exists.
+    global_cfg = load_global_config()
+    max_concurrent_agents = global_cfg.max_concurrent_agents
+
+    try:
+        result = await adopt_codebase(
+            project_path=project_dir,
+            language=args.language,
+            budget=args.budget,
+            model=args.model,
+            backend=args.backend,
+            complexity_threshold=args.complexity_threshold,
+            dry_run=args.dry_run,
+            include=args.include,
+            exclude=args.exclude,
+            workers=args.workers,
+            max_concurrent_agents=max_concurrent_agents,
+        )
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(2)
 
     print(result.summary())
 
@@ -2272,7 +2291,7 @@ def cmd_handoff(args: argparse.Namespace) -> None:
     """Render and optionally validate the handoff brief for a component."""
     import json as json_mod
 
-    from pact.interface_stub import context_fence, render_handoff_brief
+    from pact.interface_stub import render_handoff_brief
     from pact.project import ProjectManager
 
     project = ProjectManager(args.project_dir)
@@ -2470,14 +2489,14 @@ def cmd_health(args: argparse.Namespace) -> None:
         total = metrics.planning_tokens + metrics.generation_tokens
         plan_pct = (metrics.planning_tokens / total * 100) if total else 0
         gen_pct = (metrics.generation_tokens / total * 100) if total else 0
-        print(f"\nToken breakdown:")
+        print("\nToken breakdown:")
         print(f"  Planning:   {metrics.planning_tokens:>10,} ({plan_pct:.0f}%)")
         print(f"  Generation: {metrics.generation_tokens:>10,} ({gen_pct:.0f}%)")
         print(f"  Ratio:      {metrics.output_planning_ratio:.2f}x gen/plan")
 
     # Show per-phase token table
     if metrics.phase_tokens:
-        print(f"\nPer-phase tokens:")
+        print("\nPer-phase tokens:")
         for phase, pt in sorted(metrics.phase_tokens.items()):
             print(f"  {phase:12s}  in={pt.input_tokens:>8,}  out={pt.output_tokens:>8,}  calls={pt.calls}")
 
@@ -2491,11 +2510,11 @@ def cmd_health(args: argparse.Namespace) -> None:
         auto = [r for r in remedies if r.auto]
         proposed = [r for r in remedies if not r.auto]
         if auto:
-            print(f"\nAuto-applied remedies:")
+            print("\nAuto-applied remedies:")
             for r in auto:
                 print(f"  [{r.kind}] {r.description}")
         if proposed:
-            print(f"\nProposed remedies (apply via FIFO):")
+            print("\nProposed remedies (apply via FIFO):")
             for r in proposed:
                 print(f"  [{r.kind}] {r.description}")
                 if r.fifo_hint:

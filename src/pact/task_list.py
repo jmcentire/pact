@@ -293,7 +293,7 @@ def render_task_list_markdown(task_list: TaskList) -> str:
                 cp = checkpoint_map.get(current_phase)
                 if cp:
                     lines.append("")
-                    lines.append(f"---")
+                    lines.append("---")
                     lines.append(f"CHECKPOINT: {cp.description}")
                 lines.append("")
             current_phase = task.phase
@@ -322,7 +322,7 @@ def render_task_list_markdown(task_list: TaskList) -> str:
         cp = checkpoint_map.get(current_phase)
         if cp:
             lines.append("")
-            lines.append(f"---")
+            lines.append("---")
             lines.append(f"CHECKPOINT: {cp.description}")
 
     lines.append("")

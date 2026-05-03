@@ -14,7 +14,6 @@ from datetime import datetime
 from pathlib import Path
 
 from pact.project import ProjectManager
-from pact.schemas import ComponentContract
 
 logger = logging.getLogger(__name__)
 

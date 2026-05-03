@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yaml
 
-from pact.schemas import ComponentContract, ContractTestSuite
+from pact.schemas import ComponentContract
 
 logger = logging.getLogger(__name__)
 
@@ -131,8 +131,7 @@ def _generate_ledger_test_ts(component_id: str, assertions: list[dict]) -> str:
         f"// Ledger assertions for {component_id} (auto-generated from ledger export)",
         "",
     ]
-    for i, assertion in enumerate(assertions):
-        name = assertion.get("name", f"ledger_{i}")
+    for assertion in assertions:
         desc = assertion.get("description", "Ledger assertion")
         lines.extend([
             f'it("ledger: {desc}", () => {{',

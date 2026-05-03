@@ -28,16 +28,13 @@ import hashlib
 
 from pact.schemas import (
     ComponentContract,
-    ComponentTask,
     ContractTestSuite,
     DecompositionTree,
-    ErrorCase,
     FieldSpec,
     FunctionContract,
     RunState,
     TestResults,
     TypeSpec,
-    ValidatorSpec,
 )
 
 
@@ -1089,7 +1086,7 @@ def _render_type_rust(t: TypeSpec) -> list[str]:
             lines.append(f"/// {t.description}")
         if t.inner_types:
             lines.append(f"// Union of: {', '.join(t.inner_types)}")
-            lines.append(f"// Consider modeling as an enum with variants for each type")
+            lines.append("// Consider modeling as an enum with variants for each type")
             # Use first type as alias for now
             lines.append(f"pub type {t.name} = {_map_type_rust(t.inner_types[0])};")
         else:

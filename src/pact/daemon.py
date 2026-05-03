@@ -19,17 +19,12 @@ import json
 import logging
 import os
 import select
-import signal
 import stat
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 
-from pact.budget import BudgetExceeded, BudgetTracker
-from pact.config import GlobalConfig, ProjectConfig
 from pact.events import EventBus
-from pact.lifecycle import format_run_summary
 from pact.project import ProjectManager
 from pact.scheduler import Scheduler
 from pact.schemas import RunState

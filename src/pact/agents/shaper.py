@@ -18,10 +18,6 @@ import logging
 from pact.agents.base import AgentBase
 from pact.schemas_shaping import (
     Appetite,
-    Breadboard,
-    FitCheck,
-    RabbitHole,
-    RegionMap,
     ShapingPitch,
     ShapingStatus,
 )

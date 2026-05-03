@@ -12,9 +12,12 @@ Orchestrates the full decomposition pipeline:
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from pact.schemas import TypeRegistry, TypeSpec
 
 from pact.agents.base import AgentBase
 from pact.agents.contract_author import author_contract
@@ -375,7 +378,7 @@ async def _generate_type_registry(
     with exact field names, types, and semantics.  Each contract author
     then receives this registry and must use these definitions verbatim.
     """
-    from pact.schemas import TypeRegistry, TypeSpec
+    from pact.schemas import TypeRegistry
 
     # Build component summary for the LLM
     comp_lines = []
@@ -561,7 +564,6 @@ async def decompose_and_contract(
             )
 
     # Generate or load type registry — canonical shared types
-    from pact.schemas import TypeRegistry
     type_registry = project.load_type_registry()
     if type_registry is None:
         type_registry = await _generate_type_registry(agent, task, decomp_tree)

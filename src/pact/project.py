@@ -56,9 +56,13 @@ import logging
 import shutil
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import yaml
+
+if TYPE_CHECKING:
+    from pact.schemas import ArtifactMetadata
 
 from pact.config import ProjectConfig, load_project_config
 from pact.schemas import (

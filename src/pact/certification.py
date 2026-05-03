@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 from pact.project import ProjectManager
-from pact.schemas import CertificationArtifact, TestResults
+from pact.schemas import CertificationArtifact
 from pact.test_harness import run_contract_tests
 
 logger = logging.getLogger(__name__)

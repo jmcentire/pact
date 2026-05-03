@@ -6,7 +6,6 @@ Ties together mechanical analysis (codebase_analyzer) with LLM agents
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -17,11 +16,10 @@ if TYPE_CHECKING:
 from pact.agents.base import AgentBase
 from pact.budget import BudgetTracker
 from pact.codebase_analyzer import analyze_codebase
-from pact.schemas import ComponentContract, ContractTestSuite, FunctionContract, FieldSpec
+from pact.schemas import ComponentContract, ContractTestSuite
 from pact.schemas_testgen import (
     CodebaseAnalysis,
     SecurityAuditReport,
-    SecurityFinding,
     SecurityRiskLevel,
     TestGenPlan,
     TestGenPlanEntry,
