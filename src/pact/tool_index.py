@@ -533,16 +533,46 @@ def run_tree_sitter(root: Path, language: str = "python") -> list[TreeSitterSymb
 # ── kindex ────────────────────────────────────────────────────────
 
 
-def query_kindex(project_path: Path) -> str:
+def query_kindex(
+    project_path: Path,
+    extra_data: dict | None = None,
+) -> str:
     """Query kindex for existing context about a project.
 
-    Returns text summary, or empty string if kindex unavailable.
+    Args:
+        project_path: Project root.
+        extra_data: Optional well-named structured payload to push into kindex
+            for indexing (e.g. ``{"test_functions": {file: [name, ...]}}``).
+            Pact pushes this via ``kin add`` so kindex can build test-scoped
+            symbol nodes. The kindex side may not yet consume every key — that
+            is fine; the data is durable once captured.
+
+    Returns:
+        Text summary, or empty string if kindex unavailable.
     """
     kin_bin = shutil.which("kin")
     if not kin_bin:
         return ""
 
     project_name = project_path.name
+
+    # Push structured annotations to kindex (best-effort, never fatal).
+    # We use ``kin add`` with a JSON payload so the kindex side can find
+    # well-named keys (e.g. ``test_functions``) and build symbol nodes from
+    # them in a future change.
+    if extra_data:
+        try:
+            payload = json.dumps(
+                {"project": project_name, **extra_data},
+                sort_keys=True,
+            )
+            note = f"pact-tool-index annotations for {project_name}: {payload}"
+            _run_quiet(
+                [kin_bin, "add", note, "--type", "concept"],
+                timeout=10,
+            )
+        except Exception:
+            logger.debug("kin add failed for extra_data", exc_info=True)
 
     # Try context first (richer), fall back to search
     rc, context, _ = _run_quiet([kin_bin, "context", project_name], timeout=15)
@@ -605,9 +635,42 @@ def build_tool_index(
         if use_cscope:
             call_graph = run_cscope(root, function_names, language)
 
+    # Collect rust-specific test annotations to push into kindex. Mechanical
+    # extraction (regex-based, no LLM); kindex consumes the well-named
+    # ``test_functions`` key when it adds support.
+    extra_kindex_data: dict | None = None
+    if language == "rust":
+        try:
+            from pact.codebase_analyzer import _extract_rust_test_function_names
+            test_functions: dict[str, list[str]] = {}
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirnames[:] = [
+                    d for d in dirnames
+                    if d not in _EXCLUDE_DIRS and not d.endswith(".egg-info")
+                ]
+                for fname in filenames:
+                    if not fname.endswith(".rs"):
+                        continue
+                    fpath = Path(dirpath) / fname
+                    try:
+                        src = fpath.read_text(encoding="utf-8", errors="replace")
+                    except OSError:
+                        continue
+                    names = _extract_rust_test_function_names(src)
+                    if names:
+                        try:
+                            rel = str(fpath.relative_to(root))
+                        except ValueError:
+                            rel = str(fpath)
+                        test_functions[rel] = names
+            if test_functions:
+                extra_kindex_data = {"test_functions": test_functions}
+        except Exception:
+            logger.debug("rust test-function extraction failed", exc_info=True)
+
     # kindex — existing project knowledge
     if tools.kindex:
-        kindex_context = query_kindex(root)
+        kindex_context = query_kindex(root, extra_data=extra_kindex_data)
 
     return ToolIndex(
         tools=tools,

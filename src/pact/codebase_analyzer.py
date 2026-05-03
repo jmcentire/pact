@@ -877,11 +877,11 @@ def extract_functions(file_path: str | Path, source: str | None = None) -> list[
 
 
 def extract_functions_rust(file_path: str | Path, source: str | None = None) -> list[ExtractedFunction]:
-    """Parse a Rust file and extract function/struct/enum/trait/impl definitions via regex.
+    """Parse a Rust file and extract function/struct/enum/trait/impl definitions.
 
-    Since Python's ast module only handles Python, this uses regex patterns
-    to find Rust definitions. Less precise than a real parser but sufficient
-    for signature extraction and coverage mapping.
+    Prefers tree-sitter when available (accurate scope tracking via impl blocks
+    and generics-aware parsing) and falls back to regex when tree-sitter is
+    unavailable or fails on a particular file. Public signature is unchanged.
     """
     file_path = Path(file_path)
     if source is None:
@@ -891,6 +891,263 @@ def extract_functions_rust(file_path: str | Path, source: str | None = None) -> 
             logger.debug("Failed to read: %s", file_path)
             return []
 
+    # Prefer tree-sitter if available — handles impl-block scope and generics
+    # correctly, where the regex path mishandles them.
+    ts_result = _extract_functions_rust_via_tree_sitter(source)
+    if ts_result is not None:
+        return ts_result
+
+    return _extract_functions_rust_via_regex(source)
+
+
+def _extract_functions_rust_via_tree_sitter(source: str) -> list[ExtractedFunction] | None:
+    """Extract Rust definitions using tree-sitter.
+
+    Returns ``None`` if tree-sitter (or the rust grammar) is unavailable, or
+    if parsing fails — caller should fall back to regex. Returns a list (which
+    may be empty) when extraction succeeds.
+    """
+    try:
+        from tree_sitter import Parser
+        import tree_sitter_rust
+        from tree_sitter import Language
+    except ImportError:
+        return None
+    except Exception:
+        logger.debug("tree-sitter import failed", exc_info=True)
+        return None
+
+    try:
+        ts_lang = Language(tree_sitter_rust.language())
+        parser = Parser(ts_lang)
+        tree = parser.parse(source.encode("utf-8", errors="replace"))
+    except Exception:
+        logger.debug("tree-sitter parse failed for rust source", exc_info=True)
+        return None
+
+    source_bytes = source.encode("utf-8", errors="replace")
+    functions: list[ExtractedFunction] = []
+
+    def _node_text(node) -> str:
+        return source_bytes[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+
+    def _named_child(node, type_name: str):
+        for child in node.children:
+            if child.type == type_name:
+                return child
+        return None
+
+    def _parse_rust_params(params_node) -> tuple[list[ExtractedParameter], bool]:
+        """Return (params, is_method) by walking a parameters node."""
+        params: list[ExtractedParameter] = []
+        is_method = False
+        if params_node is None:
+            return params, is_method
+        for child in params_node.children:
+            if child.type == "self_parameter":
+                is_method = True
+                params.append(ExtractedParameter(
+                    name=_node_text(child).strip(),
+                    type_annotation="",
+                    default="",
+                ))
+            elif child.type == "parameter":
+                # parameter has a pattern (the name) and a type
+                name = ""
+                type_ann = ""
+                pat = _named_child(child, "identifier")
+                if pat is None:
+                    # Could be wrapped in mutable_specifier or pattern
+                    for sub in child.children:
+                        if sub.type == "identifier":
+                            pat = sub
+                            break
+                if pat is not None:
+                    name = _node_text(pat)
+                # Type comes after the colon
+                seen_colon = False
+                for sub in child.children:
+                    if seen_colon:
+                        type_ann = _node_text(sub).strip()
+                        break
+                    if sub.type == ":":
+                        seen_colon = True
+                params.append(ExtractedParameter(
+                    name=name,
+                    type_annotation=type_ann,
+                    default="",
+                ))
+        return params, is_method
+
+    def _walk(node, parent_impl: str = "", parent_trait: str = "") -> None:
+        nt = node.type
+
+        if nt in ("function_item", "function_signature_item"):
+            name_node = _named_child(node, "identifier")
+            if name_node is None:
+                return
+            name = _node_text(name_node)
+            line_number = node.start_point[0] + 1
+
+            # Detect modifiers: pub, async
+            is_pub = False
+            is_async = False
+            for child in node.children:
+                if child.type == "visibility_modifier":
+                    txt = _node_text(child)
+                    if "pub" in txt:
+                        is_pub = True
+                elif child.type == "function_modifiers":
+                    if "async" in _node_text(child):
+                        is_async = True
+                elif child.type == "async":
+                    is_async = True
+
+            params_node = _named_child(node, "parameters")
+            params, is_method = _parse_rust_params(params_node)
+
+            # Return type — child after parameters, after a `->`, before body/`;`
+            return_type = ""
+            saw_arrow = False
+            for child in node.children:
+                if saw_arrow:
+                    if child.type in ("block", ";"):
+                        break
+                    txt = _node_text(child).strip()
+                    if txt:
+                        return_type = txt
+                        break
+                if child.type == "->":
+                    saw_arrow = True
+
+            decorators: list[str] = []
+            if is_pub:
+                decorators.append("pub")
+
+            class_name = parent_impl or parent_trait
+
+            functions.append(ExtractedFunction(
+                name=name,
+                params=params,
+                return_type=return_type,
+                complexity=1,
+                body_source="",
+                line_number=line_number,
+                is_async=is_async,
+                is_method=is_method,
+                class_name=class_name,
+                decorators=decorators,
+                docstring="",
+            ))
+            # Don't descend into function body; nested functions are uncommon and
+            # excluded from regex extractor too.
+            return
+
+        if nt == "struct_item":
+            name_node = _named_child(node, "type_identifier")
+            if name_node is not None:
+                functions.append(ExtractedFunction(
+                    name=_node_text(name_node),
+                    params=[],
+                    return_type="struct",
+                    complexity=1,
+                    body_source="",
+                    line_number=node.start_point[0] + 1,
+                    is_async=False,
+                    is_method=False,
+                    class_name="",
+                    decorators=["struct"],
+                    docstring="",
+                ))
+            return
+
+        if nt == "enum_item":
+            name_node = _named_child(node, "type_identifier")
+            if name_node is not None:
+                functions.append(ExtractedFunction(
+                    name=_node_text(name_node),
+                    params=[],
+                    return_type="enum",
+                    complexity=1,
+                    body_source="",
+                    line_number=node.start_point[0] + 1,
+                    is_async=False,
+                    is_method=False,
+                    class_name="",
+                    decorators=["enum"],
+                    docstring="",
+                ))
+            return
+
+        if nt == "trait_item":
+            name_node = _named_child(node, "type_identifier")
+            trait_name = _node_text(name_node) if name_node else ""
+            if trait_name:
+                functions.append(ExtractedFunction(
+                    name=trait_name,
+                    params=[],
+                    return_type="trait",
+                    complexity=1,
+                    body_source="",
+                    line_number=node.start_point[0] + 1,
+                    is_async=False,
+                    is_method=False,
+                    class_name="",
+                    decorators=["trait"],
+                    docstring="",
+                ))
+            # Descend so trait method declarations get attributed correctly
+            for child in node.children:
+                _walk(child, parent_impl=parent_impl, parent_trait=trait_name)
+            return
+
+        if nt == "impl_item":
+            # Find the type being implemented. tree-sitter-rust marks it as
+            # ``type_identifier`` (or a generic_type wrapping one). We pick the
+            # first type_identifier we encounter at the impl level.
+            impl_name = ""
+            for child in node.children:
+                if child.type == "type_identifier":
+                    impl_name = _node_text(child)
+                    break
+                if child.type == "generic_type":
+                    inner = _named_child(child, "type_identifier")
+                    if inner is not None:
+                        impl_name = _node_text(inner)
+                        break
+            if impl_name:
+                functions.append(ExtractedFunction(
+                    name=impl_name,
+                    params=[],
+                    return_type="impl",
+                    complexity=1,
+                    body_source="",
+                    line_number=node.start_point[0] + 1,
+                    is_async=False,
+                    is_method=False,
+                    class_name="",
+                    decorators=["impl"],
+                    docstring="",
+                ))
+            for child in node.children:
+                _walk(child, parent_impl=impl_name, parent_trait=parent_trait)
+            return
+
+        # Default: descend into children, preserving scope
+        for child in node.children:
+            _walk(child, parent_impl=parent_impl, parent_trait=parent_trait)
+
+    try:
+        _walk(tree.root_node)
+    except Exception:
+        logger.debug("tree-sitter walk failed", exc_info=True)
+        return None
+
+    return functions
+
+
+def _extract_functions_rust_via_regex(source: str) -> list[ExtractedFunction]:
+    """Regex-based fallback for Rust function/type extraction."""
     source_lines = source.splitlines()
     functions: list[ExtractedFunction] = []
 
