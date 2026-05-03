@@ -485,3 +485,151 @@ class TestChecklistPersistence:
 
     def test_path(self, tmp_project: ProjectManager):
         assert tmp_project.checklist_path.name == "checklist.json"
+
+
+# ── Cross-process flock ────────────────────────────────────────────
+
+
+def _worker_save_state(project_dir: str, phase: str, sleep_s: float) -> None:
+    """Subprocess worker: load state, sleep, save with new phase.
+
+    Used by concurrent-save tests to widen the race window. Without
+    locking, two of these racing on the same project will overwrite
+    each other's writes.
+    """
+    import time
+    from pact.project import ProjectManager
+    pm = ProjectManager(project_dir)
+    state = pm.load_state()
+    time.sleep(sleep_s)
+    state.phase = phase
+    pm.save_state(state)
+
+
+def _worker_update_state(project_dir: str, label: str, sleep_s: float) -> None:
+    """Subprocess worker using the atomic update_state transaction.
+
+    Each worker appends its label to pause_reason — a free-text accumulator
+    that lets the test assert no-lost-updates.
+    """
+    import time
+    from pact.project import ProjectManager
+    pm = ProjectManager(project_dir)
+
+    def _accumulate(state):
+        time.sleep(sleep_s)
+        state.pause_reason = (state.pause_reason or "") + label + ","
+
+    pm.update_state(_accumulate)
+
+
+def _worker_audit(project_dir: str, n: int, label: str) -> None:
+    """Subprocess worker: append n audit entries with a label."""
+    from pact.project import ProjectManager
+    pm = ProjectManager(project_dir)
+    for i in range(n):
+        pm.append_audit("test_event", f"{label}-{i}", worker=label)
+
+
+class TestCrossProcessLocking:
+    """Verify state.json + audit.jsonl survive concurrent processes."""
+
+    def test_save_state_atomic_no_torn_writes(self, tmp_project, tmp_path):
+        """Even if a reader interleaves with a writer, file is always valid JSON."""
+        # Seed initial state.
+        state = tmp_project.create_run()
+        tmp_project.save_state(state)
+
+        import multiprocessing as mp
+        ctx = mp.get_context("spawn")
+        # Two workers race on save_state with overlapping windows.
+        procs = [
+            ctx.Process(target=_worker_save_state,
+                        args=(str(tmp_project.project_dir), "decompose", 0.05)),
+            ctx.Process(target=_worker_save_state,
+                        args=(str(tmp_project.project_dir), "implement", 0.05)),
+        ]
+        for p in procs:
+            p.start()
+        for p in procs:
+            p.join(timeout=10)
+            assert p.exitcode == 0
+
+        # File must be valid JSON (not torn). Phase is one of the two —
+        # this test does NOT assert no-lost-update for save_state, only
+        # that the file parses cleanly. update_state is the API for
+        # transactional updates; save_state alone is last-write-wins.
+        loaded = tmp_project.load_state()
+        assert loaded.phase in ("decompose", "implement")
+
+    def test_update_state_no_lost_updates(self, tmp_project):
+        """Two concurrent update_state calls both see their effects."""
+        state = tmp_project.create_run()
+        state.pause_reason = ""
+        tmp_project.save_state(state)
+
+        import multiprocessing as mp
+        ctx = mp.get_context("spawn")
+        procs = [
+            ctx.Process(target=_worker_update_state,
+                        args=(str(tmp_project.project_dir), "A", 0.1)),
+            ctx.Process(target=_worker_update_state,
+                        args=(str(tmp_project.project_dir), "B", 0.1)),
+        ]
+        for p in procs:
+            p.start()
+        for p in procs:
+            p.join(timeout=10)
+            assert p.exitcode == 0
+
+        # Both A and B must appear in pause_reason — this is the
+        # lost-update test. Without flock, one worker's read+write
+        # would clobber the other's contribution.
+        loaded = tmp_project.load_state()
+        assert "A" in loaded.pause_reason
+        assert "B" in loaded.pause_reason
+
+    def test_append_audit_concurrent_no_corruption(self, tmp_project):
+        """Concurrent appends produce all entries, all valid JSON."""
+        import multiprocessing as mp
+        ctx = mp.get_context("spawn")
+        procs = [
+            ctx.Process(target=_worker_audit,
+                        args=(str(tmp_project.project_dir), 20, "alpha")),
+            ctx.Process(target=_worker_audit,
+                        args=(str(tmp_project.project_dir), 20, "beta")),
+            ctx.Process(target=_worker_audit,
+                        args=(str(tmp_project.project_dir), 20, "gamma")),
+        ]
+        for p in procs:
+            p.start()
+        for p in procs:
+            p.join(timeout=10)
+            assert p.exitcode == 0
+
+        entries = tmp_project.load_audit()
+        # 60 total entries, no losses.
+        assert len(entries) == 60
+        # 20 per worker (no losses, no duplicates).
+        for label in ("alpha", "beta", "gamma"):
+            count = sum(1 for e in entries if e.get("worker") == label)
+            assert count == 20, f"worker {label} contributed {count} entries"
+
+    def test_update_state_returns_post_state(self, tmp_project):
+        """update_state returns the state after applying the updater."""
+        state = tmp_project.create_run()
+        tmp_project.save_state(state)
+        result = tmp_project.update_state(lambda s: setattr(s, "phase", "polish"))
+        assert result.phase == "polish"
+        assert tmp_project.load_state().phase == "polish"
+
+    def test_save_state_creates_pact_dir_if_missing(self, tmp_path):
+        """save_state under flock still bootstraps .pact/ on demand."""
+        pm = ProjectManager(tmp_path / "fresh-project")
+        pm.init()
+        # Wipe .pact (simulate first-time CLI run that writes state immediately).
+        import shutil
+        shutil.rmtree(pm._pact_dir)
+        state = pm.create_run()
+        pm.save_state(state)  # must not raise
+        assert pm.state_path.exists()
