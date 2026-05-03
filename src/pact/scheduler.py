@@ -29,6 +29,7 @@ from pact.budget import BudgetExceeded, BudgetTracker
 from pact.config import (
     BuildMode,
     GlobalConfig,
+    ParallelConfig,
     ProjectConfig,
     resolve_backend,
     resolve_build_mode,
@@ -280,6 +281,7 @@ class Scheduler:
         project_config: ProjectConfig,
         budget: BudgetTracker,
         event_bus: EventBus | None = None,
+        workers_override: int | str | None = None,
     ) -> None:
         self.project = project
         self.global_config = global_config
@@ -293,6 +295,45 @@ class Scheduler:
             or global_config.check_interval
         )
         self._standards_brief: str = ""
+        # CLI-level worker override; None defers entirely to config.
+        # Accepts the same vocabulary as `pact adopt --workers`:
+        # "off" or 1 → sequential; integer N → N workers; "auto" →
+        # heuristic resolved against implementable count + budget.
+        # Validated eagerly so a bad value fails before the implement phase.
+        self._workers_override: int | str | None = workers_override
+        if workers_override is not None:
+            from pact.adopt import _resolve_workers
+            _resolve_workers(  # raises ValueError on garbage input
+                workers_override,
+                eligible_files=1,
+                budget_remaining=1.0,
+                max_concurrent_agents=4,
+            )
+
+    def _resolved_pcfg(self, implementable: int = 0) -> ParallelConfig:
+        """Resolve ParallelConfig with the CLI workers override applied.
+
+        When ``self._workers_override`` is None, returns the config-resolved
+        ParallelConfig unchanged. Otherwise the override mutates ``parallel``
+        and ``max_concurrent`` on the result; ``competitive`` and other
+        fields are unaffected.
+
+        ``implementable`` is the count of leaves the implement phase will
+        run in parallel; it's only consulted when the override is "auto".
+        """
+        from pact.adopt import _resolve_workers
+        pcfg = resolve_parallel_config(self.project_config, self.global_config)
+        if self._workers_override is None:
+            return pcfg
+        resolved = _resolve_workers(
+            self._workers_override,
+            eligible_files=max(1, implementable),
+            budget_remaining=self.budget.budget_remaining,
+            max_concurrent_agents=pcfg.max_concurrent,
+        )
+        pcfg.parallel = resolved > 1
+        pcfg.max_concurrent = resolved
+        return pcfg
 
     @property
     def build_mode(self) -> BuildMode:
@@ -1014,7 +1055,12 @@ class Scheduler:
             or self.global_config.max_implementation_attempts
         )
 
-        pcfg = resolve_parallel_config(self.project_config, self.global_config)
+        # Count implementable leaves so the "auto" worker policy has a real
+        # input. target_components, when set, narrows the leaf set.
+        leaf_ids = [n.component_id for n in tree.leaves()]
+        if target_components:
+            leaf_ids = [cid for cid in leaf_ids if cid in target_components]
+        pcfg = self._resolved_pcfg(implementable=len(leaf_ids))
 
         # Detect if code_author backend supports iterative implementation
         code_author_backend = resolve_backend(
@@ -1186,7 +1232,7 @@ class Scheduler:
             advance_phase(state)  # -> polish
             return state
 
-        pcfg = resolve_parallel_config(self.project_config, self.global_config)
+        pcfg = self._resolved_pcfg(implementable=len(non_leaves))
 
         code_author_backend = resolve_backend(
             "code_author", self.project_config, self.global_config,

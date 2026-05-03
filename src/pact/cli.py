@@ -76,6 +76,15 @@ def main() -> None:
     p_run.add_argument("--constrain-dir", default="", help="Constrain output directory")
     p_run.add_argument("--ledger-dir", default="", help="Ledger assertion exports directory")
     p_run.add_argument("--skip-arbiter", action="store_true", help="Skip Arbiter gate phase")
+    p_run.add_argument(
+        "--workers", default=None,
+        help=(
+            "Override parallel_components / max_concurrent_agents for this "
+            "invocation. 'auto' sizes from leaf count + budget; 'off' or '1' "
+            "runs sequentially; integer N runs N workers. Same vocabulary as "
+            "`pact adopt --workers`."
+        ),
+    )
 
     # daemon (FIFO-based, event-driven)
     p_daemon = subparsers.add_parser("daemon", help="Run event-driven daemon (recommended)")
@@ -88,6 +97,14 @@ def main() -> None:
     p_daemon.add_argument(
         "--max-idle", type=int, default=600,
         help="Max seconds to wait for human input before exiting (default: 600)",
+    )
+    p_daemon.add_argument(
+        "--workers", default=None,
+        help=(
+            "Override parallel_components / max_concurrent_agents for this "
+            "invocation. Same vocabulary as `pact adopt --workers` "
+            "('auto' | 'off' | integer N)."
+        ),
     )
 
     # stop
@@ -857,7 +874,14 @@ async def cmd_run(args: argparse.Namespace) -> None:
         per_project_cap=project_config.budget or global_config.default_budget,
     )
 
-    scheduler = Scheduler(project, global_config, project_config, budget)
+    try:
+        scheduler = Scheduler(
+            project, global_config, project_config, budget,
+            workers_override=getattr(args, "workers", None),
+        )
+    except ValueError as exc:
+        print(f"Error: {exc}", file=__import__("sys").stderr)
+        __import__("sys").exit(2)
 
     if args.once:
         state = await scheduler.run_once()
@@ -890,7 +914,14 @@ async def cmd_daemon(args: argparse.Namespace) -> None:
     )
 
 
-    scheduler = Scheduler(project, global_config, project_config, budget)
+    try:
+        scheduler = Scheduler(
+            project, global_config, project_config, budget,
+            workers_override=getattr(args, "workers", None),
+        )
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(2)
 
     # Resolve polling config: project > global
     poll_integrations = (

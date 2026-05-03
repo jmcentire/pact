@@ -47,6 +47,65 @@ class TestSchedulerInit:
         assert model == "claude-opus-4-6"
 
 
+class TestSchedulerWorkersOverride:
+    """Verify the --workers CLI override beats config and routes through pcfg."""
+
+    def _make(self, tmp_path: Path, workers_override=None, **pc_kw):
+        pm = ProjectManager(tmp_path / "wo-project")
+        pm.init()
+        gc = GlobalConfig(
+            check_interval=1,
+            parallel_components=False,  # config default is sequential
+            max_concurrent_agents=4,
+        )
+        pc = ProjectConfig(budget=10.00, **pc_kw)
+        budget = BudgetTracker(per_project_cap=10.00)
+        return Scheduler(pm, gc, pc, budget, workers_override=workers_override)
+
+    def test_no_override_defers_to_config(self, tmp_path):
+        s = self._make(tmp_path)
+        pcfg = s._resolved_pcfg(implementable=10)
+        assert pcfg.parallel is False  # config default
+        assert pcfg.max_concurrent == 4
+
+    def test_off_forces_sequential(self, tmp_path):
+        s = self._make(
+            tmp_path, workers_override="off",
+            parallel_components=True,  # config says parallel...
+            max_concurrent_agents=8,
+        )
+        pcfg = s._resolved_pcfg(implementable=10)
+        assert pcfg.parallel is False  # ...but override wins
+        assert pcfg.max_concurrent == 1
+
+    def test_integer_overrides_max_concurrent(self, tmp_path):
+        s = self._make(tmp_path, workers_override=3)
+        pcfg = s._resolved_pcfg(implementable=10)
+        assert pcfg.parallel is True
+        assert pcfg.max_concurrent == 3
+
+    def test_string_integer_accepted(self, tmp_path):
+        s = self._make(tmp_path, workers_override="2")
+        pcfg = s._resolved_pcfg(implementable=10)
+        assert pcfg.max_concurrent == 2
+
+    def test_auto_uses_implementable_count_as_input(self, tmp_path):
+        # 2 implementable leaves with $10 budget and max_concurrent=4 →
+        # auto resolves to min(2, 4, ceil(10/0.15)) = 2.
+        s = self._make(tmp_path, workers_override="auto")
+        pcfg = s._resolved_pcfg(implementable=2)
+        assert pcfg.max_concurrent == 2
+
+    def test_garbage_rejected_at_construction(self, tmp_path):
+        # Bad input should fail fast at Scheduler init, not deep in implement.
+        with pytest.raises(ValueError, match="auto.*off.*positive integer"):
+            self._make(tmp_path, workers_override="banana")
+
+    def test_zero_rejected_at_construction(self, tmp_path):
+        with pytest.raises(ValueError, match=">= 1"):
+            self._make(tmp_path, workers_override=0)
+
+
 class TestSchedulerRunState:
     def test_completed_run_returns_immediately(self, scheduler_setup):
         pm, scheduler = scheduler_setup
