@@ -437,6 +437,26 @@ class TestResolveWorkers:
 # ── Parallel Adopt Loop ───────────────────────────────────────────
 
 
+def _stub_agent_factory(budget_attached: bool = False):
+    """Return a constructor stub for AgentBase that doesn't import anthropic.
+
+    CI installs only [dev] deps — the anthropic SDK is in the optional [cli]
+    extra. Adopt tests that exercise the full LLM loop (with mocked LLM
+    functions) still construct AgentBase, so we must stub it out.
+
+    If budget_attached is True, the returned mock exposes an _budget attribute
+    pointing to the BudgetTracker instance passed to its constructor — needed
+    by tests that simulate worker spend via agent._budget.record_tokens(...).
+    """
+    def _make(budget, model="", backend=""):
+        m = MagicMock()
+        if budget_attached:
+            m._budget = budget
+        m.close = AsyncMock()
+        return m
+    return _make
+
+
 class TestParallelAdopt:
     """Verify parallel mode produces correct artifacts and respects budget."""
 
@@ -487,7 +507,8 @@ class TestParallelAdopt:
         """workers=1 must produce the same artifacts as 'off' on the same input."""
         fake_contract, fake_tests, c_calls, t_calls = self._patch_llm()
         with patch("pact.adopt.reverse_engineer_contract", fake_contract), \
-             patch("pact.agents.test_author.author_tests", fake_tests):
+             patch("pact.agents.test_author.author_tests", fake_tests), \
+             patch("pact.adopt.AgentBase", _stub_agent_factory()):
             result = await adopt_codebase(
                 fake_files, budget=10.0, workers=1, max_concurrent_agents=4,
             )
@@ -511,7 +532,8 @@ class TestParallelAdopt:
         _make_fixture(serial_dir)
         fake_contract, fake_tests, _, _ = self._patch_llm()
         with patch("pact.adopt.reverse_engineer_contract", fake_contract), \
-             patch("pact.agents.test_author.author_tests", fake_tests):
+             patch("pact.agents.test_author.author_tests", fake_tests), \
+             patch("pact.adopt.AgentBase", _stub_agent_factory()):
             r_serial = await adopt_codebase(
                 serial_dir, budget=10.0, workers=1, max_concurrent_agents=4,
             )
@@ -522,7 +544,8 @@ class TestParallelAdopt:
         _make_fixture(parallel_dir)
         fake_contract, fake_tests, _, _ = self._patch_llm()
         with patch("pact.adopt.reverse_engineer_contract", fake_contract), \
-             patch("pact.agents.test_author.author_tests", fake_tests):
+             patch("pact.agents.test_author.author_tests", fake_tests), \
+             patch("pact.adopt.AgentBase", _stub_agent_factory()):
             r_parallel = await adopt_codebase(
                 parallel_dir, budget=10.0, workers=4, max_concurrent_agents=4,
             )
@@ -573,7 +596,8 @@ class TestParallelAdopt:
             )
 
         with patch("pact.adopt.reverse_engineer_contract", tracking_contract), \
-             patch("pact.agents.test_author.author_tests", fake_tests):
+             patch("pact.agents.test_author.author_tests", fake_tests), \
+             patch("pact.adopt.AgentBase", _stub_agent_factory()):
             await adopt_codebase(
                 fake_files, budget=10.0, workers=4, max_concurrent_agents=4,
             )
@@ -602,7 +626,8 @@ class TestParallelAdopt:
 
         fake_contract, fake_tests, c_calls, t_calls = self._patch_llm()
         with patch("pact.adopt.reverse_engineer_contract", fake_contract), \
-             patch("pact.agents.test_author.author_tests", fake_tests):
+             patch("pact.agents.test_author.author_tests", fake_tests), \
+             patch("pact.adopt.AgentBase", _stub_agent_factory()):
             result = await adopt_codebase(
                 fake_files, budget=10.0, workers=4, max_concurrent_agents=4,
             )
@@ -640,7 +665,8 @@ class TestParallelAdopt:
             )
 
         with patch("pact.adopt.reverse_engineer_contract", expensive_contract), \
-             patch("pact.agents.test_author.author_tests", fake_tests):
+             patch("pact.agents.test_author.author_tests", fake_tests), \
+             patch("pact.adopt.AgentBase", _stub_agent_factory(budget_attached=True)):
             result = await adopt_codebase(
                 fake_files, budget=0.50, workers=4, max_concurrent_agents=4,
                 model="claude-sonnet-4-5-20250929",
@@ -682,7 +708,8 @@ class TestParallelAdopt:
             )
 
         with patch("pact.adopt.reverse_engineer_contract", flaky_contract), \
-             patch("pact.agents.test_author.author_tests", fake_tests):
+             patch("pact.agents.test_author.author_tests", fake_tests), \
+             patch("pact.adopt.AgentBase", _stub_agent_factory()):
             result = await adopt_codebase(
                 fake_files, budget=10.0, workers=4, max_concurrent_agents=4,
             )
@@ -713,7 +740,8 @@ class TestParallelAdopt:
             )
 
         with patch("pact.adopt.reverse_engineer_contract", buggy_contract), \
-             patch("pact.agents.test_author.author_tests", fake_tests):
+             patch("pact.agents.test_author.author_tests", fake_tests), \
+             patch("pact.adopt.AgentBase", _stub_agent_factory()):
             with pytest.raises(KeyError, match="programming bug"):
                 await adopt_codebase(
                     fake_files, budget=10.0, workers=4, max_concurrent_agents=4,
