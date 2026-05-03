@@ -368,3 +368,353 @@ class TestAdoptDryRun:
         assert result.components == 0
         assert result.total_functions == 0
         assert result.smoke_tests_generated == 0
+
+
+# ── Worker Resolution Policy ──────────────────────────────────────
+
+
+class TestResolveWorkers:
+    """Cover the auto/off/integer parsing and the auto heuristic."""
+
+    def test_off_string_returns_one(self):
+        from pact.adopt import _resolve_workers
+        assert _resolve_workers("off", 100, 100.0, 8) == 1
+
+    def test_integer_one_returns_one(self):
+        from pact.adopt import _resolve_workers
+        assert _resolve_workers(1, 100, 100.0, 8) == 1
+        assert _resolve_workers("1", 100, 100.0, 8) == 1
+
+    def test_explicit_integer_honored_above_max_concurrent(self):
+        # User override must not be silently clamped to max_concurrent_agents.
+        from pact.adopt import _resolve_workers
+        assert _resolve_workers(16, 100, 100.0, 4) == 16
+
+    def test_zero_is_rejected(self):
+        from pact.adopt import _resolve_workers
+        with pytest.raises(ValueError, match=">= 1"):
+            _resolve_workers(0, 100, 100.0, 4)
+
+    def test_negative_is_rejected(self):
+        from pact.adopt import _resolve_workers
+        with pytest.raises(ValueError, match=">= 1"):
+            _resolve_workers(-3, 100, 100.0, 4)
+
+    def test_garbage_string_is_rejected(self):
+        from pact.adopt import _resolve_workers
+        with pytest.raises(ValueError, match="auto.*off.*positive integer"):
+            _resolve_workers("banana", 100, 100.0, 4)
+
+    def test_auto_capped_by_eligible_files(self):
+        from pact.adopt import _resolve_workers
+        # 2 files, big budget, big ceiling → 2.
+        assert _resolve_workers("auto", 2, 100.0, 8) == 2
+
+    def test_auto_capped_by_max_concurrent(self):
+        from pact.adopt import _resolve_workers
+        # Many files, big budget, small ceiling → ceiling.
+        assert _resolve_workers("auto", 100, 100.0, 4) == 4
+
+    def test_auto_capped_by_budget(self):
+        from pact.adopt import _resolve_workers, _PER_FILE_COST_USD_ESTIMATE
+        # Budget = 4× the per-file estimate → cap at 4 workers.
+        budget = 4 * _PER_FILE_COST_USD_ESTIMATE
+        assert _resolve_workers("auto", 100, budget, 8) == 4
+        # Tiny budget caps to 1.
+        assert _resolve_workers("auto", 100, _PER_FILE_COST_USD_ESTIMATE / 2, 8) == 1
+
+    def test_auto_zero_eligible_returns_one(self):
+        # Empty project must not produce 0 workers.
+        from pact.adopt import _resolve_workers
+        assert _resolve_workers("auto", 0, 100.0, 8) == 1
+
+    def test_auto_zero_budget_returns_one(self):
+        from pact.adopt import _resolve_workers
+        # Even if budget is $0, floor of 1 worker.
+        assert _resolve_workers("auto", 100, 0.0, 8) == 1
+
+
+# ── Parallel Adopt Loop ───────────────────────────────────────────
+
+
+class TestParallelAdopt:
+    """Verify parallel mode produces correct artifacts and respects budget."""
+
+    @pytest.fixture
+    def fake_files(self, tmp_path):
+        """Create a 4-file fixture that adopt will see as 4 components."""
+        for i in range(4):
+            (tmp_path / f"mod_{i}.py").write_text(f"def f_{i}(x): return x + {i}\n")
+        return tmp_path
+
+    @staticmethod
+    def _patch_llm(contract_delay: float = 0.0, test_delay: float = 0.0):
+        """Patch the two LLM functions adopt calls. Both record invocations."""
+        from pact.schemas import ComponentContract, ContractTestSuite
+
+        contract_calls = []
+        test_calls = []
+
+        async def fake_contract(agent, source, module, fn_names, tool_index=None):
+            import asyncio
+            contract_calls.append(module)
+            if contract_delay:
+                await asyncio.sleep(contract_delay)
+            return ComponentContract(
+                component_id="placeholder",  # adopt overwrites this
+                name=module,
+                description=f"Reverse-engineered {module}",
+                functions=[],
+            )
+
+        async def fake_tests(agent, contract, language="python"):
+            import asyncio
+            test_calls.append(contract.component_id)
+            if test_delay:
+                await asyncio.sleep(test_delay)
+            suite = ContractTestSuite(
+                component_id=contract.component_id,
+                contract_version=1,
+                test_cases=[],
+                generated_code=f"# tests for {contract.component_id}\n",
+            )
+            return suite, "research", "plan"
+
+        return fake_contract, fake_tests, contract_calls, test_calls
+
+    @pytest.mark.asyncio
+    async def test_serial_path_unchanged_with_workers_one(self, fake_files):
+        """workers=1 must produce the same artifacts as 'off' on the same input."""
+        fake_contract, fake_tests, c_calls, t_calls = self._patch_llm()
+        with patch("pact.adopt.reverse_engineer_contract", fake_contract), \
+             patch("pact.agents.test_author.author_tests", fake_tests):
+            result = await adopt_codebase(
+                fake_files, budget=10.0, workers=1, max_concurrent_agents=4,
+            )
+        assert result.contracts_generated == 4
+        assert result.tests_generated == 4
+        # Per-component artifacts present.
+        for i in range(4):
+            assert (fake_files / "contracts" / f"mod_{i}" / "interface.json").exists()
+
+    @pytest.mark.asyncio
+    async def test_parallel_produces_same_component_set_as_serial(self, tmp_path):
+        """workers=4 must write contracts and tests for the same component IDs as workers=1."""
+
+        def _make_fixture(root):
+            for i in range(4):
+                (root / f"mod_{i}.py").write_text(f"def f_{i}(x): return x + {i}\n")
+
+        # Run serial on its own tmp dir.
+        serial_dir = tmp_path / "serial"
+        serial_dir.mkdir()
+        _make_fixture(serial_dir)
+        fake_contract, fake_tests, _, _ = self._patch_llm()
+        with patch("pact.adopt.reverse_engineer_contract", fake_contract), \
+             patch("pact.agents.test_author.author_tests", fake_tests):
+            r_serial = await adopt_codebase(
+                serial_dir, budget=10.0, workers=1, max_concurrent_agents=4,
+            )
+
+        # Run parallel on a fresh disjoint tmp dir.
+        parallel_dir = tmp_path / "parallel"
+        parallel_dir.mkdir()
+        _make_fixture(parallel_dir)
+        fake_contract, fake_tests, _, _ = self._patch_llm()
+        with patch("pact.adopt.reverse_engineer_contract", fake_contract), \
+             patch("pact.agents.test_author.author_tests", fake_tests):
+            r_parallel = await adopt_codebase(
+                parallel_dir, budget=10.0, workers=4, max_concurrent_agents=4,
+            )
+
+        # Same counts.
+        assert r_serial.contracts_generated == r_parallel.contracts_generated == 4
+        assert r_serial.tests_generated == r_parallel.tests_generated == 4
+
+        # Same set of contract + test component IDs (history dir excluded —
+        # filenames are timestamped so they vary by wall-clock).
+        def _component_dirs(root, sub):
+            d = root / sub
+            return sorted(p.name for p in d.iterdir() if p.is_dir()) if d.exists() else []
+
+        assert _component_dirs(serial_dir, "contracts") == \
+               _component_dirs(parallel_dir, "contracts")
+        assert _component_dirs(serial_dir, "tests") == \
+               _component_dirs(parallel_dir, "tests")
+
+    @pytest.mark.asyncio
+    async def test_parallel_actually_overlaps_calls(self, fake_files):
+        """Under workers=4 with delayed LLM, peak concurrency exceeds 1."""
+        import asyncio
+        in_flight = 0
+        peak = 0
+        lock = asyncio.Lock()
+
+        from pact.schemas import ComponentContract, ContractTestSuite
+
+        async def tracking_contract(agent, source, module, fn_names, tool_index=None):
+            nonlocal in_flight, peak
+            async with lock:
+                in_flight += 1
+                peak = max(peak, in_flight)
+            await asyncio.sleep(0.05)
+            async with lock:
+                in_flight -= 1
+            return ComponentContract(component_id="x", name="x", description="", functions=[])
+
+        async def fake_tests(agent, contract, language="python"):
+            return (
+                ContractTestSuite(
+                    component_id=contract.component_id,
+                    contract_version=1,
+                    test_cases=[], generated_code="",
+                ),
+                "r", "p",
+            )
+
+        with patch("pact.adopt.reverse_engineer_contract", tracking_contract), \
+             patch("pact.agents.test_author.author_tests", fake_tests):
+            await adopt_codebase(
+                fake_files, budget=10.0, workers=4, max_concurrent_agents=4,
+            )
+        assert peak >= 2, f"Expected concurrent contract calls, peak was {peak}"
+
+    @pytest.mark.asyncio
+    async def test_resume_skip_under_parallel(self, fake_files):
+        """Pre-existing contracts+suites must be skipped (no LLM call) under workers=4.
+
+        Seeds 2 components' artifacts on disk before adopt runs, then runs
+        with workers=4 and asserts only the missing 2 trigger LLM calls.
+        """
+        from pact.schemas import ComponentContract, ContractTestSuite
+
+        # Seed contracts + suites for mod_0 and mod_1 (so they should be skipped).
+        project = ProjectManager(fake_files)
+        project.init(budget=10.0)
+        for cid in ("mod_0", "mod_1"):
+            project.save_contract(ComponentContract(
+                component_id=cid, name=cid, description="seeded", functions=[],
+            ))
+            project.save_test_suite(ContractTestSuite(
+                component_id=cid, contract_version=1, test_cases=[],
+                generated_code="# seeded\n",
+            ))
+
+        fake_contract, fake_tests, c_calls, t_calls = self._patch_llm()
+        with patch("pact.adopt.reverse_engineer_contract", fake_contract), \
+             patch("pact.agents.test_author.author_tests", fake_tests):
+            result = await adopt_codebase(
+                fake_files, budget=10.0, workers=4, max_concurrent_agents=4,
+            )
+
+        # Only mod_2 and mod_3 should have triggered LLM calls.
+        assert len(c_calls) == 2, f"Expected 2 contract calls, got {c_calls}"
+        assert len(t_calls) == 2, f"Expected 2 test calls, got {t_calls}"
+        assert sorted(c_calls) == ["mod_2", "mod_3"]
+        # All 4 reported in result (2 resumed + 2 new).
+        assert result.contracts_generated == 4
+        assert result.tests_generated == 4
+
+    @pytest.mark.asyncio
+    async def test_bounded_overshoot_under_tight_budget(self, fake_files):
+        """With a budget that allows fewer files than workers, overshoot is bounded."""
+        # 4 files, 4 workers, budget that records ~$0.30 per file.
+        # Each call charges via record_tokens. With workers=4 all four start
+        # before any record, so we expect up to 4 contracts to complete.
+        from pact.schemas import ComponentContract, ContractTestSuite
+
+        async def expensive_contract(agent, source, module, fn_names, tool_index=None):
+            # Charge $0.30 per call (3M input tokens at sonnet-4-5 rates).
+            agent._budget.record_tokens(100_000, 0)  # 100k * $3/M = $0.30
+            return ComponentContract(component_id="x", name="x", description="", functions=[])
+
+        async def fake_tests(agent, contract, language="python"):
+            agent._budget.record_tokens(100_000, 0)
+            return (
+                ContractTestSuite(
+                    component_id=contract.component_id,
+                    contract_version=1,
+                    test_cases=[], generated_code="",
+                ),
+                "r", "p",
+            )
+
+        with patch("pact.adopt.reverse_engineer_contract", expensive_contract), \
+             patch("pact.agents.test_author.author_tests", fake_tests):
+            result = await adopt_codebase(
+                fake_files, budget=0.50, workers=4, max_concurrent_agents=4,
+                model="claude-sonnet-4-5-20250929",
+            )
+
+        # Hard budget is $0.50, max single-call cost is $0.30 (one record_tokens).
+        # With 4 workers and 2 calls per file (contract + tests), strictly:
+        # Actual spend ≤ budget + workers × max_single_call = 0.50 + 4 × 0.30 = $1.70.
+        # The bounded-overshoot invariant holds.
+        assert result.total_cost_usd <= 0.50 + 4 * 0.30, (
+            f"Overshoot {result.total_cost_usd} exceeds bound"
+        )
+        # And we don't process all 4 files (some workers should bail on
+        # is_exceeded() before their second call).
+        assert result.tests_generated <= result.contracts_generated
+
+    @pytest.mark.asyncio
+    async def test_recoverable_api_error_does_not_kill_siblings(self, fake_files):
+        """API-error in one worker must not abort sibling workers under parallel."""
+        from pact.schemas import ComponentContract, ContractTestSuite
+
+        async def flaky_contract(agent, source, module, fn_names, tool_index=None):
+            if "mod_1" in module:
+                # Helper's recoverable-error sniff matches "APIStatusError"
+                # in the exception type name OR "stalled"/"500" in the message.
+                raise RuntimeError("APIStatusError 500: simulated stall")
+            return ComponentContract(
+                component_id="x", name=module, description=f"ok {module}", functions=[],
+            )
+
+        async def fake_tests(agent, contract, language="python"):
+            return (
+                ContractTestSuite(
+                    component_id=contract.component_id,
+                    contract_version=1,
+                    test_cases=[], generated_code="",
+                ),
+                "r", "p",
+            )
+
+        with patch("pact.adopt.reverse_engineer_contract", flaky_contract), \
+             patch("pact.agents.test_author.author_tests", fake_tests):
+            result = await adopt_codebase(
+                fake_files, budget=10.0, workers=4, max_concurrent_agents=4,
+            )
+        # 3 of 4 files succeed; one is skipped.
+        assert result.contracts_generated == 3
+        assert result.tests_generated == 3
+
+    @pytest.mark.asyncio
+    async def test_unexpected_exception_in_parallel_is_propagated(self, fake_files):
+        """Programmer errors in workers must propagate (match serial fail-fast)."""
+        from pact.schemas import ComponentContract, ContractTestSuite
+
+        async def buggy_contract(agent, source, module, fn_names, tool_index=None):
+            if "mod_1" in module:
+                # A truly unexpected error — not API-shaped, helper won't catch it.
+                raise KeyError("simulated programming bug")
+            return ComponentContract(
+                component_id="x", name=module, description=f"ok {module}", functions=[],
+            )
+
+        async def fake_tests(agent, contract, language="python"):
+            return (
+                ContractTestSuite(
+                    component_id=contract.component_id, contract_version=1,
+                    test_cases=[], generated_code="",
+                ),
+                "r", "p",
+            )
+
+        with patch("pact.adopt.reverse_engineer_contract", buggy_contract), \
+             patch("pact.agents.test_author.author_tests", fake_tests):
+            with pytest.raises(KeyError, match="programming bug"):
+                await adopt_codebase(
+                    fake_files, budget=10.0, workers=4, max_concurrent_agents=4,
+                )

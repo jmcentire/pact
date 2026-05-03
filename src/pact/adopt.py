@@ -10,7 +10,9 @@ Tests verify it. The daemon then monitors for regressions.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import math
 import re
 import shutil
 from datetime import datetime
@@ -477,6 +479,186 @@ def link_existing_implementations(
 
 # ── Adoption Pipeline ─────────────────────────────────────────────
 
+# Per-file LLM-spend estimate used by the auto-worker heuristic ONLY.
+# Covers one reverse_engineer_contract + one author_tests round-trip on
+# claude-sonnet-4-5 at a typical 200-line module. This number is used to
+# pick the worker count under tight budgets — it does NOT enforce spend.
+# Actual budget enforcement lives in BudgetTracker.is_exceeded(), which
+# each worker re-checks before its own LLM calls. Worst-case overshoot
+# in parallel mode is bounded by workers × per-call-cost.
+_PER_FILE_COST_USD_ESTIMATE = 0.15
+
+
+def _resolve_workers(
+    workers_arg: int | str,
+    eligible_files: int,
+    budget_remaining: float,
+    max_concurrent_agents: int,
+) -> int:
+    """Resolve --workers argument to a concrete worker count >= 1.
+
+    Args:
+        workers_arg: "auto", "off", or a positive integer (or its string form).
+        eligible_files: Number of source files that will run through the LLM loop.
+        budget_remaining: Remaining project budget in USD (before the LLM loop).
+        max_concurrent_agents: Ceiling from config (used by 'auto' policy only).
+
+    Returns:
+        Worker count. Always >= 1. workers=1 means sequential execution.
+
+    Raises:
+        ValueError: On unparseable input, zero, or negative values.
+    """
+    if isinstance(workers_arg, str):
+        token = workers_arg.strip().lower()
+        if token == "off":
+            return 1
+        if token == "auto":
+            if eligible_files <= 0:
+                return 1
+            cap_by_budget = max(
+                1, math.ceil(budget_remaining / _PER_FILE_COST_USD_ESTIMATE)
+            )
+            return max(
+                1,
+                min(eligible_files, max_concurrent_agents, cap_by_budget),
+            )
+        try:
+            n = int(token)
+        except ValueError as exc:
+            raise ValueError(
+                f"--workers must be 'auto', 'off', or a positive integer "
+                f"(got {workers_arg!r})"
+            ) from exc
+    else:
+        n = int(workers_arg)
+
+    if n < 1:
+        raise ValueError(
+            f"--workers must be >= 1 (got {n}); use 'off' or '1' for sequential"
+        )
+    return n
+
+
+async def _process_one_file(
+    sf: object,
+    *,
+    project: ProjectManager,
+    project_path: Path,
+    tree: DecompositionTree,
+    agent: AgentBase,
+    language: str,
+    budget_tracker: BudgetTracker,
+    analysis: CodebaseAnalysis,
+) -> str:
+    """Process one source file end-to-end (contract + tests).
+
+    Returns a status string consumed by the adopt loop:
+      - "ok": contract + suite both written (or contract reused, suite written)
+      - "ok_contract_budget": contract done; budget ran out before tests
+      - "ok_contract_api_error": contract done; tests aborted by API error
+      - "resumed": both already existed on disk, nothing called
+      - "skipped_empty": file has no functions
+      - "skipped_no_node": component_id not in decomposition tree
+      - "skipped_no_src": source file vanished from disk
+      - "skipped_api": API error during contract phase — siblings should continue
+      - "stop_budget": budget exceeded; serial loop should break
+    """
+    if not sf.functions:  # type: ignore[attr-defined]
+        return "skipped_empty"
+
+    # Per-worker budget gate (bounds overshoot to ~workers × per-call-cost).
+    if budget_tracker.is_exceeded():
+        return "stop_budget"
+
+    component_id = _strip_source_ext(
+        sf.path.replace("/", "_").replace("\\", "_")  # type: ignore[attr-defined]
+    )
+
+    if component_id not in tree.nodes:
+        return "skipped_no_node"
+
+    # Resume: skip modules that already have both contract + tests
+    existing_contract = project.load_contract(component_id)
+    existing_suite = project.load_test_suite(component_id)
+    if existing_contract and existing_suite:
+        return "resumed"
+
+    source_path = project_path / sf.path  # type: ignore[attr-defined]
+    if not source_path.exists():
+        return "skipped_no_src"
+    source_code = source_path.read_text(encoding="utf-8", errors="replace")
+
+    module_name = _strip_source_ext(
+        sf.path.replace("/", ".").replace("\\", ".")  # type: ignore[attr-defined]
+    )
+    function_names = [f.name for f in sf.functions]  # type: ignore[attr-defined]
+
+    # Phase 4: Reverse-engineer contract (reuse if already saved)
+    contract = existing_contract
+    if not contract:
+        logger.info(
+            "Contracting %s (%d functions)...", module_name, len(function_names)
+        )
+        try:
+            contract = await reverse_engineer_contract(
+                agent, source_code, module_name, function_names,
+                tool_index=analysis.tool_index,
+            )
+        except Exception as exc:
+            if (
+                "stalled" in str(exc)
+                or "APIStatusError" in type(exc).__name__
+                or "500" in str(exc)
+            ):
+                logger.warning(
+                    "API error on %s: %s — skipping", module_name, exc
+                )
+                return "skipped_api"
+            raise
+        contract.component_id = component_id
+        project.save_contract(contract)
+        project.append_audit(
+            "adopt_contract", f"Contract for {component_id}",
+            component_id=component_id,
+        )
+
+    # Second per-worker budget gate (bounds overshoot before tests phase too).
+    if budget_tracker.is_exceeded():
+        return "ok_contract_budget"
+
+    # Phase 5: Generate tests
+    logger.info("Testing %s...", module_name)
+    from pact.agents.test_author import author_tests
+    try:
+        suite, _research, _plan = await author_tests(
+            agent, contract, language=language,
+        )
+    except Exception as exc:
+        if (
+            "stalled" in str(exc)
+            or "APIStatusError" in type(exc).__name__
+            or "500" in str(exc)
+        ):
+            logger.warning(
+                "API error on tests for %s: %s — skipping", module_name, exc
+            )
+            return "ok_contract_api_error"
+        raise
+
+    if suite.generated_code:
+        old_import = f"from {contract.component_id} import"
+        new_import = f"from {module_name} import"
+        suite.generated_code = suite.generated_code.replace(old_import, new_import)
+    suite.component_id = component_id
+    project.save_test_suite(suite)
+    project.append_audit(
+        "adopt_tests",
+        f"Tests for {component_id}: {len(suite.test_cases)} cases",
+        component_id=component_id,
+    )
+    return "ok"
+
 
 async def adopt_codebase(
     project_path: str | Path,
@@ -488,6 +670,8 @@ async def adopt_codebase(
     dry_run: bool = False,
     include: list[str] | None = None,
     exclude: list[str] | None = None,
+    workers: int | str = "auto",
+    max_concurrent_agents: int = 4,
 ) -> AdoptionResult:
     """Adopt an existing codebase into a full pact project.
 
@@ -602,95 +786,110 @@ async def adopt_codebase(
     # Group source files by component for processing
     from pact.budget import BudgetExceeded
 
+    # Eligible-files count drives the auto-worker heuristic. Mirrors the
+    # filters used inside _process_one_file so the count is honest.
+    eligible_count = sum(
+        1 for sf in analysis.source_files
+        if sf.functions and _strip_source_ext(
+            sf.path.replace("/", "_").replace("\\", "_")
+        ) in tree.nodes
+    )
+    resolved_workers = _resolve_workers(
+        workers, eligible_count, budget_tracker.budget_remaining, max_concurrent_agents,
+    )
+    if resolved_workers > 1:
+        logger.info(
+            "Adopt LLM phase: %d concurrent workers (eligible files: %d)",
+            resolved_workers, eligible_count,
+        )
+
     resumed = 0
     skipped = 0
-    try:
-        for sf in analysis.source_files:
-            if not sf.functions:
-                continue
 
-            if budget_tracker.is_exceeded():
-                logger.warning("Budget exceeded, stopping contract generation")
-                break
-
-            component_id = _strip_source_ext(
-                sf.path.replace("/", "_").replace("\\", "_")
-            )
-
-            if component_id not in tree.nodes:
-                continue
-
-            # Resume: skip modules that already have both contract + tests
-            existing_contract = project.load_contract(component_id)
-            existing_suite = project.load_test_suite(component_id)
-            if existing_contract and existing_suite:
-                resumed += 1
-                result.contracts_generated += 1
-                result.tests_generated += 1
-                continue
-
-            # Read source
-            source_path = project_path / sf.path
-            if not source_path.exists():
-                continue
-            source_code = source_path.read_text(encoding="utf-8", errors="replace")
-
-            module_name = _strip_source_ext(
-                sf.path.replace("/", ".").replace("\\", ".")
-            )
-            function_names = [f.name for f in sf.functions]
-
-            # Phase 4: Reverse-engineer contract (reuse if already saved)
-            contract = existing_contract
-            if not contract:
-                logger.info("Contracting %s (%d functions)...", module_name, len(function_names))
-                try:
-                    contract = await reverse_engineer_contract(
-                        agent, source_code, module_name, function_names,
-                        tool_index=analysis.tool_index,
-                    )
-                except Exception as exc:
-                    if "stalled" in str(exc) or "APIStatusError" in type(exc).__name__ or "500" in str(exc):
-                        logger.warning("API error on %s: %s — skipping", module_name, exc)
-                        skipped += 1
-                        continue
-                    raise
-                contract.component_id = component_id
-                project.save_contract(contract)
-                project.append_audit(
-                    "adopt_contract", f"Contract for {component_id}",
-                    component_id=component_id,
-                )
+    def _record(status: str) -> None:
+        nonlocal resumed, skipped
+        if status == "resumed":
+            resumed += 1
             result.contracts_generated += 1
-
-            if budget_tracker.is_exceeded():
-                break
-
-            # Phase 5: Generate tests
-            logger.info("Testing %s...", module_name)
-            from pact.agents.test_author import author_tests
-            try:
-                suite, _research, _plan = await author_tests(
-                    agent, contract, language=language,
-                )
-            except Exception as exc:
-                if "stalled" in str(exc) or "APIStatusError" in type(exc).__name__ or "500" in str(exc):
-                    logger.warning("API error on tests for %s: %s — skipping", module_name, exc)
-                    skipped += 1
-                    continue
-                raise
-            # Fix import paths for the actual module location
-            if suite.generated_code:
-                old_import = f"from {contract.component_id} import"
-                new_import = f"from {module_name} import"
-                suite.generated_code = suite.generated_code.replace(old_import, new_import)
-            suite.component_id = component_id
-            project.save_test_suite(suite)
             result.tests_generated += 1
-            project.append_audit(
-                "adopt_tests", f"Tests for {component_id}: {len(suite.test_cases)} cases",
-                component_id=component_id,
+        elif status == "ok":
+            result.contracts_generated += 1
+            result.tests_generated += 1
+        elif status == "ok_contract_budget":
+            # Contract done; budget exhausted before tests. Original loop
+            # bumped contracts_generated then `break`'d without `skipped++`.
+            result.contracts_generated += 1
+        elif status == "ok_contract_api_error":
+            # Contract done; test gen hit an API error. Original loop bumped
+            # contracts_generated AND skipped, then `continue`d.
+            result.contracts_generated += 1
+            skipped += 1
+        elif status == "skipped_api":
+            skipped += 1
+        # "skipped_empty", "skipped_no_node", "skipped_no_src",
+        # "stop_budget" → no counters changed.
+
+    try:
+        if resolved_workers == 1:
+            # Sequential path — preserves byte-identical artifact output and
+            # audit log ordering relative to the pre-parallel implementation.
+            for sf in analysis.source_files:
+                status = await _process_one_file(
+                    sf,
+                    project=project,
+                    project_path=project_path,
+                    tree=tree,
+                    agent=agent,
+                    language=language,
+                    budget_tracker=budget_tracker,
+                    analysis=analysis,
+                )
+                if status == "stop_budget":
+                    logger.warning("Budget exceeded, stopping contract generation")
+                    break
+                _record(status)
+        else:
+            # Parallel path — semaphore-bounded asyncio.gather. Each worker
+            # re-checks is_exceeded() before its LLM calls so the budget
+            # overshoot is bounded by workers × per-call-cost.
+            sem = asyncio.Semaphore(resolved_workers)
+
+            async def _guarded(sf: object) -> str:
+                async with sem:
+                    return await _process_one_file(
+                        sf,
+                        project=project,
+                        project_path=project_path,
+                        tree=tree,
+                        agent=agent,
+                        language=language,
+                        budget_tracker=budget_tracker,
+                        analysis=analysis,
+                    )
+
+            # return_exceptions=True so one file's failure doesn't cancel its
+            # siblings mid-flight. Recoverable API errors (stalled / 5xx) are
+            # already caught inside _process_one_file and turned into status
+            # strings. Anything bubbling up here is an unexpected error — we
+            # match the sequential path's fail-fast behavior by re-raising
+            # the first one after siblings complete, instead of swallowing it.
+            statuses = await asyncio.gather(
+                *[_guarded(sf) for sf in analysis.source_files],
+                return_exceptions=True,
             )
+            first_exc: BaseException | None = None
+            for s in statuses:
+                if isinstance(s, BaseException):
+                    logger.error(
+                        "Adopt worker raised %s: %s",
+                        type(s).__name__, s,
+                    )
+                    if first_exc is None:
+                        first_exc = s
+                    continue
+                _record(s)
+            if first_exc is not None:
+                raise first_exc
 
     except BudgetExceeded:
         logger.warning("Budget exhausted — progress saved, re-run to continue")

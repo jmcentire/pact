@@ -238,6 +238,14 @@ def main() -> None:
     p_adopt.add_argument("--backend", default="anthropic", help="LLM backend (default: anthropic)")
     p_adopt.add_argument("--complexity-threshold", type=int, default=5, help="Min complexity for priority (default: 5)")
     p_adopt.add_argument("--dry-run", action="store_true", help="Analyze only, no LLM calls or state changes")
+    p_adopt.add_argument(
+        "--workers", default="auto",
+        help=(
+            "Concurrent LLM workers for contract+test generation. "
+            "'auto' (default) sizes from file count, budget, and config. "
+            "'off' or '1' runs sequentially. Integer N runs N workers."
+        ),
+    )
     p_adopt.add_argument("--include", action="append", default=None,
                          help="Scope to directory, file list, or - for stdin (repeatable)")
     p_adopt.add_argument("--exclude", action="append", default=None,
@@ -2252,18 +2260,31 @@ async def cmd_adopt(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     from pact.adopt import adopt_codebase
+    from pact.config import load_global_config
 
-    result = await adopt_codebase(
-        project_path=project_dir,
-        language=args.language,
-        budget=args.budget,
-        model=args.model,
-        backend=args.backend,
-        complexity_threshold=args.complexity_threshold,
-        dry_run=args.dry_run,
-        include=args.include,
-        exclude=args.exclude,
-    )
+    # Pull max_concurrent_agents ceiling from global config so adopt's auto
+    # heuristic agrees with the rest of pact (build, etc.). Project-level
+    # config doesn't apply here — adopt runs before the project exists.
+    global_cfg = load_global_config()
+    max_concurrent_agents = global_cfg.max_concurrent_agents
+
+    try:
+        result = await adopt_codebase(
+            project_path=project_dir,
+            language=args.language,
+            budget=args.budget,
+            model=args.model,
+            backend=args.backend,
+            complexity_threshold=args.complexity_threshold,
+            dry_run=args.dry_run,
+            include=args.include,
+            exclude=args.exclude,
+            workers=args.workers,
+            max_concurrent_agents=max_concurrent_agents,
+        )
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(2)
 
     print(result.summary())
 
