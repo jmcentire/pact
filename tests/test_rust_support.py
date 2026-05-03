@@ -210,12 +210,20 @@ class TestExtractFunctionsRust:
         names = [f.name for f in funcs]
         assert "process_items" in names
 
-    def test_generic_fn_params_not_extracted(self):
-        """Generic fns match on '<' not '(' so params aren't extracted via regex."""
+    def test_generic_fn_params_extracted_via_tree_sitter(self):
+        """Tree-sitter extracts params for generic fns (regex fallback does not)."""
         funcs = extract_functions_rust("lib.rs", source=COMPLEX_RUST_SOURCE)
         process = next(f for f in funcs if f.name == "process_items")
-        # The regex matches the < delimiter, so param extraction doesn't find (
-        assert process.params == []
+        # When tree-sitter is available, generic-function params are extracted
+        # correctly. When only regex is available (no tree-sitter), params is
+        # empty because the regex matches the '<' delimiter.
+        try:
+            import tree_sitter_rust  # noqa: F401
+            param_names = [p.name for p in process.params]
+            assert "items" in param_names
+            assert "count" in param_names
+        except ImportError:
+            assert process.params == []
 
     def test_extracts_lifetime_fn(self):
         funcs = extract_functions_rust("lib.rs", source=COMPLEX_RUST_SOURCE)
@@ -1013,6 +1021,175 @@ class TestGenerateRustWorkflow:
         workflow = generate_rust_workflow(tmp_path, ["tests/"])
         assert "name" in workflow
         assert isinstance(workflow["name"], str)
+
+
+# ── Fix 4: tree-sitter preferred over regex for rust extraction ────────
+
+
+_TREE_SITTER_RUST_AVAILABLE: bool
+try:
+    import tree_sitter_rust as _tsr  # noqa: F401
+
+    _TREE_SITTER_RUST_AVAILABLE = True
+except ImportError:
+    _TREE_SITTER_RUST_AVAILABLE = False
+
+
+class TestExtractFunctionsRustTreeSitterPreferred:
+    """Fix 4 — codebase_analyzer prefers tree-sitter over regex when available."""
+
+    def test_regex_fallback_used_when_tree_sitter_unavailable(self, monkeypatch):
+        """When tree-sitter import fails, regex extractor still produces results."""
+        from pact import codebase_analyzer
+
+        # Force the tree-sitter path to return None (fallback)
+        monkeypatch.setattr(
+            codebase_analyzer,
+            "_extract_functions_rust_via_tree_sitter",
+            lambda src: None,
+        )
+
+        src = textwrap.dedent("""\
+            pub fn add(a: i32, b: i32) -> i32 { a + b }
+            fn helper(x: i32) -> i32 { x }
+        """)
+        funcs = codebase_analyzer.extract_functions_rust("lib.rs", source=src)
+        names = [f.name for f in funcs]
+        assert "add" in names
+        assert "helper" in names
+
+    @pytest.mark.skipif(
+        not _TREE_SITTER_RUST_AVAILABLE,
+        reason="tree_sitter_rust not installed",
+    )
+    def test_tree_sitter_preferred_when_available(self):
+        """With tree-sitter available, generic-fn params are extracted (regex would not)."""
+        src = textwrap.dedent("""\
+            pub fn process_items<T: Clone>(items: &[T], count: usize) -> Vec<T> {
+                items.iter().take(count).cloned().collect()
+            }
+        """)
+        funcs = extract_functions_rust("lib.rs", source=src)
+        process = next(f for f in funcs if f.name == "process_items")
+        param_names = [p.name for p in process.params]
+        # Tree-sitter parses past the generic <T: Clone> and finds (items, count).
+        # The regex path would return [] here.
+        assert "items" in param_names
+        assert "count" in param_names
+        assert "Vec" in process.return_type
+
+    @pytest.mark.skipif(
+        not _TREE_SITTER_RUST_AVAILABLE,
+        reason="tree_sitter_rust not installed",
+    )
+    def test_impl_block_scope_resolved(self):
+        """Methods inside an impl block are attributed to the implementing type."""
+        src = textwrap.dedent("""\
+            pub struct Calculator { value: i32 }
+
+            impl Calculator {
+                pub fn new() -> Self { Calculator { value: 0 } }
+                pub fn add(&mut self, x: i32) -> i32 {
+                    self.value += x;
+                    self.value
+                }
+            }
+
+            impl<T: Display> Wrapper<T> {
+                pub fn unwrap(self) -> T { self.inner }
+            }
+        """)
+        funcs = extract_functions_rust("lib.rs", source=src)
+        # Calculator methods carry class_name == "Calculator"
+        new_fn = next(f for f in funcs if f.name == "new")
+        add_fn = next(f for f in funcs if f.name == "add")
+        assert new_fn.class_name == "Calculator"
+        assert add_fn.class_name == "Calculator"
+        assert add_fn.is_method is True
+
+        # Generic impl: class_name == "Wrapper" (generic param stripped)
+        unwrap_fn = next(f for f in funcs if f.name == "unwrap")
+        assert unwrap_fn.class_name == "Wrapper"
+
+
+# ── Fix 5: rust test functions surface to kindex via build_tool_index ──
+
+
+class TestRustTestFunctionsToKindex:
+    """Fix 5 — _extract_rust_test_function_names results reach kindex."""
+
+    def test_query_kindex_pushes_extra_data(self, monkeypatch, tmp_path):
+        """query_kindex calls ``kin add`` with a JSON payload when extra_data is provided."""
+        from pact import tool_index
+
+        # Pretend kin is on PATH
+        monkeypatch.setattr(tool_index.shutil, "which", lambda name: "/usr/local/bin/kin")
+
+        captured: list[list[str]] = []
+
+        def fake_run(cmd, timeout=10):
+            captured.append(list(cmd))
+            return 0, "", ""
+
+        monkeypatch.setattr(tool_index, "_run_quiet", fake_run)
+
+        extra = {"test_functions": {"src/lib.rs": ["it_works", "fails_loudly"]}}
+        tool_index.query_kindex(tmp_path, extra_data=extra)
+
+        # First call should be the ``kin add`` push containing the JSON payload
+        assert len(captured) >= 1
+        add_cmd = captured[0]
+        assert add_cmd[1] == "add"
+        joined = " ".join(add_cmd)
+        assert "test_functions" in joined
+        assert "it_works" in joined
+        assert "fails_loudly" in joined
+
+    def test_build_tool_index_collects_rust_test_functions(self, monkeypatch, tmp_path):
+        """When language == 'rust', build_tool_index extracts #[test] fn names per file."""
+        from pact import tool_index
+
+        # Build a minimal rust source tree
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "lib.rs").write_text(textwrap.dedent("""\
+            pub fn add(a: i32, b: i32) -> i32 { a + b }
+
+            #[cfg(test)]
+            mod tests {
+                use super::*;
+
+                #[test]
+                fn it_adds() { assert_eq!(add(1, 2), 3); }
+
+                #[test]
+                fn it_handles_zero() { assert_eq!(add(0, 0), 0); }
+            }
+        """), encoding="utf-8")
+
+        # Disable all other tool runs for a clean signal — only kindex matters
+        monkeypatch.setattr(tool_index, "detect_tools", lambda: tool_index.ToolAvailability(
+            kindex=True,
+            kindex_version="test",
+        ))
+
+        captured_extra: dict = {}
+
+        def fake_query_kindex(project_path, extra_data=None):
+            if extra_data is not None:
+                captured_extra.update(extra_data)
+            return ""
+
+        monkeypatch.setattr(tool_index, "query_kindex", fake_query_kindex)
+
+        tool_index.build_tool_index(tmp_path, language="rust")
+
+        assert "test_functions" in captured_extra
+        # File path is relative to root
+        files = captured_extra["test_functions"]
+        assert any("lib.rs" in k for k in files.keys())
+        all_names = [name for names in files.values() for name in names]
+        assert "it_adds" in all_names
+        assert "it_handles_zero" in all_names
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
