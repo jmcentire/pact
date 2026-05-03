@@ -44,8 +44,6 @@ class TestDetectTools:
         assert avail.cscope is True
 
     def test_detects_tree_sitter(self):
-        # Optional dep — skip when not installed (CI's [dev] doesn't pull it in).
-        pytest.importorskip("tree_sitter")
         avail = detect_tools()
         assert avail.tree_sitter is True
 
@@ -153,10 +151,6 @@ class TestCscope:
 # ── tree-sitter ───────────────────────────────────────────────────
 
 
-@pytest.mark.skipif(
-    __import__("importlib.util").util.find_spec("tree_sitter") is None,
-    reason="tree_sitter optional dep not installed (lives in [analysis] extra)",
-)
 class TestTreeSitter:
     def test_run_tree_sitter_on_sample(self, tmp_path):
         """tree-sitter should extract function and class definitions."""
@@ -416,10 +410,6 @@ class TestGracefulDegradation:
 # ── Integration ───────────────────────────────────────────────────
 
 
-@pytest.mark.skipif(
-    __import__("importlib.util").util.find_spec("tree_sitter") is None,
-    reason="tree_sitter optional dep not installed (lives in [analysis] extra)",
-)
 class TestIntegration:
     def test_build_tool_index_real(self, tmp_path):
         """Integration test: build_tool_index on a real (small) codebase."""

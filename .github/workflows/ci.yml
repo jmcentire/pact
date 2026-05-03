@@ -15,7 +15,12 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        # Include the optional extras whose modules tests/ actually exercises:
+        # all-backends → anthropic, openai, google-genai (test_*_backend.py)
+        # analysis     → tree-sitter (test_tool_index.py)
+        # Without these, tests fail with ModuleNotFoundError in CI but pass
+        # locally for anyone with the full install.
+        run: pip install -e ".[dev,all-backends,analysis,mcp]" httpx
 
       - name: Run tests
         run: python -m pytest tests/ -v --tb=short
