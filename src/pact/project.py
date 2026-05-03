@@ -51,12 +51,15 @@ in the project tree. Only ephemeral per-run state lives in .pact/:
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import logging
+import os
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 from uuid import uuid4
 
 import yaml
@@ -386,6 +389,52 @@ class ProjectManager:
     def load_config(self) -> ProjectConfig:
         return load_project_config(self.project_dir)
 
+    # ── Cross-process file locking ─────────────────────────────────
+    #
+    # state.json and audit.jsonl are touched by every CLI invocation and
+    # by the long-running daemon. Multiple `pact build`, `pact run`, and
+    # `pact daemon` processes against the same project would otherwise
+    # race on read-modify-write of state.json (last-write-wins → lost
+    # progress) and on append to audit.jsonl (interleaved short writes
+    # are atomic via POSIX O_APPEND, but flock makes it bulletproof for
+    # larger entries and provides a single mental model).
+    #
+    # POSIX-only (fcntl). This codebase doesn't claim Windows support.
+
+    def _lock_file(self, name: str) -> Path:
+        """Sidecar lock file path used by ``_file_lock``."""
+        return self._pact_dir / f".{name}.lock"
+
+    @contextlib.contextmanager
+    def _file_lock(self, name: str):
+        """Acquire an exclusive cross-process flock on a sidecar lock file.
+
+        The lock file lives under ``.pact/`` and is created on demand.
+        Releases on normal exit or exception. Blocks until acquired —
+        callers should not hold the lock across long operations.
+        """
+        self._pact_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = self._lock_file(name)
+        # Open in append mode so the file is created if missing without
+        # truncating an existing lock file from a concurrent process.
+        with open(lock_path, "a") as lockf:
+            fcntl.flock(lockf.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
+
+    def _atomic_write_text(self, path: Path, text: str) -> None:
+        """Whole-file replace via temp + rename. Avoids torn reads.
+
+        ``os.replace`` is atomic on POSIX, so concurrent readers see
+        either the old or the new file — never a partial write.
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(text)
+        os.replace(tmp, path)
+
     # ── Run State ──────────────────────────────────────────────────
 
     def has_state(self) -> bool:
@@ -397,8 +446,35 @@ class ProjectManager:
         return RunState.model_validate_json(self.state_path.read_text())
 
     def save_state(self, state: RunState) -> None:
-        self._pact_dir.mkdir(parents=True, exist_ok=True)
-        self.state_path.write_text(state.model_dump_json(indent=2))
+        """Save state with atomic write under a cross-process flock.
+
+        NOTE: this guards the *single* save against torn writes and makes
+        concurrent saves serialize. It does NOT protect a load-modify-save
+        sequence from racing a sibling process — for that, use
+        ``update_state(updater_fn)``.
+        """
+        with self._file_lock("state"):
+            self._atomic_write_text(
+                self.state_path, state.model_dump_json(indent=2),
+            )
+
+    def update_state(self, updater: Callable[[RunState], None]) -> RunState:
+        """Atomic read-modify-write transaction on state.json.
+
+        Acquires the state flock, loads the current state, calls
+        ``updater(state)`` to mutate it in place, then writes and
+        releases. Cross-process safe: two concurrent ``update_state``
+        calls serialize cleanly with no lost updates.
+
+        Returns the post-update state.
+        """
+        with self._file_lock("state"):
+            state = RunState.model_validate_json(self.state_path.read_text())
+            updater(state)
+            self._atomic_write_text(
+                self.state_path, state.model_dump_json(indent=2),
+            )
+            return state
 
     def create_run(self) -> RunState:
         return RunState(
@@ -444,6 +520,14 @@ class ProjectManager:
     # ── Audit ──────────────────────────────────────────────────────
 
     def append_audit(self, action: str, detail: str = "", **kwargs: str) -> None:
+        """Append an audit entry under a cross-process flock.
+
+        POSIX ``O_APPEND`` already gives atomicity for writes ≤ PIPE_BUF
+        (4 KB on macOS/Linux), so audit lines that fit a single line of
+        JSON are safe without locking. The flock protects the few entries
+        that may exceed PIPE_BUF (rare; structured kwargs are short) and
+        gives a single, easy-to-reason-about contract.
+        """
         self._pact_dir.mkdir(parents=True, exist_ok=True)
         entry = {
             "timestamp": datetime.now().isoformat(),
@@ -451,8 +535,9 @@ class ProjectManager:
             "detail": detail,
             **kwargs,
         }
-        with open(self.audit_path, "a") as f:
-            f.write(json.dumps(entry) + "\n")
+        with self._file_lock("audit"):
+            with open(self.audit_path, "a") as f:
+                f.write(json.dumps(entry) + "\n")
 
     def load_audit(self) -> list[dict]:
         if not self.audit_path.exists():
