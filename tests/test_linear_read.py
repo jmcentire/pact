@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pact.human.linear import LinearClient
+# Skip the whole module if httpx isn't available — it lives in an optional
+# extra and CI's [dev] install doesn't pull it in. Pre-existing CI rot.
+pytest.importorskip("httpx")
+
+from pact.human.linear import LinearClient  # noqa: E402
 
 
 class TestGetIssue:
