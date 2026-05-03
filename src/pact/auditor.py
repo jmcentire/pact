@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pact.agents.base import AgentBase
 from pact.project import ProjectManager
-from pact.schemas import RequirementCoverage, SpecAuditResult
+from pact.schemas import SpecAuditResult
 
 
 AUDIT_SYSTEM = """\

@@ -517,7 +517,6 @@ def validate_contract_incremental(
     errors.extend(validate_contract_completeness(contract))
 
     # 3. Dependency resolution with normalization
-    known_ids = list(existing_contracts.keys()) + [contract.component_id]
     for dep_id in contract.dependencies:
         normalized = normalize_dependency_name(dep_id, list(existing_contracts.keys()))
         if normalized is None:
@@ -624,7 +623,6 @@ def validate_hierarchy_locality(
             if dep_id not in tree.nodes:
                 continue  # External dep, skip
             if dep_id not in nearby:
-                dep_node = tree.nodes.get(dep_id)
                 dep_path = _node_path(tree, dep_id)
                 src_path = _node_path(tree, cid)
                 warnings.append(

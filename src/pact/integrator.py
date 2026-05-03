@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from datetime import datetime
 
 from pact.agents.base import AgentBase
 from pact.project import ProjectManager

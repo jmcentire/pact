@@ -738,7 +738,7 @@ def _check_five_conditions(
         findings.append(HealthFinding(
             condition=HealthCondition.variance_reaches_target,
             status=HealthStatus.healthy,
-            message=f"Pre-artifact phase — generation ratio not yet applicable.",
+            message="Pre-artifact phase — generation ratio not yet applicable.",
             metric_value=generation_pct,
         ))
     elif generation_pct < 0.2 and metrics.total_tokens > 5000:
@@ -764,7 +764,7 @@ def _check_five_conditions(
         findings.append(HealthFinding(
             condition=HealthCondition.gain_outweighs_cost,
             status=HealthStatus.healthy,
-            message=f"Pre-artifact phase — artifact production not yet applicable.",
+            message="Pre-artifact phase — artifact production not yet applicable.",
             metric_value=0.0,
         ))
     elif metrics.total_spend > 1.0 and metrics.artifacts_produced == 0:

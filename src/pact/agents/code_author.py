@@ -288,7 +288,6 @@ async def author_code(
     _label_map = {"typescript": "TypeScript", "javascript": "JavaScript", "rust": "Rust"}
     _fence_map = {"typescript": "typescript", "javascript": "javascript", "rust": "rust"}
     file_ext = _ext_map.get(language, ".py")
-    lang_label = _label_map.get(language, "Python")
     code_fence = _fence_map.get(language, "python")
     example_file = f"module{file_ext}"
 

@@ -583,12 +583,12 @@ def generate_emission_compliance_test(
             f"            obj.{method}()",
             "        except (TypeError, Exception):",
             "            pass",
-            f'        invoked = [e for e in events if e.get("event") == "invoked"]',
-            f'        completed = [e for e in events if e.get("event") in ("completed", "error")]',
+            '        invoked = [e for e in events if e.get("event") == "invoked"]',
+            '        completed = [e for e in events if e.get("event") in ("completed", "error")]',
             f"        assert len(invoked) >= 1, 'No invoked event for {method}'",
             f"        assert len(completed) >= 1, 'No completed/error event for {method}'",
             f'        assert invoked[0].get("pact_key") == "PACT:{cid}:{method}"',
-            f'        assert isinstance(invoked[0].get("input_classification"), list)',
+            '        assert isinstance(invoked[0].get("input_classification"), list)',
             "",
         ])
 
@@ -599,10 +599,10 @@ def generate_emission_compliance_test(
         f"        obj = {class_name}(event_handler=handler)",
     ])
     for method in method_names:
-        lines.append(f"        try:")
+        lines.append("        try:")
         lines.append(f"            obj.{method}()")
-        lines.append(f"        except (TypeError, Exception):")
-        lines.append(f"            pass")
+        lines.append("        except (TypeError, Exception):")
+        lines.append("            pass")
     lines.extend([
         "        for event in events:",
         '            key = event.get("pact_key", "")',
@@ -613,10 +613,10 @@ def generate_emission_compliance_test(
         f"        obj = {class_name}()",
     ])
     for method in method_names:
-        lines.append(f"        try:")
+        lines.append("        try:")
         lines.append(f"            obj.{method}()")
-        lines.append(f"        except (TypeError, Exception):")
-        lines.append(f"            pass")
+        lines.append("        except (TypeError, Exception):")
+        lines.append("            pass")
     lines.append("")
 
     return "\n".join(lines)
@@ -625,7 +625,7 @@ def generate_emission_compliance_test(
 def _generate_emission_test_ts(cid: str, class_name: str, method_names: list[str]) -> str:
     """Generate TypeScript/JavaScript emission compliance test."""
     lines = [
-        f'import {{ describe, it, expect }} from "vitest";',
+        'import { describe, it, expect } from "vitest";',
         f'import {{ {class_name} }} from "../src/{cid}/{cid}.js";',
         "",
         f'describe("{cid} emission compliance", () => {{',

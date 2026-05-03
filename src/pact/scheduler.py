@@ -18,6 +18,11 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pact.health import HealthMetrics
+    from pact.schemas import ContractTestSuite
 
 from pact.agents.base import AgentBase
 from pact.budget import BudgetExceeded, BudgetTracker
@@ -209,7 +214,6 @@ def _build_goodhart_hint(
 
     Never shares actual test code, assertions, or specific failing inputs.
     """
-    from pact.schemas import ContractTestSuite  # noqa: F811
 
     # Map test IDs from failures to their descriptions in the suite
     failing_test_ids = set()
@@ -924,7 +928,7 @@ class Scheduler:
             # Add lessons-derived contingencies
             for lesson in kindex_lessons:
                 contingencies.append(Contingency(
-                    trigger=f"Similar pattern to previous failure",
+                    trigger="Similar pattern to previous failure",
                     response=f"Apply lesson: {lesson}",
                     learned_from="kindex",
                 ))
@@ -1279,7 +1283,7 @@ class Scheduler:
         4. If Ledger configured: validate contracts against ledger assertions
         """
         from pact.access_graph import generate_access_graph, save_access_graph
-        from pact.arbiter import ArbiterResponse, register_with_arbiter, resolve_arbiter_endpoint
+        from pact.arbiter import register_with_arbiter, resolve_arbiter_endpoint
         from pact.lifecycle import advance_phase
 
         # Generate access_graph.json

@@ -18,7 +18,6 @@ from pact.agents.base import AgentBase
 from pact.agents.trace_analyst import analyze_trace
 from pact.project import ProjectManager
 from pact.schemas import (
-    ComponentContract,
     DesignDocument,
     FailureRecord,
     IOTrace,

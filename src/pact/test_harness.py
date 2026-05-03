@@ -17,6 +17,10 @@ import os
 import re
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pact.schemas import EnvironmentSpec
 
 from pact.schemas import TestFailure, TestResults
 

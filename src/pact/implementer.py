@@ -809,7 +809,6 @@ async def implement_component_iterative(
     src_dir.mkdir(parents=True, exist_ok=True)
 
     module_name = contract.component_id.replace("-", "_")
-    file_ext = ".ts" if is_ts else ".py"
 
     # Build prior test context for retries
     prior_context = ""

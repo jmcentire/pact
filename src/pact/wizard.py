@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from pact.schemas import InterviewQuestion, QuestionType, validate_answer
 
