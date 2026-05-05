@@ -267,9 +267,18 @@ def parse_pytest_output(stdout: str, stderr: str) -> TestResults:
             errors = int(summary.group(3) or 0)
             total = passed + failed + errors
 
-    # If still nothing parsed, check for collection errors
+    # If still nothing parsed, check for collection errors.
+    # Use specific pytest error patterns to avoid false positives from test
+    # names that happen to contain the word "error" (e.g. test_valid_error).
     combined = stdout + stderr
-    if total == 0 and ("ERROR" in combined or "error" in combined):
+    _COLLECTION_ERROR_MARKERS = (
+        "ERROR collecting",
+        "error during collection",
+        "= ERRORS =",
+        "INTERNALERROR",
+        "no tests ran",
+    )
+    if total == 0 and any(m in combined for m in _COLLECTION_ERROR_MARKERS):
         errors = 1
         total = 1
         failures.append(TestFailure(

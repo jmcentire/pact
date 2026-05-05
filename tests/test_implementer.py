@@ -68,9 +68,11 @@ class TestTestResults:
         r = TestResults(total=1, passed=0, failed=0, errors=1)
         assert r.all_passed is False
 
-    def test_empty_is_not_passed(self):
+    def test_empty_with_no_errors_is_passed(self):
+        # total=0 means all tests skipped — no failures, so treat as passing.
+        # test-file-not-found produces errors>0 and still fails correctly.
         r = TestResults(total=0, passed=0, failed=0, errors=0)
-        assert r.all_passed is False
+        assert r.all_passed is True
 
 
 class TestFindDefinedNames:

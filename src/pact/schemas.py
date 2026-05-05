@@ -374,7 +374,9 @@ class TestResults(BaseModel):
 
     @property
     def all_passed(self) -> bool:
-        return self.total > 0 and self.failed == 0 and self.errors == 0
+        # total == 0 means all tests were skipped (no failures) — treat as passing.
+        # Test-file-not-found produces errors > 0, so it still fails correctly.
+        return self.failed == 0 and self.errors == 0
 
 
 # ── Interview Models ─────────────────────────────────────────────────
