@@ -39,7 +39,30 @@ with async test functions using @pytest.mark.anyio and "await". Functions
 NOT marked async MUST be tested with synchronous test functions — never use
 await on a sync function. Match the test's async-ness to the function under test.
 Use @pytest.mark.anyio (not @pytest.mark.asyncio) — anyio is always available.
-Do NOT use pytest-asyncio."""
+Do NOT use pytest-asyncio.
+
+Infrastructure fixtures CRITICAL: When a fixture provides a URL for an external
+service (backend, database, etc.), it MUST check reachability and call
+pytest.skip() if the service is not available — never let the test fail with a
+raw connection error. Use urllib.request.urlopen with a short timeout (2s) for
+HTTP services. For DATABASE_URL, skip when the env var is absent. Pattern:
+
+    @pytest.fixture
+    def backend_base_url() -> str:
+        import urllib.request
+        url = os.environ.get("BACKEND_BASE_URL", "http://localhost:8000")
+        try:
+            urllib.request.urlopen(url + "/health", timeout=2)
+        except Exception:
+            pytest.skip(f"Backend not reachable at {url}")
+        return url
+
+    @pytest.fixture
+    def database_url() -> str:
+        url = os.environ.get("DATABASE_URL")
+        if url is None:
+            pytest.skip("DATABASE_URL not set")
+        return url"""
 
 TEST_SYSTEM_TS = """You are starting fresh on this test suite with no prior context.
 
