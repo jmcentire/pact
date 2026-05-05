@@ -35,9 +35,11 @@ with appropriate errors, and edge cases at validation boundaries behave
 correctly. Canonical data structures are first-class testable units.
 
 Async/sync CRITICAL: Functions marked "async" in the contract MUST be tested
-with async test functions using @pytest.mark.asyncio and "await". Functions
+with async test functions using @pytest.mark.anyio and "await". Functions
 NOT marked async MUST be tested with synchronous test functions — never use
-await on a sync function. Match the test's async-ness to the function under test."""
+await on a sync function. Match the test's async-ness to the function under test.
+Use @pytest.mark.anyio (not @pytest.mark.asyncio) — anyio is always available.
+Do NOT use pytest-asyncio."""
 
 TEST_SYSTEM_TS = """You are starting fresh on this test suite with no prior context.
 

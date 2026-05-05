@@ -188,6 +188,11 @@ async def run_contract_tests(
     parts = [str(impl_dir), str(impl_dir.parent)]
     if extra_paths:
         parts.extend(str(p) for p in extra_paths)
+    # Include pact's own site-packages so anyio and other pact deps are available
+    import sysconfig as _sysconfig
+    _pact_site = _sysconfig.get_path("purelib")
+    if _pact_site and _pact_site not in parts:
+        parts.append(_pact_site)
     env_path = ":".join(parts)
 
     if environment:
