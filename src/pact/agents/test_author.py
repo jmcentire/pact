@@ -433,7 +433,27 @@ Key principles:
   NOT the specific assertion. These descriptions become graduated hints during remediation.
 - Dependencies must be mocked — tests verify one component in isolation
 - Generated code must be syntactically valid
-- Do NOT duplicate coverage already in the visible tests — find gaps"""
+- Do NOT duplicate coverage already in the visible tests — find gaps
+
+HTTP / infrastructure CRITICAL:
+- Use httpx for HTTP calls (NOT requests — it is not installed). Example:
+    import httpx
+    resp = httpx.get(BASE_URL + "/endpoint", timeout=5)
+- Never import requests.
+- Use @pytest.mark.anyio (not @pytest.mark.asyncio) for async tests.
+- Any test fixture or setup that connects to an external service (HTTP backend,
+  database) MUST skip gracefully when unavailable:
+    BASE_URL = os.environ.get("BACKEND_BASE_URL", "http://localhost:8000")
+    def _backend_available() -> bool:
+        try:
+            httpx.get(BASE_URL + "/health", timeout=2)
+            return True
+        except Exception:
+            return False
+    pytestmark_backend = pytest.mark.skipif(
+        not _backend_available(), reason="Backend not reachable"
+    )
+  Apply pytestmark_backend to test classes that hit the live backend."""
 
 GOODHART_SYSTEM_TS = """You are starting fresh on this adversarial review with no prior context.
 

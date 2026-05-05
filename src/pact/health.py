@@ -562,7 +562,8 @@ def _check_phase_balance(metrics: HealthMetrics, t: dict[str, float] | None = No
     pb_warn = t.get("phase_balance_warning", PHASE_BALANCE_WARNING)
 
     # Only flag planning/coordination phases — implement/integrate/polish dominating is expected.
-    _EXECUTION_PHASES = {"implement", "integrate", "polish", "retrospective", "complete"}
+    # decompose also does contract+test authoring so it legitimately consumes many tokens.
+    _EXECUTION_PHASES = {"decompose", "implement", "integrate", "polish", "retrospective", "complete"}
     if worst_phase in _EXECUTION_PHASES:
         return HealthFinding(
             condition=HealthCondition.phase_balance,
