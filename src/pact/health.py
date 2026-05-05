@@ -323,7 +323,7 @@ REGISTER_DRIFT_WARNING = 0.2           # 20%+ of checks show drift
 REGISTER_DRIFT_CRITICAL = 0.5          # 50%+ of checks show drift
 
 
-_PRE_ARTIFACT_PHASES = {"interview", "shape"}
+_PRE_ARTIFACT_PHASES = {"interview", "shape", "decompose", "contract", "preflight", "integrate", "arbiter", "polish", "retrospective", "complete"}
 
 
 def check_health(
@@ -386,8 +386,8 @@ def _check_output_planning_ratio(metrics: HealthMetrics, t: dict[str, float] | N
     warn = t.get("output_planning_ratio_warning", OUTPUT_PLANNING_RATIO_WARNING)
     crit = t.get("output_planning_ratio_critical", OUTPUT_PLANNING_RATIO_CRITICAL)
 
-    # Not enough data yet
-    if metrics.total_tokens < 1000:
+    # Not enough data yet — no generation has started, or insufficient total tokens
+    if metrics.total_tokens < 1000 or metrics.generation_tokens == 0:
         return HealthFinding(
             condition=HealthCondition.output_planning_ratio,
             status=HealthStatus.healthy,
@@ -560,6 +560,17 @@ def _check_phase_balance(metrics: HealthMetrics, t: dict[str, float] | None = No
 
     pb_crit = t.get("phase_balance_critical", PHASE_BALANCE_CRITICAL)
     pb_warn = t.get("phase_balance_warning", PHASE_BALANCE_WARNING)
+
+    # Only flag planning/coordination phases — implement/integrate/polish dominating is expected.
+    # decompose also does contract+test authoring so it legitimately consumes many tokens.
+    _EXECUTION_PHASES = {"decompose", "implement", "integrate", "polish", "retrospective", "complete"}
+    if worst_phase in _EXECUTION_PHASES:
+        return HealthFinding(
+            condition=HealthCondition.phase_balance,
+            status=HealthStatus.healthy,
+            message=f"Phase balance OK — execution phase '{worst_phase}' dominates at {worst_ratio:.0%} (expected).",
+            metric_value=worst_ratio,
+        )
 
     if worst_ratio >= pb_crit and excess > 0.1:
         return HealthFinding(

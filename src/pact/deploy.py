@@ -31,6 +31,35 @@ def _load_contract(project_dir: Path, component_id: str) -> dict | None:
     return None
 
 
+def _load_access_graph(project_dir: Path) -> dict | None:
+    """Load access_graph.json if present."""
+    ag_path = project_dir / "access_graph.json"
+    if ag_path.exists():
+        with open(ag_path) as f:
+            return json.load(f)
+    return None
+
+
+_DDL_ONLY_EFFECTS = {
+    "ddl_execution", "trigger_creation", "constraint_creation",
+    "catalog_introspection", "schema_migration", "database_migration",
+}
+
+
+def _has_http_interface(contract: dict) -> bool:
+    """Return True if the component exposes an HTTP server interface.
+
+    Components whose side-effects are exclusively DDL/catalog operations
+    (schema init, migrations) have no HTTP server and should not get a
+    health-check URL.
+    """
+    side_effects = contract.get("data_access", {}).get("side_effects", [])
+    if not side_effects:
+        return True  # unknown — assume HTTP
+    effect_types = {se["type"] for se in side_effects}
+    return not effect_types.issubset(_DDL_ONLY_EFFECTS)
+
+
 def _get_leaf_components(tree: dict) -> list[dict]:
     """Extract leaf components (no children) from the decomposition tree."""
     nodes = tree.get("nodes", {})
@@ -47,26 +76,63 @@ def _get_all_components(tree: dict) -> list[dict]:
     return list(nodes.values())
 
 
-def _build_edges(tree: dict, components: list[dict]) -> list[dict]:
+def _build_edges(tree: dict, components: list[dict], project_dir: Path) -> list[dict]:
     """Build edges from the decomposition tree's dependency structure.
 
-    Uses contract dependency declarations to determine edges between
-    components. Falls back to parent-child relationships if no dependencies.
+    Priority order:
+    1. Explicit contract dependency declarations between deployed nodes.
+    2. Inferred edges from access_graph side-effects:
+       - database_* effects → component depends on the database node
+       - http_* effects → component depends on the HTTP API node
+    3. Parent-child fallback for any remaining deployed-node pairs.
     """
     component_ids = {c["component_id"] for c in components}
     edges = []
     seen = set()
 
+    # 1. Contract dependency declarations
     for comp in components:
         comp_id = comp["component_id"]
-        contract = comp.get("contract")
-        if contract and contract.get("dependencies"):
-            for dep in contract["dependencies"]:
-                if dep in component_ids and (comp_id, dep) not in seen:
-                    edges.append({"source": comp_id, "target": dep})
-                    seen.add((comp_id, dep))
+        contract = _load_contract(project_dir, comp_id) or comp.get("contract") or {}
+        for dep in contract.get("dependencies", []):
+            if dep in component_ids and (comp_id, dep) not in seen:
+                edges.append({"source": comp_id, "target": dep})
+                seen.add((comp_id, dep))
 
-    # If no dependency edges found, derive from parent-child
+    # 2. Infer from access_graph side-effect types
+    if not edges:
+        # Classify each deployed component by the side-effect categories it produces
+        db_nodes: set[str] = set()    # components with DDL-only effects (schema init)
+        api_nodes: set[str] = set()   # components with database_* effects (HTTP APIs)
+        client_nodes: set[str] = set()  # components with http_* effects (HTTP clients)
+
+        for comp in components:
+            comp_id = comp["component_id"]
+            contract = _load_contract(project_dir, comp_id) or {}
+            effects = {
+                se["type"]
+                for se in contract.get("data_access", {}).get("side_effects", [])
+            }
+            if effects and effects.issubset(_DDL_ONLY_EFFECTS):
+                db_nodes.add(comp_id)
+            elif any(e.startswith("database_") for e in effects):
+                api_nodes.add(comp_id)
+            elif any(e.startswith("http_") for e in effects):
+                client_nodes.add(comp_id)
+
+        for api in api_nodes:
+            for db in db_nodes:
+                if (api, db) not in seen:
+                    edges.append({"source": api, "target": db})
+                    seen.add((api, db))
+
+        for client in client_nodes:
+            for api in api_nodes:
+                if (client, api) not in seen:
+                    edges.append({"source": client, "target": api})
+                    seen.add((client, api))
+
+    # 3. Parent-child fallback
     if not edges:
         for comp in components:
             parent_id = comp.get("parent_id", "")
@@ -150,7 +216,7 @@ def generate_baton_yaml(
         name_to_port[comp["component_id"]] = (node_name, port)
 
     # Build edges from dependency structure
-    edges = _build_edges(tree, components)
+    edges = _build_edges(tree, components, project_dir)
     baton_edges = []
     for edge in edges:
         src_name = _sanitize_name(edge["source"])
@@ -189,18 +255,14 @@ def generate_baton_yaml(
         "provider": "local",
     }
 
-    # Add canary routing config to the first node as a template
-    if len(nodes) >= 1:
-        first_node = nodes[0]
-        first_node["metadata"] = first_node.get("metadata", {})
-        first_node["metadata"]["health_check"] = f"http://127.0.0.1:{first_node['port']}/health"
-        first_node["metadata"]["canary_error_rate_pct"] = str(error_rate_threshold)
-        first_node["metadata"]["canary_p95_ms"] = str(p95_ms_threshold)
-
-    # Add health check metadata to all nodes
-    for node in nodes:
+    # Add health check and canary metadata — only for nodes with an HTTP interface
+    for i, (node, comp) in enumerate(zip(nodes, components)):
+        contract = _load_contract(project_dir, comp["component_id"]) or comp.get("contract") or {}
         node.setdefault("metadata", {})
-        node["metadata"]["health_check"] = f"http://127.0.0.1:{node['port']}/health"
+        if _has_http_interface(contract):
+            node["metadata"]["health_check"] = f"http://127.0.0.1:{node['port']}/health"
+            node["metadata"]["canary_error_rate_pct"] = str(error_rate_threshold)
+            node["metadata"]["canary_p95_ms"] = str(p95_ms_threshold)
 
     # Write output
     if output_path:

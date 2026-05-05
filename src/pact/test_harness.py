@@ -192,6 +192,11 @@ async def run_contract_tests(
     parts = [str(impl_dir), str(impl_dir.parent)]
     if extra_paths:
         parts.extend(str(p) for p in extra_paths)
+    # Include pact's own site-packages so anyio and other pact deps are available
+    import sysconfig as _sysconfig
+    _pact_site = _sysconfig.get_path("purelib")
+    if _pact_site and _pact_site not in parts:
+        parts.append(_pact_site)
     env_path = ":".join(parts)
 
     if environment:
@@ -266,9 +271,18 @@ def parse_pytest_output(stdout: str, stderr: str) -> TestResults:
             errors = int(summary.group(3) or 0)
             total = passed + failed + errors
 
-    # If still nothing parsed, check for collection errors
+    # If still nothing parsed, check for collection errors.
+    # Use specific pytest error patterns to avoid false positives from test
+    # names that happen to contain the word "error" (e.g. test_valid_error).
     combined = stdout + stderr
-    if total == 0 and ("ERROR" in combined or "error" in combined):
+    _COLLECTION_ERROR_MARKERS = (
+        "ERROR collecting",
+        "error during collection",
+        "= ERRORS =",
+        "INTERNALERROR",
+        "no tests ran",
+    )
+    if total == 0 and any(m in combined for m in _COLLECTION_ERROR_MARKERS):
         errors = 1
         total = 1
         failures.append(TestFailure(

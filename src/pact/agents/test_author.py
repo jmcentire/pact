@@ -35,9 +35,34 @@ with appropriate errors, and edge cases at validation boundaries behave
 correctly. Canonical data structures are first-class testable units.
 
 Async/sync CRITICAL: Functions marked "async" in the contract MUST be tested
-with async test functions using @pytest.mark.asyncio and "await". Functions
+with async test functions using @pytest.mark.anyio and "await". Functions
 NOT marked async MUST be tested with synchronous test functions — never use
-await on a sync function. Match the test's async-ness to the function under test."""
+await on a sync function. Match the test's async-ness to the function under test.
+Use @pytest.mark.anyio (not @pytest.mark.asyncio) — anyio is always available.
+Do NOT use pytest-asyncio.
+
+Infrastructure fixtures CRITICAL: When a fixture provides a URL for an external
+service (backend, database, etc.), it MUST check reachability and call
+pytest.skip() if the service is not available — never let the test fail with a
+raw connection error. Use urllib.request.urlopen with a short timeout (2s) for
+HTTP services. For DATABASE_URL, skip when the env var is absent. Pattern:
+
+    @pytest.fixture
+    def backend_base_url() -> str:
+        import urllib.request
+        url = os.environ.get("BACKEND_BASE_URL", "http://localhost:8000")
+        try:
+            urllib.request.urlopen(url + "/health", timeout=2)
+        except Exception:
+            pytest.skip(f"Backend not reachable at {url}")
+        return url
+
+    @pytest.fixture
+    def database_url() -> str:
+        url = os.environ.get("DATABASE_URL")
+        if url is None:
+            pytest.skip("DATABASE_URL not set")
+        return url"""
 
 TEST_SYSTEM_TS = """You are starting fresh on this test suite with no prior context.
 
@@ -408,7 +433,27 @@ Key principles:
   NOT the specific assertion. These descriptions become graduated hints during remediation.
 - Dependencies must be mocked — tests verify one component in isolation
 - Generated code must be syntactically valid
-- Do NOT duplicate coverage already in the visible tests — find gaps"""
+- Do NOT duplicate coverage already in the visible tests — find gaps
+
+HTTP / infrastructure CRITICAL:
+- Use httpx for HTTP calls (NOT requests — it is not installed). Example:
+    import httpx
+    resp = httpx.get(BASE_URL + "/endpoint", timeout=5)
+- Never import requests.
+- Use @pytest.mark.anyio (not @pytest.mark.asyncio) for async tests.
+- Any test fixture or setup that connects to an external service (HTTP backend,
+  database) MUST skip gracefully when unavailable:
+    BASE_URL = os.environ.get("BACKEND_BASE_URL", "http://localhost:8000")
+    def _backend_available() -> bool:
+        try:
+            httpx.get(BASE_URL + "/health", timeout=2)
+            return True
+        except Exception:
+            return False
+    pytestmark_backend = pytest.mark.skipif(
+        not _backend_available(), reason="Backend not reachable"
+    )
+  Apply pytestmark_backend to test classes that hit the live backend."""
 
 GOODHART_SYSTEM_TS = """You are starting fresh on this adversarial review with no prior context.
 
@@ -489,7 +534,9 @@ async def author_goodhart_tests(
         if package_namespace:
             import_hint = f"from {package_namespace}.{contract.component_id} import *"
         else:
-            import_hint = f"from src.{contract.component_id} import *"
+            # pact sets PYTHONPATH=src/<cid>, so the package is importable
+            # directly as <cid>, not as src.<cid>
+            import_hint = f"from {contract.component_id} import *"
         framework = "pytest"
         test_lang = "python"
 

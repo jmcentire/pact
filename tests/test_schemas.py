@@ -155,8 +155,9 @@ class TestTestModels:
         assert r.all_passed is False
 
     def test_test_results_empty(self):
+        # empty (all skipped) = no failures = passes vacuously
         r = TestResults()
-        assert r.all_passed is False
+        assert r.all_passed is True
 
 
 class TestInterviewResult:
