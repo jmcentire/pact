@@ -491,7 +491,9 @@ async def author_goodhart_tests(
         if package_namespace:
             import_hint = f"from {package_namespace}.{contract.component_id} import *"
         else:
-            import_hint = f"from src.{contract.component_id} import *"
+            # pact sets PYTHONPATH=src/<cid>, so the package is importable
+            # directly as <cid>, not as src.<cid>
+            import_hint = f"from {contract.component_id} import *"
         framework = "pytest"
         test_lang = "python"
 
