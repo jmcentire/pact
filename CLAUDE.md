@@ -5,7 +5,7 @@ Contract-first multi-agent software engineering. Decomposition produces contract
 ## Quick Reference
 
 ```bash
-cd ~/WanderRepos/repos/pact
+cd path/to/pact
 python3 -m pytest tests/ -v        # Run all tests
 pact init <project-dir>            # Initialize project
 pact init <project-dir> --spec <file> # Initialize from AI-authored JSON/YAML build spec
@@ -505,8 +505,6 @@ kin ingest code --directory . --project-path .
 kin index --project-path . --output-dir .
 kin export code-map --directory . --project-path . --output .kin/code-map.json
 ```
-
-Legacy Conv vault (459 nodes, richer historical data): `~/Personal/Projects/Conv/`
 
 ## Cross-Agent Engineering Skill
 
