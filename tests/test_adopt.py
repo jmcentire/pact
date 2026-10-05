@@ -354,8 +354,9 @@ class TestAdoptDryRun:
 
         # Run the generated tests with the source on PYTHONPATH
         import subprocess
+        import sys
         proc = subprocess.run(
-            ["python3", "-m", "pytest", str(test_file), "-v"],
+            [sys.executable, "-m", "pytest", str(test_file), "-v"],
             capture_output=True, text=True,
             cwd=str(tmp_path),
             env={**__import__("os").environ, "PYTHONPATH": str(tmp_path)},

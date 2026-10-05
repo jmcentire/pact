@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import textwrap
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -29,20 +31,52 @@ from pact.tool_index import (
 )
 
 
+def _has_universal_ctags() -> bool:
+    # macOS ships BSD ctags at /usr/bin/ctags, which pact deliberately ignores.
+    try:
+        out = subprocess.run(["ctags", "--version"], capture_output=True, text=True).stdout
+    except OSError:
+        return False
+    return "Universal Ctags" in out
+
+
+def _has_tree_sitter_python() -> bool:
+    try:
+        import tree_sitter  # noqa: F401
+        import tree_sitter_python  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+requires_ctags = pytest.mark.skipif(
+    not _has_universal_ctags(), reason="universal-ctags not installed",
+)
+requires_cscope = pytest.mark.skipif(
+    shutil.which("cscope") is None, reason="cscope not installed",
+)
+requires_tree_sitter = pytest.mark.skipif(
+    not _has_tree_sitter_python(), reason="tree-sitter not installed (analysis extra)",
+)
+
+
 # ── Tool Detection ────────────────────────────────────────────────
 
 
 class TestDetectTools:
+    @requires_ctags
     def test_detects_ctags(self):
         avail = detect_tools()
         # ctags should be installed (universal-ctags via brew)
         assert avail.ctags is True
         assert avail.ctags_version != ""
 
+    @requires_cscope
     def test_detects_cscope(self):
         avail = detect_tools()
         assert avail.cscope is True
 
+    @requires_tree_sitter
     def test_detects_tree_sitter(self):
         avail = detect_tools()
         assert avail.tree_sitter is True
@@ -72,6 +106,7 @@ class TestDetectTools:
 # ── ctags ─────────────────────────────────────────────────────────
 
 
+@requires_ctags
 class TestCtags:
     def test_run_ctags_on_sample(self, tmp_path):
         """ctags should find functions in a simple Python file."""
@@ -152,6 +187,7 @@ class TestCscope:
 
 
 class TestTreeSitter:
+    @requires_tree_sitter
     def test_run_tree_sitter_on_sample(self, tmp_path):
         """tree-sitter should extract function and class definitions."""
         (tmp_path / "sample.py").write_text(textwrap.dedent("""\
@@ -169,6 +205,7 @@ class TestTreeSitter:
         assert "Greeter" in names
         assert "greet" in names
 
+    @requires_tree_sitter
     def test_tree_sitter_symbol_metadata(self, tmp_path):
         (tmp_path / "funcs.py").write_text(textwrap.dedent("""\
             class Calculator:
@@ -184,6 +221,7 @@ class TestTreeSitter:
         assert add_sym.parent == "Calculator"
         assert add_sym.parent_kind == "class"
 
+    @requires_tree_sitter
     def test_tree_sitter_class_definition(self, tmp_path):
         (tmp_path / "models.py").write_text("class User:\n    pass\n")
         symbols = run_tree_sitter(tmp_path, "python")
@@ -208,6 +246,7 @@ class TestTreeSitter:
         symbols = run_tree_sitter(tmp_path, "definitely_not_supported")
         assert symbols == []
 
+    @requires_tree_sitter
     def test_tree_sitter_multiline_function(self, tmp_path):
         (tmp_path / "big.py").write_text(textwrap.dedent("""\
             def complex_function(
@@ -410,6 +449,8 @@ class TestGracefulDegradation:
 
 
 class TestIntegration:
+    @requires_ctags
+    @requires_tree_sitter
     def test_build_tool_index_real(self, tmp_path):
         """Integration test: build_tool_index on a real (small) codebase."""
         (tmp_path / "app.py").write_text(textwrap.dedent("""\
@@ -430,6 +471,7 @@ class TestIntegration:
         assert idx.total_symbols > 0
         assert idx.total_tree_sitter_symbols > 0
 
+    @requires_ctags
     def test_analyze_codebase_includes_tool_index(self, tmp_path):
         """analyze_codebase() should attach tool_index to the result."""
         (tmp_path / "main.py").write_text("def hello(): pass\n")

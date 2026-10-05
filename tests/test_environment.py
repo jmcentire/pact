@@ -1,5 +1,6 @@
 """Tests for EnvironmentSpec."""
 import os
+import sysconfig
 from pact.config import EnvironmentSpec, resolve_environment, GlobalConfig, ProjectConfig
 
 
@@ -48,10 +49,13 @@ class TestEnvironmentSpec:
         env = spec.build_env("src")
         assert "/usr/bin" in env["PATH"]
 
-    def test_validate_finds_pytest(self):
+    def test_validate_finds_pytest(self, monkeypatch):
+        # The pytest script sits beside this interpreter, which is only on PATH
+        # when the venv is activated (not under `.venv/bin/python -m pytest`).
+        scripts = sysconfig.get_path("scripts")
+        monkeypatch.setenv("PATH", scripts + os.pathsep + os.environ.get("PATH", ""))
         spec = EnvironmentSpec(required_tools=["pytest"])
         missing = spec.validate_environment()
-        # pytest should be installed in our test environment
         assert "pytest" not in missing
 
     def test_validate_finds_missing_tool(self):
