@@ -144,3 +144,19 @@ def test_verify_artifact_hashes_reports_missing_emission_sentinel(tmp_path):
     assert verify_artifact_hashes(cert, project) == [
         "tests/comp_a/emission_test: missing at certification time"
     ]
+
+
+def test_certify_runs_tests_under_configured_interpreter(tmp_path):
+    project = _project_with_contract(tmp_path)
+    project.save_emission_test("comp_a", "def test_emission():\n    pass\n")
+    project.config_path.write_text(
+        "environment:\n  python_path: /opt/venv/bin/python\n"
+    )
+    runner = AsyncMock(return_value=_passing_results())
+
+    with patch("pact.certification.run_contract_tests", runner):
+        asyncio.run(certify(project))
+
+    assert runner.await_count == 3
+    for call in runner.await_args_list:
+        assert call.kwargs["environment"].python_path == "/opt/venv/bin/python"

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -433,7 +434,9 @@ def resolve_parallel_config(
 @dataclass
 class EnvironmentSpec:
     """Standardized execution environment for test harness and agents."""
-    python_path: str = "python3"
+    # Defaults to the interpreter running pact, so the test run sees the same
+    # Python version and installed packages.
+    python_path: str = sys.executable
     inherit_path: bool = True
     extra_path_dirs: list[str] = field(default_factory=list)
     required_tools: list[str] = field(default_factory=lambda: ["pytest"])
@@ -575,7 +578,7 @@ def resolve_environment(project: ProjectConfig, global_cfg: GlobalConfig) -> Env
     if not raw:
         return EnvironmentSpec()
     return EnvironmentSpec(
-        python_path=raw.get("python_path", "python3"),
+        python_path=raw.get("python_path", sys.executable),
         inherit_path=raw.get("inherit_path", True),
         extra_path_dirs=raw.get("extra_path_dirs", []),
         required_tools=raw.get("required_tools", ["pytest"]),

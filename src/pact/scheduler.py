@@ -33,6 +33,7 @@ from pact.config import (
     ProjectConfig,
     resolve_backend,
     resolve_build_mode,
+    resolve_environment,
     resolve_model,
     resolve_parallel_config,
 )
@@ -1450,6 +1451,9 @@ class Scheduler:
                     test_file, src_dir, extra_paths=extra_paths,
                     language=language,
                     project_dir=self.project.project_dir,
+                    environment=resolve_environment(
+                        self.project_config, self.global_config,
+                    ),
                 )
                 if not results.all_passed:
                     regression_failures.append(
@@ -1642,6 +1646,9 @@ class Scheduler:
                     test_file, src_dir, extra_paths=extra_paths,
                     language=language,
                     project_dir=self.project.project_dir,
+                    environment=resolve_environment(
+                        self.project_config, self.global_config,
+                    ),
                 )
                 if not results.all_passed:
                     goodhart_failures[cid] = results

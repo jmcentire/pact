@@ -172,6 +172,7 @@ async def certify(project: ProjectManager) -> CertificationArtifact:
             results = await run_contract_tests(
                 test_file, impl_dir, language=language,
                 project_dir=project.project_dir,
+                environment=project.test_environment(),
             )
             cert.visible_results[cid] = {
                 "total": results.total,
@@ -198,6 +199,7 @@ async def certify(project: ProjectManager) -> CertificationArtifact:
             results = await run_contract_tests(
                 test_file, impl_dir, language=language,
                 project_dir=project.project_dir,
+                environment=project.test_environment(),
             )
             cert.goodhart_results[cid] = {
                 "total": results.total,
@@ -242,6 +244,7 @@ async def certify(project: ProjectManager) -> CertificationArtifact:
             results = await run_contract_tests(
                 test_file, impl_dir, language=language,
                 project_dir=project.project_dir,
+                environment=project.test_environment(),
             )
             cert.emission_results[cid] = {
                 "total": results.total,

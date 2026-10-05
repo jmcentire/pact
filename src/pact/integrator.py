@@ -191,6 +191,7 @@ The glue code should:
             test_file, comp_dir, extra_paths=child_paths,
             language=language,
             project_dir=project.project_dir,
+            environment=project.test_environment(),
         )
 
         # Save results to internal composition dir
@@ -558,6 +559,7 @@ Do NOT use sys.path manipulation. Just import children by their module name.
         test_file, comp_dir, extra_paths=child_paths,
         language=language,
         project_dir=project.project_dir,
+        environment=project.test_environment(),
     )
 
     # Save results to internal composition dir

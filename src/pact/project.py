@@ -67,7 +67,13 @@ import yaml
 if TYPE_CHECKING:
     from pact.schemas import ArtifactMetadata
 
-from pact.config import ProjectConfig, load_project_config
+from pact.config import (
+    EnvironmentSpec,
+    ProjectConfig,
+    load_global_config,
+    load_project_config,
+    resolve_environment,
+)
 from pact.schemas import (
     CertificationArtifact,
     ComponentContract,
@@ -406,6 +412,10 @@ class ProjectManager:
 
     def load_config(self) -> ProjectConfig:
         return load_project_config(self.project_dir)
+
+    def test_environment(self) -> EnvironmentSpec:
+        """Environment for contract test runs, from project then global config."""
+        return resolve_environment(self.load_config(), load_global_config())
 
     # ── Cross-process file locking ─────────────────────────────────
     #

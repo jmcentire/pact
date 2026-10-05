@@ -1,5 +1,6 @@
 """Tests for EnvironmentSpec."""
 import os
+import sys
 from pact.config import EnvironmentSpec, resolve_environment, GlobalConfig, ProjectConfig
 
 
@@ -7,7 +8,7 @@ class TestEnvironmentSpec:
     def test_default_inherits_path(self):
         spec = EnvironmentSpec()
         assert spec.inherit_path is True
-        assert spec.python_path == "python3"
+        assert spec.python_path == sys.executable
         assert spec.required_tools == ["pytest"]
 
     def test_build_env_inherits_parent_path(self):
@@ -69,7 +70,12 @@ class TestResolveEnvironment:
     def test_default_when_no_config(self):
         spec = resolve_environment(ProjectConfig(), GlobalConfig())
         assert spec.inherit_path is True
-        assert spec.python_path == "python3"
+        assert spec.python_path == sys.executable
+
+    def test_config_without_python_path_uses_running_interpreter(self):
+        gc = GlobalConfig(environment={"inherit_path": False})
+        spec = resolve_environment(ProjectConfig(), gc)
+        assert spec.python_path == sys.executable
 
     def test_global_config(self):
         gc = GlobalConfig(environment={
@@ -85,3 +91,18 @@ class TestResolveEnvironment:
         pc = ProjectConfig(environment={"python_path": "python3.13"})
         spec = resolve_environment(pc, gc)
         assert spec.python_path == "python3.13"
+
+
+class TestProjectTestEnvironment:
+    def test_reads_python_path_from_pact_yaml(self, tmp_path):
+        from pact.project import ProjectManager
+        project = ProjectManager(tmp_path)
+        project.config_path.write_text(
+            "environment:\n  python_path: /opt/venv/bin/python\n"
+        )
+        assert project.test_environment().python_path == "/opt/venv/bin/python"
+
+    def test_defaults_to_running_interpreter(self, tmp_path):
+        from pact.project import ProjectManager
+        project = ProjectManager(tmp_path)
+        assert project.test_environment().python_path == sys.executable

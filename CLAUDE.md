@@ -33,7 +33,7 @@ pact-mcp                              # MCP server entry point
 
 **Entry point**: `pact = "pact.cli:main"`, `pact-mcp = "pact.mcp_server:main"` (pyproject.toml)
 
-**Python**: >=3.12 | **Dependencies**: pydantic>=2.0, pyyaml>=6.0 | **Optional**: anthropic>=0.40, mcp>=1.0
+**Python**: >=3.12 | **Dependencies**: pydantic>=2.0, pytest>=8.2, pyyaml>=6.0 | **Optional**: anthropic>=0.40, mcp>=1.0
 
 ## Architecture Overview
 

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+import sysconfig
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+from pact.config import EnvironmentSpec
 from pact.test_harness import EvalTier, parse_pytest_output, run_contract_tests, select_test_files
 
 
@@ -122,9 +125,57 @@ class TestExtraPaths:
             asyncio.run(run_contract_tests(test_file, impl_dir))
 
         pythonpath = captured_env.get("PYTHONPATH", "")
-        assert str(impl_dir) in pythonpath
-        # impl_dir + parent + pact site-packages (added so anyio is available)
-        assert len(pythonpath.split(":")) >= 2
+        assert pythonpath.split(":") == [str(impl_dir), str(tmp_path)]
+
+
+def _run_capturing(tmp_path, *, environment=None, stderr=b""):
+    """Run run_contract_tests with a mocked subprocess; return (cmd, env, results)."""
+    test_file = tmp_path / "test_example.py"
+    test_file.write_text("def test_pass(): pass")
+    impl_dir = tmp_path / "impl"
+    impl_dir.mkdir()
+    captured = {}
+
+    async def mock_exec(*args, **kwargs):
+        captured["cmd"] = list(args)
+        captured["env"] = kwargs.get("env", {})
+        proc = AsyncMock()
+        stdout = b"" if stderr else b"test_x PASSED\n1 passed"
+        proc.communicate = AsyncMock(return_value=(stdout, stderr))
+        proc.returncode = 1 if stderr else 0
+        return proc
+
+    with patch("pact.test_harness.asyncio.create_subprocess_exec", side_effect=mock_exec):
+        results = asyncio.run(run_contract_tests(test_file, impl_dir, environment=environment))
+    return captured["cmd"], captured["env"], results
+
+
+class TestInterpreter:
+    """The harness runs pytest under pact's interpreter or the configured one."""
+
+    def test_defaults_to_running_interpreter(self, tmp_path):
+        cmd, _, _ = _run_capturing(tmp_path)
+        assert cmd[:3] == [sys.executable, "-m", "pytest"]
+
+    def test_uses_environment_python_path(self, tmp_path):
+        env_spec = EnvironmentSpec(python_path="/opt/py/bin/python3.12")
+        cmd, _, _ = _run_capturing(tmp_path, environment=env_spec)
+        assert cmd[0] == "/opt/py/bin/python3.12"
+
+    def test_does_not_inject_pact_site_packages(self, tmp_path):
+        env_spec = EnvironmentSpec(python_path="/opt/py/bin/python3.12")
+        _, env, _ = _run_capturing(tmp_path, environment=env_spec)
+        assert sysconfig.get_path("purelib") not in env["PYTHONPATH"].split(":")
+
+    def test_missing_pytest_is_an_error(self, tmp_path):
+        env_spec = EnvironmentSpec(python_path="/opt/py/bin/python3.12")
+        _, _, results = _run_capturing(
+            tmp_path, environment=env_spec,
+            stderr=b"/opt/py/bin/python3.12: No module named pytest\n",
+        )
+        assert results.errors == 1
+        assert results.failure_details[0].test_id == "environment"
+        assert "/opt/py/bin/python3.12" in results.failure_details[0].error_message
 
 
 class TestEvalTier:

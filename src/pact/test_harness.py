@@ -15,6 +15,7 @@ import asyncio
 import logging
 import os
 import re
+import sys
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -192,11 +193,6 @@ async def run_contract_tests(
     parts = [str(impl_dir), str(impl_dir.parent)]
     if extra_paths:
         parts.extend(str(p) for p in extra_paths)
-    # Include pact's own site-packages so anyio and other pact deps are available
-    import sysconfig as _sysconfig
-    _pact_site = _sysconfig.get_path("purelib")
-    if _pact_site and _pact_site not in parts:
-        parts.append(_pact_site)
     env_path = ":".join(parts)
 
     if environment:
@@ -208,8 +204,9 @@ async def run_contract_tests(
             "PATH": os.environ.get("PATH", "/usr/bin:/usr/local/bin"),
         }
 
+    python = environment.python_path if environment else sys.executable
     cmd = [
-        "python3", "-m", "pytest",
+        python, "-m", "pytest",
         str(test_file),
         "-v", "--tb=short", "--no-header",
         f"--rootdir={impl_dir.parent}",
@@ -221,6 +218,14 @@ async def run_contract_tests(
         )
     except TestSubprocessError as e:
         return _error_results(e.test_id, e.message)
+
+    # Otherwise this parses as zero tests with zero errors.
+    if "No module named pytest" in stderr_text:
+        return _error_results(
+            "environment",
+            f"pytest is not installed for {python}; install it there or set "
+            "environment.python_path to an interpreter that has it",
+        )
 
     return parse_pytest_output(stdout_text, stderr_text)
 
