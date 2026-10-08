@@ -26,22 +26,32 @@ DEFAULT_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-sonnet-4": (3.00, 15.00),
     "claude-sonnet-4-5-20250929": (3.00, 15.00),
     "claude-sonnet-4-6": (3.00, 15.00),
+    "claude-sonnet-5": (2.00, 10.00),
+    "claude-sonnet-5-5": (2.00, 10.00),
     "claude-opus-4": (15.00, 75.00),
     "claude-opus-4-1": (15.00, 75.00),
     "claude-opus-4-5": (5.00, 25.00),
     "claude-opus-4-6": (5.00, 25.00),
-    # OpenAI
+    "claude-opus-4-7": (5.00, 25.00),
+    "claude-opus-4-8": (5.00, 25.00),
+    "claude-opus-5": (5.00, 25.00),
+    "claude-opus-5-5": (4.00, 20.00),
+    "claude-fable-5": (10.00, 50.00),
+    "claude-fable-5-1": (10.00, 50.00),
+    "claude-mythos-5": (10.00, 50.00),
+    "claude-mythos-5-1": (10.00, 50.00),
+    # OpenAI — https://developers.openai.com/api/docs/pricing
     "gpt-4o": (2.50, 10.00),
     "gpt-4o-mini": (0.15, 0.60),
     "gpt-4-turbo": (10.00, 30.00),
-    "o3": (10.00, 40.00),
+    "o3": (2.00, 8.00),
     "o3-mini": (1.10, 4.40),
-    # Google Gemini
+    # Google Gemini — https://ai.google.dev/gemini-api/docs/pricing
     "gemini-2.5-pro": (1.25, 10.00),
-    "gemini-2.5-flash": (0.15, 0.60),
-    "gemini-2.5-flash-lite": (0.075, 0.30),
-    "gemini-3-pro-preview": (1.25, 10.00),
-    "gemini-3-flash-preview": (0.15, 0.60),
+    "gemini-2.5-flash": (0.30, 2.50),
+    "gemini-2.5-flash-lite": (0.10, 0.40),
+    "gemini-3.1-pro-preview": (2.00, 12.00),
+    "gemini-3-flash-preview": (0.50, 3.00),
 }
 
 # Active pricing table — starts as defaults, can be updated

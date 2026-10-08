@@ -247,7 +247,7 @@ class TestAssessRetry:
         assert out_tok == 125
 
     async def test_no_tool_use_block_raises_runtime_error(self):
-        """When _call_llm returns None, raises RuntimeError immediately."""
+        """When every attempt returns no tool call, raises RuntimeError."""
         backend = _make_backend()
 
         backend._call_llm = AsyncMock(return_value=(
@@ -256,6 +256,7 @@ class TestAssessRetry:
 
         with pytest.raises(RuntimeError, match="No tool_use block found"):
             await backend.assess(SimpleSchema, "prompt", "system")
+        assert backend._call_llm.call_count == 3
 
     async def test_original_prompt_preserved_in_correction(self):
         """Correction is appended to the original prompt, not replacing it."""

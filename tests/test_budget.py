@@ -15,6 +15,46 @@ class TestPricingForModel:
         assert inp == 5.00
         assert out == 25.00
 
+    def test_opus_4_8(self):
+        inp, out = pricing_for_model("claude-opus-4-8")
+        assert inp == 5.00
+        assert out == 25.00
+
+    def test_opus_5(self):
+        inp, out = pricing_for_model("claude-opus-5")
+        assert inp == 5.00
+        assert out == 25.00
+
+    def test_opus_4_7(self):
+        inp, out = pricing_for_model("claude-opus-4-7")
+        assert inp == 5.00
+        assert out == 25.00
+
+    def test_sonnet_5_5(self):
+        inp, out = pricing_for_model("claude-sonnet-5-5")
+        assert inp == 2.00
+        assert out == 10.00
+
+    def test_fable_5_1(self):
+        inp, out = pricing_for_model("claude-fable-5-1")
+        assert inp == 10.00
+        assert out == 50.00
+
+    def test_o3(self):
+        inp, out = pricing_for_model("o3")
+        assert inp == 2.00
+        assert out == 8.00
+
+    def test_gemini_3_flash_preview(self):
+        inp, out = pricing_for_model("gemini-3-flash-preview")
+        assert inp == 0.50
+        assert out == 3.00
+
+    def test_opus_5_5(self):
+        inp, out = pricing_for_model("claude-opus-5-5")
+        assert inp == 4.00
+        assert out == 20.00
+
     def test_haiku(self):
         inp, out = pricing_for_model("claude-haiku-4-5-20251001")
         assert inp == 1.00

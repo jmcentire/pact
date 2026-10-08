@@ -155,8 +155,8 @@ class TestPricingTable:
         from pact.budget import pricing_for_model
 
         inp, out = pricing_for_model("gemini-2.5-flash")
-        assert inp == 0.15
-        assert out == 0.60
+        assert inp == 0.30
+        assert out == 2.50
 
     def test_gemini_pro_pricing(self):
         from pact.budget import pricing_for_model
